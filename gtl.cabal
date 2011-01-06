@@ -1,0 +1,22 @@
+Name:           gtl
+Version:        0.1
+Author:         Henning Günther
+Build-Type:     Simple
+Cabal-Version:  >= 1.8
+
+Library
+  Build-Depends:        base,array,containers,language-scade,language-promela,bdd
+  Hs-Source-Dirs: lib
+  Exposed-Modules:
+    Language.GTL.Token
+    Language.GTL.Lexer
+    Language.GTL.Syntax
+    Language.GTL.Parser
+    Language.GTL.Translation
+    Language.GTL.ScadeAnalyzer
+    Language.GTL.PromelaCIntegration
+    Language.GTL.PromelaContract
+
+Executable gtl
+  Build-Depends: base,gtl,language-scade,language-promela
+  Main-Is: Main.hs
