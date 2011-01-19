@@ -8,13 +8,17 @@ import Language.GTL.Parser as GTL
 import Language.Scade.Lexer as Sc
 import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
+import Language.Scade.Pretty
 
-import Language.GTL.PromelaContract
+import Language.GTL.PromelaContract as PrTr
 import Language.GTL.PromelaCIntegration
+import Language.GTL.ScadeContract as ScTr
+import Language.GTL.Translation
 
 data TranslationMode
      = NativeC
      | PromelaContract
+     | ScadeContract
      deriving Show
 
 data Options = Options
@@ -30,7 +34,9 @@ options :: [OptDescr (Options -> Options)]
 options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case str of
                                              "native-c" -> opt { mode = NativeC }
                                              "promela-contract" -> opt { mode = PromelaContract }
-                                             _ -> error $ "Unknown mode "++str) "mode") "The tranlation mode (either \"native-c\" or \"promela-contract\""
+                                             "scade-contract" -> opt { mode = ScadeContract }
+                                             _ -> error $ "Unknown mode "++str) "mode"
+                                 ) "The tranlation mode (either \"native-c\" or \"promela-contract\""
           ]
 
 header :: String
@@ -52,6 +58,12 @@ main = do
       sc_str <- readFile sc_file
       let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
           sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
-      print $ prettyPromela $ translateContracts sc_decls gtl_decls
+      print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
     NativeC -> translateGTL gtl_file sc_file >>= putStr
+    ScadeContract -> do
+      gtl_str <- readFile gtl_file
+      sc_str <- readFile sc_file
+      let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
+          sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
+      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
   return ()

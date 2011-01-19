@@ -5,7 +5,7 @@ Build-Type:     Simple
 Cabal-Version:  >= 1.8
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,bdd
+  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl
   Hs-Source-Dirs: lib
   Exposed-Modules:
     Language.GTL.Token
@@ -16,6 +16,8 @@ Library
     Language.GTL.ScadeAnalyzer
     Language.GTL.PromelaCIntegration
     Language.GTL.PromelaContract
+    Language.GTL.ScadeContract
+    Language.GTL.LTL
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela

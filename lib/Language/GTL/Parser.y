@@ -71,13 +71,13 @@ model_contract : "{" formulas "}" { $2 }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : lit "<" lit               { BinLT $1 $3 }
-        | lit ">" lit               { BinGT $1 $3 }
-        | lit "=" lit               { BinEQ $1 $3 }
+formula : lit "<" lit               { BinRel BinLT $1 $3 }
+        | lit ">" lit               { BinRel BinGT $1 $3 }
+        | lit "=" lit               { BinRel BinEq $1 $3 }
         | "not" formula             { Not $2 }
-        | formula "and" formula     { And $1 $3 }
-        | formula "or" formula      { Or $1 $3 }
-        | formula "follows" formula { Follows $1 $3 }
+        | formula "and" formula     { BinOp And $1 $3 }
+        | formula "or" formula      { BinOp Or $1 $3 }
+        | formula "follows" formula { BinOp Follows $1 $3 }
         | "always" formula          { Always $2 }
         | "next" formula            { Next $2 }
         | "(" formula ")"           { $2 }

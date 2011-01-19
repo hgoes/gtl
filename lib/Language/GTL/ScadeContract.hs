@@ -1,30 +1,30 @@
-module Language.GTL.ScadeContract
-       (translateContracts)
-       where
+module Language.GTL.ScadeContract where
 
-import Data.Foldable
 import Data.Map as Map
 import Data.Set as Set
-import Language.Scade.Syntax as Sc
-import Language.GTL.Syntax as GTL
-import Language.GTL.Translation
-import Language.GTL.ScadeAnalyzer
-import Prelude hiding (foldl,foldl1,concat)
+import Data.List as List hiding (foldl1)
+import Data.Foldable
+import Prelude hiding (foldl1)
+import Control.Monad.Identity
 
-import Debug.Trace
+import Language.GTL.LTL as LTL
+import Language.GTL.Syntax as GTL
+import Language.Scade.Syntax as Sc
+import Language.GTL.ScadeAnalyzer
+import Language.GTL.Translation
 
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Sc.Declaration]
 translateContracts scade gtl
   = let tp = typeMap gtl scade
-    in [ translateContractScade (modelName m)
-         (tp!(modelName m)) (translateContract (modelContract m))
-       | Model m <- gtl ]
+    in [ buchiToScade (modelName m) ins outs (runIdentity $ gtlsToBuchi (return . Set.fromList) (modelContract m))
+       | Model m <- gtl, let (_,ins,outs) = tp!(modelName m) ]
 
-translateContractScade :: String -> (String,Map String TypeExpr,Map String TypeExpr) -> CanonFormula -> Sc.Declaration
-translateContractScade name (_,ins,outs) f
-  = let (states,_,_,_) = translateContract' f Map.empty 0 []
-    in UserOpDecl
-    { userOpKind = Node
+buchiToScade :: String -> Map String TypeExpr -> Map String TypeExpr
+                -> Buchi (Set (GTL.Relation,GTL.Lit,GTL.Lit))
+                -> Sc.Declaration
+buchiToScade name ins outs buchi
+  = UserOpDecl
+    { userOpKind = Sc.Node
     , userOpImported = False
     , userOpInterface = InterfaceStatus Nothing False
     , userOpName = name++"_testnode"
@@ -39,54 +39,89 @@ translateContractScade name (_,ins,outs) f
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
                               , dataLocals = []
-                              , dataEquations = [StateEquation (StateMachine Nothing states) [] False]
+                              , dataEquations = [StateEquation
+                                                 (StateMachine Nothing (buchiToStates buchi))
+                                                 [] False
+                                                ]
                               }
     }
 
-translateContract' :: CanonFormula -> Map CanonFormula Integer -> Integer -> [Sc.State] -> ([Sc.State],Map CanonFormula Integer,Integer,Integer)
-translateContract' f cache cur res = case Map.lookup f cache of
-  Just r -> (res,cache,r,cur)
-  Nothing -> let (trans,nres,ncache,ncur)
-                   = foldl (\(ctrans,cres,ccache,ccur) cl
-                            -> let nxt_f1 = canonAnd (clauseNext cl) (clauseAlways cl)
-                                   nxt_f2 = canonAnd nxt_f1 (Set.singleton (ClauseT { clauseVars = Map.empty
-                                                                                    , clauseNext = Set.empty
-                                                                                    , clauseAlways = clauseAlways cl
-                                                                                    }))
-                                   (rres,rcache,next_st,rcur) = translateContract' nxt_f2 ccache ccur cres
-                               in ((next_st,clauseVars cl):ctrans,rres,rcache,rcur)
-                           ) ([],res,Map.insert f cur cache,cur+1) f
-                 new = Sc.State { stateInitial = case cur of
-                                     0 -> True
-                                     _ -> False
-                                , stateFinal = False
-                                , stateName = "st"++show cur
-                                , stateData = DataDef { dataSignals = []
-                                                      , dataLocals = []
-                                                      , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                                                      }
-                                , stateUnless = [Transition (varsToExpr v) Nothing (TargetFork Restart ("st"++show nxt))
-                                                | (nxt,v) <- trans]
-                                , stateUntil = []
-                                , stateSynchro = Nothing
-                                }
-             in (new:nres,ncache,cur,cur+1)
+startState :: Buchi (Set (GTL.Relation,GTL.Lit,GTL.Lit)) -> Sc.State
+startState buchi = Sc.State
+  { stateInitial = True
+  , stateFinal = False
+  , stateName = "init"
+  , stateData = DataDef { dataSignals = []
+                        , dataLocals = []
+                        , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
+                        }
+  , stateUnless = [ stateToTransition i st
+                  | (i,st) <- List.filter (isStart . snd) (Map.toList buchi) ]++
+                  [failTransition]
+  , stateUntil = []
+  , stateSynchro = Nothing
+  }
 
-varsToExpr :: Map String (Set Condition) -> Sc.Expr
-varsToExpr mp
-  | Map.null mp = ConstBoolExpr True
-  | otherwise
-           = foldl1 (BinaryExpr BinAnd) $ concat
-             [ [ case cond of 
-                    CondLT x -> BinaryExpr BinLesser nameE (ConstIntExpr x)
-                    CondLTEq x -> BinaryExpr BinLessEq nameE (ConstIntExpr x)
-                    CondGT x -> BinaryExpr BinGreater nameE (ConstIntExpr x)
-                    CondGTEq x -> BinaryExpr BinGreaterEq nameE (ConstIntExpr x)
-                    CondElem lst -> foldl1 (BinaryExpr BinOr)
-                                    (fmap ((BinaryExpr BinEquals nameE).ConstIntExpr) lst)
-                    CondNElem lst -> foldl1 (BinaryExpr BinAnd)
-                                     (fmap ((BinaryExpr BinDifferent nameE).ConstIntExpr) lst)
-               | cond <- Set.toList conds,
-                 let nameE = IdExpr $ Path [name]
-               ]
-             | (name,conds) <- Map.toList mp ]
+failTransition :: Sc.Transition
+failTransition = Transition (ConstBoolExpr True) Nothing (TargetFork Restart "fail")
+
+failState :: Sc.State
+failState = Sc.State
+  { stateInitial = False
+  , stateFinal = False
+  , stateName = "fail"
+  , stateData = DataDef { dataSignals = []
+                        , dataLocals = []
+                        , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr False)]
+                        }
+  , stateUnless = []
+  , stateUntil = []
+  , stateSynchro = Nothing
+  }
+
+buchiToStates :: Buchi (Set (GTL.Relation,GTL.Lit,GTL.Lit)) -> [Sc.State]
+buchiToStates buchi = startState buchi :
+                      failState :
+                      [ Sc.State
+                       { stateInitial = False
+                       , stateFinal = False
+                       , stateName = "st"++show num
+                       , stateData = DataDef { dataSignals = []
+                                             , dataLocals = []
+                                             , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
+                                             }
+                       , stateUnless = [ stateToTransition to (buchi!to)
+                                       | to <- Set.toList $ successors st ] ++
+                                       [failTransition]
+                       , stateUntil = []
+                       , stateSynchro = Nothing
+                       }
+                     | (num,st) <- Map.toList buchi ]
+
+stateToTransition :: Integer -> BuchiState (Set (GTL.Relation,GTL.Lit,GTL.Lit)) -> Sc.Transition
+stateToTransition name st
+  = Transition
+    (relsToExpr $ Set.toList (vars st))
+    Nothing
+    (TargetFork Restart ("st"++show name))
+    
+                       
+
+litToExpr :: GTL.Lit -> Sc.Expr
+litToExpr (Constant n) = ConstIntExpr n
+litToExpr (Variable x) = IdExpr $ Path [x]
+
+relToExpr :: (GTL.Relation,GTL.Lit,GTL.Lit) -> Sc.Expr
+relToExpr (rel,l,r)
+  = BinaryExpr (case rel of
+                   BinLT -> BinLesser
+                   BinLTEq -> BinLessEq
+                   BinGT -> BinGreater
+                   BinGTEq -> BinGreaterEq
+                   BinEq -> BinEquals
+                   BinNEq -> BinDifferent
+               ) (litToExpr l) (litToExpr r)
+
+relsToExpr :: [(GTL.Relation,GTL.Lit,GTL.Lit)] -> Sc.Expr
+relsToExpr [] = ConstBoolExpr True
+relsToExpr xs = foldl1 (BinaryExpr BinAnd) (fmap relToExpr xs)
