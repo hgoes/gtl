@@ -42,7 +42,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case str of
           ]
 
 x2s :: FilePath -> IO String
-x2s fp = readProcess "C:\\Program Files\\Esterel Technologies\\SCADE 6.1.12\\SCADE Suite\\bin\\x2s.exe" [fp] ""
+x2s fp = readProcess "C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2\\SCADE Suite\\bin\\x2s.exe" [fp] ""
 
 loadScade :: FilePath -> IO String
 loadScade fp = case takeExtension fp of
