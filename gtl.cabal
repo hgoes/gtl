@@ -20,5 +20,5 @@ Library
     Language.GTL.LTL
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath
   Main-Is: Main.hs

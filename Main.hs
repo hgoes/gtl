@@ -2,6 +2,8 @@ module Main where
 
 import System.Console.GetOpt
 import System.Environment
+import System.FilePath
+import System.Process
 
 import Language.GTL.Lexer as GTL
 import Language.GTL.Parser as GTL
@@ -39,31 +41,36 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case str of
                                  ) "The tranlation mode (either \"native-c\" or \"promela-contract\""
           ]
 
-header :: String
-header = "Usage: gtl [OPTION...] gtl-file scadefile"
+x2s :: FilePath -> IO String
+x2s fp = readProcess "C:\\Program Files\\Esterel Technologies\\SCADE 6.1.12\\SCADE Suite\\bin\\x2s.exe" [fp] ""
 
-getOptions :: IO (Options,String,String)
+loadScade :: FilePath -> IO String
+loadScade fp = case takeExtension fp of
+  ".scade" -> readFile fp
+  ".xscade" -> x2s fp
+
+loadScades :: [FilePath] -> IO String
+loadScades = fmap concat . mapM loadScade
+
+header :: String
+header = "Usage: gtl [OPTION...] gtl-file scadefiles"
+
+getOptions :: IO (Options,String,[String])
 getOptions = do
   args <- getArgs
   case getOpt Permute options args of
-    (o,[n1,n2],[]) -> return (foldl (flip id) defaultOptions o,n1,n2)
-    (_,_,[]) -> ioError (userError "Exactly two arguments required")
+    (o,n1:ns,[]) -> return (foldl (flip id) defaultOptions o,n1,ns)
+    (_,_,[]) -> ioError (userError "At least one argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 main = do
-  (opts,gtl_file,sc_file) <- getOptions
+  (opts,gtl_file,sc_files) <- getOptions
+  gtl_str <- readFile gtl_file
+  sc_str <- loadScades sc_files
+  let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
+      sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
-    PromelaContract -> do
-      gtl_str <- readFile gtl_file
-      sc_str <- readFile sc_file
-      let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
-          sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
-      print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
-    NativeC -> translateGTL gtl_file sc_file >>= putStr
-    ScadeContract -> do
-      gtl_str <- readFile gtl_file
-      sc_str <- readFile sc_file
-      let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
-          sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
-      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
+    PromelaContract -> print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
+    NativeC -> translateGTL gtl_decls sc_decls >>= putStr
+    ScadeContract -> print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
   return ()

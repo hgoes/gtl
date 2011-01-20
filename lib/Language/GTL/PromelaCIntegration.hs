@@ -13,15 +13,8 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
 
-parseGTL :: FilePath -> IO [Declaration]
-parseGTL fp = do
-  str <- readFile fp
-  return $ gtl $ alexScanTokens str
-
-translateGTL :: FilePath -> FilePath -> IO String
-translateGTL gtlfile scadefile = do
-  scadecode <- parseScade scadefile
-  gtlcode <- parseGTL gtlfile
+translateGTL :: [Declaration] -> [Sc.Declaration] -> IO String
+translateGTL gtlcode scadecode = do
   let tps = typeMap gtlcode scadecode
       conns = connectionMap gtlcode tps 
   return $ show $ prettyPromela (generatePromelaCode tps conns)
