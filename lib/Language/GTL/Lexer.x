@@ -19,6 +19,7 @@ tokens:-
   next                           { key KeyNext }
   not                              { key KeyNot }
   or                             { key KeyOr }
+  in                             { key KeyIn }
   "("                            { const $ Bracket Parentheses False }
   ")"                            { const $ Bracket Parentheses True }
   "["                            { const $ Bracket Square False }

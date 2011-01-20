@@ -33,13 +33,17 @@ unPrec Not = 9
 unPrec Next = 4
 
 instance Show BinOp where
+  {-
   show And = "\x2227"
-  show Or = "\x2228"
+  show Or = "\x2228" -}
   show Until = "U"
   show UntilOp = "V"
+  show And = "and"
+  show Or = "or"
 
 instance Show UnOp where
-  show Not = "\xac"
+  --show Not = "\xac"
+  show Not = "not "
   show Next = "X "
 
 instance Show a => Show (LTL a) where
@@ -57,8 +61,8 @@ instance Show a => Show (LTL a) where
                           in if p >= unPrec op
                              then showChar '(' . str . showChar ')'
                              else str
-  showsPrec _ (Ground x) = if x then showChar '\x22a4'
-                           else showChar '\x22a5'
+  showsPrec _ (Ground x) = if x then showString "T" --showChar '\x22a4'
+                           else showString "F" --showChar '\x22a5'
 
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
@@ -115,12 +119,12 @@ data BuchiState a = BuchiState
 
 type Untils a = Map (LTL a,LTL a) Integer
 
-ltlToBuchiM :: (Ord a,Monad m) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
+ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
 ltlToBuchiM p f = let f' = distributeNegation f
                       unt = untils f'
                   in buildGraph p unt (buildNodeSet f')
 
-ltlToBuchi :: Ord a => LTL a -> Buchi (Map a Bool)
+ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
 ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
 
 finalSet :: Ord a => Set (LTL a) -> Untils a -> Set Integer

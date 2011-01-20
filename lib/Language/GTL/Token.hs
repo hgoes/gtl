@@ -21,6 +21,7 @@ data KeyWord = KeyAlways
              | KeyNext
              | KeyNot
              | KeyOr
+             | KeyIn
              deriving Show
 
 data BracketType = Parentheses

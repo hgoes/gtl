@@ -18,6 +18,7 @@ import Language.GTL.Syntax
   "next"            { Key KeyNext }
   "not"             { Key KeyNot }
   "or"              { Key KeyOr }
+  "in"              { Key KeyIn }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
   "["               { Bracket Square False }
@@ -71,19 +72,27 @@ model_contract : "{" formulas "}" { $2 }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : lit "<" lit               { BinRel BinLT $1 $3 }
-        | lit ">" lit               { BinRel BinGT $1 $3 }
-        | lit "=" lit               { BinRel BinEq $1 $3 }
-        | "not" formula             { Not $2 }
-        | formula "and" formula     { BinOp And $1 $3 }
-        | formula "or" formula      { BinOp Or $1 $3 }
-        | formula "follows" formula { BinOp Follows $1 $3 }
-        | "always" formula          { Always $2 }
-        | "next" formula            { Next $2 }
-        | "(" formula ")"           { $2 }
+formula : lit "<" lit                { BinRel BinLT $1 $3 }
+        | lit ">" lit                { BinRel BinGT $1 $3 }
+        | lit "=" lit                { BinRel BinEq $1 $3 }
+        | id "in" "{" lits "}"       { Elem $1 $4 True }
+        | id "not" "in" "{" lits "}" { Elem $1 $5 False }
+        | "not" formula              { Not $2 }
+        | formula "and" formula      { BinOp And $1 $3 }
+        | formula "or" formula       { BinOp Or $1 $3 }
+        | formula "follows" formula  { BinOp Follows $1 $3 }
+        | "always" formula           { Always $2 }
+        | "next" formula             { Next $2 }
+        | "(" formula ")"            { $2 }
 
 lit : int { Constant $1 }
     | id  { Variable $1 }
+
+lits : lit comma_lits { $1:$2 }
+     |                { [] }
+
+comma_lits : "," lit comma_lits { $2:$3 }
+           |                    { [] }
 
 connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
 

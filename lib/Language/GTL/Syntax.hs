@@ -24,6 +24,7 @@ data Lit = Constant Integer
 
 data Formula = BinRel Relation Lit Lit
              | BinOp Operator Formula Formula
+             | Elem String [Lit] Bool
              | Not Formula
              | Always Formula
              | Next Formula
