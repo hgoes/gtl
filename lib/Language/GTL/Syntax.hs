@@ -18,8 +18,13 @@ data ConnectDecl = ConnectDecl
                    , connectToVariable :: String
                    } deriving Show
 
+data VerifyDecl = VerifyDecl
+                  { verifyFormulas :: [Formula]
+                  } deriving Show
+
 data Lit = Constant Integer
          | Variable String
+         | Qualified String String
          deriving (Show,Eq,Ord)
 
 data Formula = BinRel Relation Lit Lit

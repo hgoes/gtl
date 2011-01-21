@@ -19,6 +19,7 @@ import Language.GTL.Syntax
   "not"             { Key KeyNot }
   "or"              { Key KeyOr }
   "in"              { Key KeyIn }
+  "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
   "["               { Bracket Square False }
@@ -85,8 +86,9 @@ formula : lit "<" lit                { BinRel BinLT $1 $3 }
         | "next" formula             { Next $2 }
         | "(" formula ")"            { $2 }
 
-lit : int { Constant $1 }
-    | id  { Variable $1 }
+lit : int       { Constant $1 }
+    | id        { Variable $1 }
+    | id "." id { Qualified $1 $3 }
 
 lits : lit comma_lits { $1:$2 }
      |                { [] }
@@ -95,6 +97,8 @@ comma_lits : "," lit comma_lits { $2:$3 }
            |                    { [] }
 
 connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
+
+verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))
