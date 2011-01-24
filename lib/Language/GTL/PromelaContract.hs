@@ -18,11 +18,14 @@ import Data.Maybe (catMaybes)
 
 data TransModel s = TransModel
                     { varsIn :: Map String (Set (Tree s Int))
-                    , varsOut :: Map String [(String,String)]
+                    , varsOut :: Map String (Set (Maybe (String,String)))
                     , stateMachine :: Buchi (Map String (Tree s Int))
                     } deriving Show
                                
-type TransProgram s = Map String (TransModel s)
+data TransProgram s = TransProgram
+                      { transModels :: Map String (TransModel s)
+                      , transClaims :: [Buchi (Map (String,String) (Tree s Int))]
+                      } deriving Show
 
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
 translateContracts scade decls
@@ -30,62 +33,109 @@ translateContracts scade decls
     prog <- buildTransProgram scade decls
     translateContracts' prog
 
+claimInVars :: TransProgram s -> Buchi (Map (String,String) (Tree s Int)) -> Map (String,String) (Set (Tree s Int))
+claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachine $ (transModels prog)!mname)) | (mname,var) <- Set.toList $ usedVars buchi ]
+
+translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> Buchi (Map (String,String) (Tree s Int)) -> BDDM s Int m [Pr.Step]
+translateClaim varsIn machine = do
+  do_stps <- mapM (\(st,decl) -> do
+                      let follows = [ (vars $ machine!succ,succ) | succ <- Set.toList $ successors decl ]
+                      if_stps <- mapM getIfSteps follows
+                      let stps = Pr.StmtLabel ("st"++show st) (Pr.StmtIf if_stps)
+                      return $ Pr.StepStmt (if Set.null (finalSets decl) -- XXX: This is terrible wrong :(
+                                            then stps
+                                            else Pr.StmtLabel ("accept"++show st) stps) Nothing
+                  ) (Map.toList machine)
+  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++show name)) Nothing]
+                                   | (name,st) <- Map.toList machine, isStart st ]) Nothing
+           ] ++ do_stps
+  where
+    getIfSteps (cond,follow) = do
+      cond_stps <- mapM getConds (Map.toList cond)
+      return $ (concat cond_stps) ++ [ Pr.StepStmt (Pr.StmtGoto ("st"++show follow)) Nothing ]
+    getConds ((mdl,var),tree) = mapM (\i -> do
+                                         nv <- i #=> tree
+                                         t <- true
+                                         f <- false
+                                         if nv == t
+                                           then return $ Just $ checkVar Pr.BinEquals mdl var i
+                                           else (do
+                                                    nv <- i #&& tree
+                                                    if nv == f
+                                                      then return $ Just $ checkVar Pr.BinNotEquals mdl var i
+                                                      else return Nothing)
+                                     ) (Set.toList $ varsIn!(mdl,var)) >>= return.catMaybes
+    checkVar op mdl var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
+                                         (Pr.RefExpr (Pr.VarRef ("never_"++mdl++"_"++var) Nothing Nothing))
+                                         (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
+                                        ) Nothing
+                      
+translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
+translateModel name mdl = do
+  do_stps <- mapM (\(st,decl) -> do
+                      let follows = [ (vars $ (stateMachine mdl)!succ,succ) | succ <- Set.toList $ successors decl ]
+                      if_stps <- mapM getIfSteps follows
+                      return $ Pr.StepStmt (Pr.StmtLabel ("st"++show st) (Pr.StmtIf if_stps)) Nothing
+                  ) (Map.toList (stateMachine mdl))
+  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
+                                   | (name,st) <- Map.toList (stateMachine mdl), isStart st ]) Nothing
+           ] ++ do_stps
+  where
+    getIfSteps (cond,follow) = do
+      cond_stps <- mapM getConds (Map.toList cond)
+      return $ (concat cond_stps) ++ [ Pr.StepStmt (Pr.StmtGoto ("st" ++ show follow)) Nothing ]
+    getConds (var,tree) = case Map.lookup var (varsIn mdl) of
+      Nothing -> case Map.lookup var (varsOut mdl) of
+        Nothing -> return []
+        Just ns -> return [ Pr.StepStmt (Pr.StmtAssign
+                                         (Pr.VarRef (case target of
+                                                        Just (mname,var) -> "conn_"++mname++"_"++var
+                                                        Nothing -> "never_"++name++"_"++var
+                                                    ) Nothing Nothing)
+                                         (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
+                          | target <- Set.toList ns ]
+      Just inc -> mapM (\i -> do
+                           nv <- i #=> tree
+                           t <- true
+                           f <- false
+                           if nv == t
+                             then return $ Just $ checkVar Pr.BinEquals var i
+                             else (do
+                                      nv <- i #&& tree
+                                      if nv == f
+                                        then return $ Just $ checkVar Pr.BinNotEquals var i
+                                        else return Nothing)
+                       ) (Set.toList inc) >>= return.catMaybes
+    checkVar op var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
+                                     (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
+                                     (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
+                                    ) Nothing
+
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
   = do
-    let decls = Pr.Decl $ Pr.Declaration Nothing Pr.TypeInt [("conn_"++name++"_"++var,Nothing,Nothing) | (name,mdl) <- Map.toList prog,(var,_) <- Map.toList (varsIn mdl) ]
-    mapM (\(name,mdl) -> do
-             do_stps <- mapM (\(st,decl) -> do
-                                 let follows = [ (vars $ (stateMachine mdl)!succ,succ) | succ <- Set.toList $ successors decl ]
-                                 if_stps <- mapM (getIfSteps name mdl) follows
-                                 return $ [ Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr Pr.BinEquals
-                                                        (Pr.RefExpr $ Pr.VarRef "state" Nothing Nothing)
-                                                         (Pr.ConstExpr $ Pr.ConstInt st)
-                                                       ) Nothing,
-                                            Pr.StepStmt (Pr.StmtIf if_stps) Nothing
-                                          ]
-                             ) (Map.toList (stateMachine mdl))
-             return $ Pr.ProcType 
-               { Pr.proctypeActive = Just Nothing -- active without priority
-               , Pr.proctypeName = name
-               , Pr.proctypeArguments = []
-               , Pr.proctypePriority = Nothing
-               , Pr.proctypeProvided = Nothing
-               , Pr.proctypeSteps = [Pr.StepDecl $ Pr.Declaration Nothing Pr.TypeInt [("state",Nothing,Nothing)],
-                                     Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtAssign (VarRef "state" Nothing Nothing) (Pr.ConstExpr $ Pr.ConstInt name)) Nothing]
-                                                            | (name,st) <- Map.toList (stateMachine mdl), isStart st ]) Nothing,
-                                     Pr.StepStmt (Pr.StmtDo do_stps) Nothing ]
-               }
-         ) (Map.toList prog) >>= return.(decls:)
-    where
-      getIfSteps name mdl (cond,follow) = do
-        cond_stps <- mapM (getConds name mdl) (Map.toList cond)
-        return $ (concat cond_stps) ++ [ Pr.StepStmt (Pr.StmtAssign (Pr.VarRef "state" Nothing Nothing)
-                                                      (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral follow)) Nothing
-                                       ]
-      getConds name mdl (var,tree) = case Map.lookup var (varsIn mdl) of
-        Nothing -> case Map.lookup var (varsOut mdl) of
-          Nothing -> return []
-          Just ns -> return [ Pr.StepStmt (Pr.StmtAssign
-                                           (Pr.VarRef ("conn_"++mname++"_"++var) Nothing Nothing)
-                                           (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
-                            | (mname,var) <- ns ]
-        Just inc -> mapM (\i -> do
-                             nv <- i #=> tree
-                             t <- true
-                             f <- false
-                             if nv == t
-                               then return $ Just $ checkVar Pr.BinEquals name var i
-                               else (do
-                                        nv <- i #&& tree
-                                        if nv == f
-                                          then return $ Just $ checkVar Pr.BinNotEquals name var i
-                                          else return Nothing)
-                         ) (Set.toList inc) >>= return.catMaybes
-      checkVar op name var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
-                                            (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
-                                            (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
-                                           ) Nothing
+    let decls = Pr.Decl $ Pr.Declaration Nothing Pr.TypeInt $
+                [ ("conn_"++name++"_"++var,Nothing,Nothing)
+                | (name,mdl) <- Map.toList $ transModels prog
+                , (var,_) <- Map.toList (varsIn mdl) ] ++
+                [ ("never_"++name++"_"++var,Nothing,Nothing)
+                | (name,mdl) <- Map.toList $ transModels prog
+                , (var,set) <- Map.toList (varsOut mdl)
+                , Set.member Nothing set]
+    model_procs <- mapM (\(name,mdl) -> do
+                            steps <- translateModel name mdl
+                            return $ Pr.ProcType { Pr.proctypeActive = Just Nothing -- active without priority
+                                                 , Pr.proctypeName = name
+                                                 , Pr.proctypeArguments = []
+                                                 , Pr.proctypePriority = Nothing
+                                                 , Pr.proctypeProvided = Nothing
+                                                 , Pr.proctypeSteps = steps
+                                                 }
+                        ) (Map.toList $ transModels prog)
+    nevers <- mapM (\claim -> do
+                       steps <- translateClaim (claimInVars prog claim) claim
+                       return $ Pr.Never steps) (transClaims prog)
+    return (decls:model_procs++nevers)
 
 
 buildTransProgram :: Monad m => [Sc.Declaration] -> [GTL.Declaration] -> BDDM s Int m (TransProgram s)
@@ -94,31 +144,55 @@ buildTransProgram scade decls
     prog <- mapM (\m -> do
                      machine <- gtlsToBuchi (\lst -> do
                                                 res <- mapM relToBDD lst
-                                                mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old) (fmap (\(name,tree) -> (name,[tree])) res))
+                                                mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old)
+                                                                                     (fmap (\(qual,name,tree) -> case qual of
+                                                                                               Nothing -> (name,[tree])
+                                                                                               Just _ -> error "Contracts can't contain qualified variables"
+                                                                                           ) res))
                                             ) (modelContract m)
                      return (modelName m,TransModel { varsIn = Map.empty 
                                                     , varsOut = Map.empty
                                                     , stateMachine = machine
                                                     })
                  ) models >>= return.(Map.fromList)
-    return $ foldl (\cprog c -> let fromMdl = cprog!(connectFromModel c)
-                                    nprog1 = Map.adjust
-                                             (\mdl -> mdl { varsIn = Map.insertWith Set.union
-                                                                      (connectToVariable c)
-                                                                      (bddsForVar (connectFromVariable c) (stateMachine fromMdl))
-                                                                      (varsIn mdl)
-                                                          }) (connectToModel c) cprog
-                                    nprog2 = Map.adjust
-                                             (\mdl -> mdl { varsOut = Map.insertWith (++)
-                                                                      (connectFromVariable c)
-                                                                      [(connectToModel c,connectToVariable c)]
-                                                                      (varsOut mdl)
-                                                          }) (connectFromModel c) nprog1
-                                    in nprog2
-                   ) prog conns
+    nevers <- mapM (\claim -> gtlsToBuchi (\lst -> do
+                                              res <- mapM relToBDD lst
+                                              mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old)
+                                                                                   (fmap (\(qual,name,tree) -> case qual of
+                                                                                             Nothing -> error "Verify formulas must only contain qualified names"
+                                                                                             Just rq -> ((rq,name),[tree])) res))
+                                          ) (fmap (GTL.Not) $ verifyFormulas claim)
+                   ) claims
+    let prog1 = foldl (\cprog c -> let fromMdl = cprog!(connectFromModel c)
+                                       nprog1 = Map.adjust
+                                                (\mdl -> mdl { varsIn = Map.insertWith Set.union
+                                                                        (connectToVariable c)
+                                                                        (bddsForVar (connectFromVariable c) (stateMachine fromMdl))
+                                                                        (varsIn mdl)
+                                                             }) (connectToModel c) cprog
+                                       nprog2 = Map.adjust
+                                                (\mdl -> mdl { varsOut = Map.insertWith Set.union
+                                                                         (connectFromVariable c)
+                                                                         (Set.singleton $ Just (connectToModel c,connectToVariable c))
+                                                                         (varsOut mdl)
+                                                             }) (connectFromModel c) nprog1
+                                   in nprog2
+                      ) prog conns
+        prog2 = foldl (\tprog never -> foldl (\cprog (_,st) -> foldl (\cprog' ((mname,var),_) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union var
+                                                                                                                                     (Set.singleton Nothing)
+                                                                                                                                     (varsOut mdl)
+                                                                                                                         }) mname cprog'
+                                                                     ) cprog (Map.toList (vars st))
+                                             ) prog1 (Map.toList never)
+                      ) prog1 nevers
+    return $ TransProgram
+      { transModels = prog2
+      , transClaims = nevers
+      }
   where
     models = [ m | Model m <- decls ]
     conns = [ c | Connect c <- decls ]
+    claims = [ v | Verify v <- decls ]
 
 bddsForVar :: String -> Buchi (Map String (Tree s Int)) -> Set (Tree s Int)
 bddsForVar var buchi = foldl (\mp st -> case Map.lookup var (vars st) of
@@ -146,20 +220,26 @@ relsToBDD buchi = mapM
                   buchi-}
 
 
-relToBDD :: Monad m => GTLAtom -> BDDM s Int m (String,Tree s Int)
+relToBDD :: Monad m => GTLAtom -> BDDM s Int m (Maybe String,String,Tree s Int)
 relToBDD (GTLRel rel (Variable v) (Constant c)) = do
   bdd <- relToBDD' rel c
-  return (v,bdd)
+  return (Nothing,v,bdd)
+relToBDD (GTLRel rel (Qualified m v) (Constant c)) = do
+  bdd <- relToBDD' rel c
+  return (Just m,v,bdd)
 relToBDD (GTLRel rel (Constant c) (Variable v)) = do
   bdd <- relToBDD' (relNot rel) c
-  return (v,bdd)
+  return (Nothing,v,bdd)
+relToBDD (GTLRel rel (Constant c) (Qualified m v)) = do
+  bdd <- relToBDD' (relNot rel) c
+  return (Just m,v,bdd)
 relToBDD (GTLElem v lits p) = do
   bdd <- encodeSet 0 (Set.fromList $ fmap (\(Constant x) -> fromIntegral x::Int) lits)
   if p
-    then return (v,bdd)
+    then return (Nothing,v,bdd)
     else (do
              bdd' <- not' bdd
-             return (v,bdd'))
+             return (Nothing,v,bdd'))
 relToBDD _ = error "Invalid relation detected"
 
 relToBDD' :: Monad m => GTL.Relation -> Integer -> BDDM s Int m (Tree s Int)
@@ -169,3 +249,6 @@ relToBDD' GTL.BinGT n   = encodeSignedRange 0 (fromIntegral n + 1) (maxBound::In
 relToBDD' GTL.BinGTEq n = encodeSignedRange 0 (fromIntegral n) (maxBound::Int)
 relToBDD' GTL.BinEq n   = encodeSingleton 0 (fromIntegral n::Int)
 relToBDD' GTL.BinNEq n  = encodeSingleton 0 (fromIntegral n::Int) >>= not'
+
+usedVars :: Ord a => Buchi (Map a b) -> Set a
+usedVars buchi = foldl (\set st -> Set.union set (Map.keysSet (vars st))) Set.empty (Map.elems buchi)
