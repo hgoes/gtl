@@ -63,6 +63,7 @@ generatePromelaCode tp conns = let procs = fmap (\(name,(int_name,inp,outp)) ->
 connectionMap :: [Declaration] -> TypeMap -> [((String,String),(String,String))]
 connectionMap def tp = mapMaybe (\decl -> case decl of
                                     Model _ -> Nothing
+                                    Verify _ -> Nothing
                                     Connect conn -> let fromTp = getConnectionPoint conn False
                                                         toTp = getConnectionPoint conn True
                                                     in if fromTp == toTp
