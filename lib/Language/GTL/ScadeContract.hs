@@ -2,9 +2,9 @@ module Language.GTL.ScadeContract where
 
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List hiding (foldl1)
+import Data.List as List hiding (foldl1,find,concat)
 import Data.Foldable
-import Prelude hiding (foldl1)
+import Prelude hiding (foldl1,concat)
 import Control.Monad.Identity
 
 import Language.GTL.LTL as LTL
@@ -16,8 +16,41 @@ import Language.GTL.Translation
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Sc.Declaration]
 translateContracts scade gtl
   = let tp = typeMap gtl scade
-    in [ buchiToScade (modelName m) ins outs (runIdentity $ gtlsToBuchi (return . Set.fromList) (modelContract m))
-       | Model m <- gtl, let (_,ins,outs) = tp!(modelName m) ]
+    in concat [ [buchiToScade (modelArgs m!!0) ins outs (runIdentity $ gtlsToBuchi (return . Set.fromList) (modelContract m)),
+                 buildTest (modelArgs m!!0) (userOpParams op) (userOpReturns op)
+                ]
+              | Model m <- gtl, let (_,ins,outs) = tp!(modelName m),
+                let Just op = find (\op -> case op of 
+                                       UserOpDecl {} -> userOpName op == modelArgs m!!0
+                                       _ -> False) scade
+              ]
+
+buildTest :: String -> [Sc.VarDecl] -> [Sc.VarDecl] -> Sc.Declaration
+buildTest opname ins outs = UserOpDecl
+  { userOpKind = Sc.Node
+  , userOpImported = False
+  , userOpInterface = InterfaceStatus Nothing False
+  , userOpName = opname++"_test"
+  , userOpSize = Nothing
+  , userOpParams = ins
+  , userOpReturns = [ VarDecl { varNames = [VarId "test_result" False False]
+                              , varType = TypeBool
+                              , varDefault = Nothing
+                              , varLast = Nothing
+                              } ]
+  , userOpNumerics = []
+  , userOpContent = DataDef { dataSignals = []
+                            , dataLocals = outs
+                            , dataEquations = [SimpleEquation [ Named $ Sc.name var | varDecl <- outs,var <- varNames varDecl ]
+                                               (ApplyExpr (PrefixOp $ PrefixPath $ Path [opname])
+                                                [IdExpr (Path [Sc.name n]) | varDecl <- ins, n <- varNames varDecl]),
+                                               SimpleEquation [ Named "test_result" ]
+                                               (ApplyExpr (PrefixOp $ PrefixPath $ Path [opname++"_testnode"])
+                                                ([IdExpr (Path [Sc.name n]) | varDecl <- ins, n <- varNames varDecl] ++
+                                                 [IdExpr (Path [Sc.name n]) | varDecl <- outs, n <- varNames varDecl]))
+                                              ]
+                            }
+  }
 
 buchiToScade :: String -> Map String TypeExpr -> Map String TypeExpr
                 -> Buchi (Set GTLAtom)
@@ -41,7 +74,7 @@ buchiToScade name ins outs buchi
                               , dataLocals = []
                               , dataEquations = [StateEquation
                                                  (StateMachine Nothing (buchiToStates buchi))
-                                                 [] False
+                                                 [] True
                                                 ]
                               }
     }

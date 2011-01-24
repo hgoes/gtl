@@ -72,5 +72,7 @@ main = do
   case mode opts of
     PromelaContract -> print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
     NativeC -> translateGTL gtl_decls sc_decls >>= putStr
-    ScadeContract -> print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
+    ScadeContract -> do
+      putStrLn sc_str
+      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
   return ()
