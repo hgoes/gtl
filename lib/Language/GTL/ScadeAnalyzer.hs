@@ -34,5 +34,6 @@ typeMap :: [Declaration] -> [Sc.Declaration] -> TypeMap
 typeMap def scade = Map.fromList $
                     mapMaybe (\decl -> case decl of
                                  Connect _ -> Nothing
+                                 Verify _ -> Nothing
                                  Model mdl -> Just (modelName mdl,let (inp,outp) = scadeInterface ((modelArgs mdl)!!0) scade
                                                                   in ((modelArgs mdl)!!0,Map.fromList inp,Map.fromList outp))) def

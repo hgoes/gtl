@@ -2,6 +2,7 @@ module Language.GTL.Syntax where
 
 data Declaration = Model ModelDecl
                  | Connect ConnectDecl
+                 | Verify VerifyDecl
                  deriving Show
 
 data ModelDecl = ModelDecl

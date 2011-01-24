@@ -49,6 +49,7 @@ declarations : declaration declarations { $1:$2 }
 
 declaration : model_decl    { Model $1 }
             | connect_decl  { Connect $1 }
+            | verify_decl   { Verify $1 }
 
 model_decl : "model" "[" id "]" id model_args model_contract { ModelDecl
                                                                { modelName = $5
