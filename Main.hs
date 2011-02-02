@@ -38,7 +38,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case str of
                                              "promela-contract" -> opt { mode = PromelaContract }
                                              "scade-contract" -> opt { mode = ScadeContract }
                                              _ -> error $ "Unknown mode "++str) "mode"
-                                 ) "The tranlation mode (either \"native-c\" or \"promela-contract\""
+                                 ) "The tranlation mode (either \"native-c\", \"scade-contract\" or \"promela-contract\")"
           ]
 
 x2s :: FilePath -> IO String
