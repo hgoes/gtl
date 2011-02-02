@@ -32,13 +32,25 @@ defaultOptions = Options
   { mode = PromelaContract
   }
 
+modes :: [(String,TranslationMode)]
+modes = [("native-c",NativeC),("promela-contract",PromelaContract),("scade-contract",ScadeContract)]
+
+modeString :: [(String,a)] -> String
+modeString [] = ""
+modeString [(name,_)] = show name
+modeString names = buildOr names
+  where
+    buildOr ((name,_):names) = case names of
+      [(name2,_)] -> show name ++ " or " ++ show name2
+      _ -> show name ++ ", "++buildOr names
+
+
 options :: [OptDescr (Options -> Options)]
-options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case str of
-                                             "native-c" -> opt { mode = NativeC }
-                                             "promela-contract" -> opt { mode = PromelaContract }
-                                             "scade-contract" -> opt { mode = ScadeContract }
-                                             _ -> error $ "Unknown mode "++str) "mode"
-                                 ) "The tranlation mode (either \"native-c\", \"scade-contract\" or \"promela-contract\")"
+options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
+                                             Just rmode -> opt { mode = rmode }
+                                             Nothing -> error $ "Unknown mode "++show str
+                                         ) "mode"
+                                 ) ("The tranlation mode ("++modeString modes++")")
           ]
 
 x2s :: FilePath -> IO String
