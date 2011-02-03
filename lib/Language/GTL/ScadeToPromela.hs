@@ -52,5 +52,12 @@ equationToSteps (StateEquation (StateMachine (Just name) states) _ _)
           [] -> error "No initial state found"
           [is] -> statemap!(stateName is)
           _ -> error "Too many initial states found"
-    in ([Declaration Nothing Pr.TypeInt [("state_"++name,Nothing,Just (ConstExpr (ConstInt init)))]],[])
+        ifs = [ [StepStmt (StmtExpr (ExprAny
+                                     (BinExpr Pr.BinEquals
+                                      (RefExpr (VarRef ("state_"++name) Nothing Nothing))
+                                      (ConstExpr (ConstInt $ statemap!(stateName st)))
+                                     ))) Nothing
+                ]
+              | st <- states ]
+    in ([Declaration Nothing Pr.TypeInt [("state_"++name,Nothing,Just (ConstExpr (ConstInt init)))]],[StepStmt (StmtIf ifs) Nothing])
 equationToSteps _ = ([],[])
