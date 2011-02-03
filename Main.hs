@@ -16,11 +16,13 @@ import Language.GTL.PromelaContract as PrTr
 import Language.GTL.PromelaCIntegration
 import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
+import Language.GTL.ScadeToPromela as ScPr
 
 data TranslationMode
      = NativeC
      | PromelaContract
      | ScadeContract
+     | ScadeToPromela
      deriving Show
 
 data Options = Options
@@ -33,7 +35,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("promela-contract",PromelaContract),("scade-contract",ScadeContract)]
+modes = [("native-c",NativeC),("promela-contract",PromelaContract),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela)]
 
 modeString :: [(String,a)] -> String
 modeString [] = ""
@@ -87,4 +89,5 @@ main = do
     ScadeContract -> do
       putStrLn sc_str
       print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
+    ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
   return ()
