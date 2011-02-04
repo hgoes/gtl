@@ -28,7 +28,7 @@ declarationToProcess opdecl
                                                            , declarationType = convertType (varType par)
                                                            , declarationVariables = [ (name var,Nothing,Nothing) | var <- varNames par ]
                                                            }
-                                   | par <- userOpParams opdecl
+                                   | par <- userOpParams opdecl ++ userOpReturns opdecl
                                    ] ++ [StepDecl decl | decl <- decls]++
                                    [StepStmt (StmtDo
                                               [[StepStmt (StmtReceive ("chan_"++name var) [RecvVar (VarRef (name var) Nothing Nothing)]) Nothing
@@ -38,6 +38,13 @@ declarationToProcess opdecl
                                              ) Nothing
                                    ]
                  }
+
+dataDefToSteps :: DataDef -> ([Pr.Declaration],[Step])
+dataDefToSteps def = let (decls,steps) = equationsToSteps (dataEquations def)
+                         locs = [ StepDecl $ Declaration Nothing (convertType $ varType var) [(Sc.name vid,Nothing,Nothing) | vid <- varNames var ]
+                                | var <- dataLocals def
+                                ]
+                     in (decls,locs++steps)
 
 equationsToSteps :: [Equation] -> ([Pr.Declaration],[Step])
 equationsToSteps [] = ([],[])
@@ -52,12 +59,22 @@ equationToSteps (StateEquation (StateMachine (Just name) states) _ _)
           [] -> error "No initial state found"
           [is] -> statemap!(stateName is)
           _ -> error "Too many initial states found"
-        ifs = [ [StepStmt (StmtExpr (ExprAny
-                                     (BinExpr Pr.BinEquals
-                                      (RefExpr (VarRef ("state_"++name) Nothing Nothing))
-                                      (ConstExpr (ConstInt $ statemap!(stateName st)))
-                                     ))) Nothing
-                ]
-              | st <- states ]
-    in ([Declaration Nothing Pr.TypeInt [("state_"++name,Nothing,Just (ConstExpr (ConstInt init)))]],[StepStmt (StmtIf ifs) Nothing])
+        ifs = [ (rdecls,
+                 [StepStmt (StmtExpr (ExprAny
+                                      (BinExpr Pr.BinEquals
+                                       (RefExpr (VarRef ("state_"++name) Nothing Nothing))
+                                       (ConstExpr (ConstInt $ statemap!(stateName st)))
+                                      ))) Nothing
+                 ]++rsteps)
+              | st <- states, let (rdecls,rsteps) = dataDefToSteps $ stateData st ]
+    in ([Declaration Nothing Pr.TypeInt [("state_"++name,Nothing,Just (ConstExpr (ConstInt init)))]]
+        ++(concat $ fmap fst ifs),
+        [StepStmt (StmtIf $ fmap snd ifs) Nothing])
+equationToSteps (SimpleEquation lhs rhs) = ([],buildAssign lhs rhs)
 equationToSteps _ = ([],[])
+
+buildAssign :: [LHSId] -> Sc.Expr -> [Step]
+buildAssign lhs (IdExpr (Path [var])) = case lhs of
+  [Named trg] -> [StepStmt (StmtAssign (VarRef trg Nothing Nothing) (RefExpr $ VarRef var Nothing Nothing)) Nothing]
+  _ -> []
+buildAssign _ _ = []
