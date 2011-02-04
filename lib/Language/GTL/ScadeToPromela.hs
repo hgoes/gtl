@@ -60,12 +60,15 @@ equationToSteps (StateEquation (StateMachine (Just name) states) _ _)
           [is] -> statemap!(stateName is)
           _ -> error "Too many initial states found"
         ifs = [ (rdecls,
-                 [StepStmt (StmtExpr (ExprAny
-                                      (BinExpr Pr.BinEquals
-                                       (RefExpr (VarRef ("state_"++name) Nothing Nothing))
-                                       (ConstExpr (ConstInt $ statemap!(stateName st)))
-                                      ))) Nothing
-                 ]++rsteps)
+                 [StepStmt (StmtSequence $
+                            [StepStmt (StmtExpr (ExprAny
+                                                  (BinExpr Pr.BinEquals
+                                                   (RefExpr (VarRef ("state_"++name) Nothing Nothing))
+                                                   (ConstExpr (ConstInt $ statemap!(stateName st)))
+                                                  ))) Nothing
+                            ]++rsteps
+                           ) Nothing
+                 ])
               | st <- states, let (rdecls,rsteps) = dataDefToSteps $ stateData st ]
     in ([Declaration Nothing Pr.TypeInt [("state_"++name,Nothing,Just (ConstExpr (ConstInt init)))]]
         ++(concat $ fmap fst ifs),
