@@ -79,7 +79,7 @@ translateModel name mdl = do
                       return $ Pr.StepStmt
                         (Pr.StmtLabel
                          ("st"++show st)
-                         (Pr.StmtSequence $ stps ++ getFollows (Set.toList $ successors decl))
+                         (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
                         ) Nothing
                   ) (Map.toList $ stateMachine mdl)
   return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
