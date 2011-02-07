@@ -206,7 +206,9 @@ expand untils n node nset = case new node of
                                                 , next = Set.insert f (next node)
                                                 }) nset
              Bin And l r -> expand untils n (node { new = l:r:xs
-                                                  , old = Set.insert x (old node)
+                                                  , old = if Set.member x untils
+                                                          then Set.insert x (old node)
+                                                          else old node
                                                   }) nset
              Bin Or l r -> let storeOld = Set.member x untils
                                node1 = Node { name = n
