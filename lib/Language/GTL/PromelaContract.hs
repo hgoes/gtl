@@ -73,7 +73,7 @@ translateClaim varsIn machine = do
                                         ) Nothing
 
 translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
-translateModel name mdl = traceShow (stateMachine mdl) $ do
+translateModel name mdl = do
   do_stps <- mapM (\(st,decl) -> do
                       stps <- getSteps (vars decl)
                       return $ Pr.StepStmt
@@ -129,7 +129,7 @@ translateContracts' prog
                 , (var,set) <- Map.toList (varsOut mdl)
                 , Set.member Nothing set]
     model_procs <- mapM (\(name,mdl) -> do
-                            steps <- translateModel2 name mdl
+                            steps <- translateModel name mdl
                             return $ Pr.ProcType { Pr.proctypeActive = Just Nothing -- active without priority
                                                  , Pr.proctypeName = name
                                                  , Pr.proctypeArguments = []
