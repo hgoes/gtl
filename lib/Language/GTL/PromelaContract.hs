@@ -16,6 +16,8 @@ import Data.Foldable (foldl,foldlM)
 import Prelude hiding (mapM,foldl)
 import Data.Maybe (catMaybes)
 
+import Debug.Trace
+
 data TransModel s = TransModel
                     { varsIn :: Map String (Set (Tree s Int))
                     , varsOut :: Map String (Set (Maybe (String,String)))
@@ -69,47 +71,51 @@ translateClaim varsIn machine = do
                                          (Pr.RefExpr (Pr.VarRef ("never_"++mdl++"_"++var) Nothing Nothing))
                                          (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
                                         ) Nothing
-                      
+
 translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
-translateModel name mdl = do
+translateModel name mdl = traceShow (stateMachine mdl) $ do
   do_stps <- mapM (\(st,decl) -> do
-                      let follows = [ (vars $ (stateMachine mdl)!succ,succ) | succ <- Set.toList $ successors decl ]
-                      if_stps <- mapM getIfSteps follows
-                      return $ Pr.StepStmt (Pr.StmtLabel ("st"++show st) (Pr.StmtIf if_stps)) Nothing
-                  ) (Map.toList (stateMachine mdl))
+                      stps <- getSteps (vars decl)
+                      return $ Pr.StepStmt
+                        (Pr.StmtLabel
+                         ("st"++show st)
+                         (Pr.StmtSequence $ stps ++ getFollows (Set.toList $ successors decl))
+                        ) Nothing
+                  ) (Map.toList $ stateMachine mdl)
   return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
                                    | (name,st) <- Map.toList (stateMachine mdl), isStart st ]) Nothing
            ] ++ do_stps
-  where
-    getIfSteps (cond,follow) = do
-      cond_stps <- mapM getConds (Map.toList cond)
-      return $ (concat cond_stps) ++ [ Pr.StepStmt (Pr.StmtGoto ("st" ++ show follow)) Nothing ]
-    getConds (var,tree) = case Map.lookup var (varsIn mdl) of
-      Nothing -> case Map.lookup var (varsOut mdl) of
-        Nothing -> return []
-        Just ns -> return [ Pr.StepStmt (Pr.StmtAssign
-                                         (Pr.VarRef (case target of
-                                                        Just (mname,var) -> "conn_"++mname++"_"++var
-                                                        Nothing -> "never_"++name++"_"++var
-                                                    ) Nothing Nothing)
-                                         (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
-                          | target <- Set.toList ns ]
-      Just inc -> mapM (\i -> do
-                           nv <- i #=> tree
-                           t <- true
-                           f <- false
-                           if nv == t
-                             then return $ Just $ checkVar Pr.BinEquals var i
-                             else (do
-                                      nv <- i #&& tree
-                                      if nv == f
-                                        then return $ Just $ checkVar Pr.BinNotEquals var i
-                                        else return Nothing)
-                       ) (Set.toList inc) >>= return.catMaybes
-    checkVar op var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
-                                     (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
-                                     (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
-                                    ) Nothing
+    where
+      getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show s) Nothing ] | s <- succs ]) Nothing ]
+      getSteps cond = do
+        cond_stps <- mapM getConds (Map.toList cond)
+        return $ concat cond_stps
+      getConds (var,tree) = case Map.lookup var (varsIn mdl) of
+        Nothing -> case Map.lookup var (varsOut mdl) of
+          Nothing -> return []
+          Just ns -> return [ Pr.StepStmt (Pr.StmtAssign
+                                           (Pr.VarRef (case target of
+                                                          Just (mname,var) -> "conn_"++mname++"_"++var
+                                                          Nothing -> "never_"++name++"_"++var
+                                                      ) Nothing Nothing)
+                                           (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
+                            | target <- Set.toList ns ]
+        Just inc -> mapM (\i -> do
+                             nv <- i #=> tree
+                             t <- true
+                             f <- false
+                             if nv == t
+                               then return $ Just $ checkVar Pr.BinEquals var i
+                               else (do
+                                        nv <- i #&& tree
+                                        if nv == f
+                                          then return $ Just $ checkVar Pr.BinNotEquals var i
+                                          else return Nothing)
+                         ) (Set.toList inc) >>= return.catMaybes
+      checkVar op var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
+                                       (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
+                                       (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
+                                      ) Nothing
 
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
@@ -123,7 +129,7 @@ translateContracts' prog
                 , (var,set) <- Map.toList (varsOut mdl)
                 , Set.member Nothing set]
     model_procs <- mapM (\(name,mdl) -> do
-                            steps <- translateModel name mdl
+                            steps <- translateModel2 name mdl
                             return $ Pr.ProcType { Pr.proctypeActive = Just Nothing -- active without priority
                                                  , Pr.proctypeName = name
                                                  , Pr.proctypeArguments = []
