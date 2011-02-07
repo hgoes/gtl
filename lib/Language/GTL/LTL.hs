@@ -118,11 +118,16 @@ data BuchiState a = BuchiState
                     } deriving Show
 
 type Untils a = Map (LTL a,LTL a) Integer
+type UntilsRHS a = Set (LTL a)
+
+untilsToUntilsRHS :: Ord a => Untils a -> UntilsRHS a
+untilsToUntilsRHS mp = Set.map snd $ Map.keysSet mp
 
 ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
 ltlToBuchiM p f = let f' = distributeNegation f
                       unt = untils f'
-                  in buildGraph p unt (buildNodeSet f')
+                      untr = untilsToUntilsRHS unt
+                  in buildGraph p unt (buildNodeSet untr f')
 
 ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
 ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
@@ -157,67 +162,71 @@ buildGraph f untils nset
                        ) mp inc
            ) Map.empty (Map.toList nset)
 
-buildNodeSet :: Ord a => LTL a -> NodeSet a
-buildNodeSet ltl = fst $ expand 2 (Node { name = 1
-                                        , new = [ltl]
-                                        , old = Set.empty
-                                        , next = Set.empty
-                                        , incoming = Set.singleton 0
-                                        }) Map.empty
+buildNodeSet :: Ord a => UntilsRHS a -> LTL a -> NodeSet a
+buildNodeSet untils ltl = fst $ expand untils 2 (Node { name = 1
+                                                      , new = [ltl]
+                                                      , old = Set.empty
+                                                      , next = Set.empty
+                                                      , incoming = Set.singleton 0
+                                                      }) Map.empty
 
-expand :: Ord a => Integer -> Node a -> NodeSet a -> (NodeSet a,Integer)
-expand n node nset = case new node of
+expand :: Ord a => UntilsRHS a -> Integer -> Node a -> NodeSet a -> (NodeSet a,Integer)
+expand untils n node nset = case new node of
   [] -> let (res,nset') = Map.insertLookupWithKey
                          (\_ (k2,inc2) (k1,inc1) -> (k1,Set.union inc1 inc2))
                          (old node,next node)
                          (name node,incoming node)
                          nset
        in case res of
-         Nothing -> expand (n+1) (Node
-                                 { name = n
-                                 , new = Set.toList (next node)
-                                 , old = Set.empty
-                                 , next = Set.empty
-                                 , incoming = Set.singleton (name node)
-                                 }) nset'
+         Nothing -> expand untils (n+1) (Node { name = n
+                                              , new = Set.toList (next node)
+                                              , old = Set.empty
+                                              , next = Set.empty
+                                              , incoming = Set.singleton (name node)
+                                              }) nset'
          Just prev -> (nset',n)
   (x:xs) -> if Set.member x (old node)
-           then expand n (node { new = xs }) nset
+           then expand untils n (node { new = xs }) nset
            else case x of
              Atom p -> if Set.member (Un Not (Atom p)) (old node)
                       then (nset,n)
-                      else expand n (node { old = Set.insert x (old node)
-                                          , new = xs
-                                          }) nset
+                      else expand untils n (node { old = Set.insert x (old node)
+                                                 , new = xs
+                                                 }) nset
              Ground p -> if p
-                        then expand n (node { new = xs }) nset
+                        then expand untils n (node { new = xs }) nset
                         else (nset,n)
              Un Not (Atom p) -> if Set.member (Atom p) (old node)
                                then (nset,n)
-                               else expand n (node { old = Set.insert x (old node)
-                                                   , new = xs
-                                                   }) nset
-             Un Next f -> expand n (node { new = xs
-                                        , old = Set.insert x (old node)
-                                        , next = Set.insert f (next node)
-                                        }) nset
-             Bin And l r -> expand n (node { new = l:r:xs
-                                          , old = Set.insert x (old node)
-                                          }) nset
-             Bin Or l r -> let node1 = Node { name = n
-                                           , incoming = incoming node
-                                           , new = l:xs
-                                           , old = Set.insert x (old node)
-                                           , next = next node
-                                           }
+                               else expand untils n (node { old = Set.insert x (old node)
+                                                          , new = xs
+                                                          }) nset
+             Un Next f -> expand untils n (node { new = xs
+                                                , old = Set.insert x (old node)
+                                                , next = Set.insert f (next node)
+                                                }) nset
+             Bin And l r -> expand untils n (node { new = l:r:xs
+                                                  , old = Set.insert x (old node)
+                                                  }) nset
+             Bin Or l r -> let storeOld = Set.member x untils
+                               node1 = Node { name = n
+                                            , incoming = incoming node
+                                            , new = l:xs
+                                            , old = if storeOld
+                                                    then Set.insert x (old node)
+                                                    else old node
+                                            , next = next node
+                                            }
                                node2 = Node { name = n+1
                                             , incoming = incoming node
                                             , new = r:xs
-                                            , old = Set.insert x (old node)
+                                            , old = if storeOld
+                                                    then Set.insert x (old node)
+                                                    else old node
                                             , next = next node
                                             }
-                               (nset',n') = expand (n+2) node1 nset
-                          in expand n' node2 nset'
+                               (nset',n') = expand untils (n+2) node1 nset
+                          in expand untils n' node2 nset'
              Bin Until l r -> let node1 = Node { name = n
                                               , incoming = incoming node
                                               , new = l:xs
@@ -230,8 +239,8 @@ expand n node nset = case new node of
                                                , old = Set.insert x (old node)
                                                , next = next node
                                                }
-                                  (nset',n') = expand (n+2) node1 nset
-                             in expand n' node2 nset'
+                                  (nset',n') = expand untils (n+2) node1 nset
+                             in expand untils n' node2 nset'
              Bin UntilOp l r -> let node1 = Node { name = n
                                                 , incoming = incoming node
                                                 , new = r:xs
@@ -244,8 +253,8 @@ expand n node nset = case new node of
                                                  , old = Set.insert x (old node)
                                                  , next = next node
                                                  }
-                                    (nset',n') = expand (n+2) node1 nset
-                               in expand n' node2 nset'
+                                    (nset',n') = expand untils (n+2) node1 nset
+                               in expand untils n' node2 nset'
 
 f1 = Bin Until (Atom "x") (Ground False)
 f2 = Un Not (Bin Until (Ground True) (Atom "x"))
