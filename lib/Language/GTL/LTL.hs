@@ -108,14 +108,18 @@ data Node a = Node
               , incoming :: Set Integer
               } deriving Show
 
-type Buchi a = Map Integer (BuchiState a) --(Bool,Set a,Set a,Set Integer,Set Integer)
+type Buchi a = GBuchi Integer a (Set Integer)
 
-data BuchiState a = BuchiState
-                    { isStart :: Bool
-                    , vars :: a
-                    , finalSets :: Set Integer
-                    , successors :: Set Integer
-                    } deriving Show
+type SBuchi a = GBuchi (Integer,Integer) a Bool
+
+type GBuchi st a f = Map st (BuchiState st a f)
+
+data BuchiState st a f = BuchiState
+                         { isStart :: Bool
+                         , vars :: a
+                         , finalSets :: f
+                         , successors :: Set st
+                         } deriving Show
 
 type Untils a = Map (LTL a,LTL a) Integer
 type UntilsRHS a = Set (LTL a)

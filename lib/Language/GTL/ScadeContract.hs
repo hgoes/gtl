@@ -131,7 +131,7 @@ buchiToStates buchi = startState buchi :
                        }
                      | (num,st) <- Map.toList buchi ]
 
-stateToTransition :: Integer -> BuchiState (Set GTLAtom) -> Sc.Transition
+stateToTransition :: Integer -> BuchiState st (Set GTLAtom) f -> Sc.Transition
 stateToTransition name st
   = Transition
     (relsToExpr $ Set.toList (vars st))
