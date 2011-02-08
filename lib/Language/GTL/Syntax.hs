@@ -17,6 +17,7 @@ data ConnectDecl = ConnectDecl
                    , connectFromVariable :: String
                    , connectToModel :: String
                    , connectToVariable :: String
+                   , connectInit :: InitExpr
                    } deriving Show
 
 data VerifyDecl = VerifyDecl
@@ -48,6 +49,10 @@ data Relation = BinLT
               | BinEq
               | BinNEq
               deriving (Show,Eq,Ord)
+
+data InitExpr = InitAll
+              | InitOne Integer
+              deriving (Show,Eq)
 
 relNot :: Relation -> Relation
 relNot rel = case rel of

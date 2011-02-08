@@ -13,7 +13,8 @@ data Token = Identifier String
            | Equals
            deriving Show
 
-data KeyWord = KeyAlways
+data KeyWord = KeyAll
+             | KeyAlways
              | KeyAnd
              | KeyConnect
              | KeyFollows
@@ -22,6 +23,7 @@ data KeyWord = KeyAlways
              | KeyNot
              | KeyOr
              | KeyIn
+             | KeyInit
              | KeyVerify
              deriving Show
 

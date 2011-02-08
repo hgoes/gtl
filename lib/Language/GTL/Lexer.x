@@ -11,10 +11,12 @@ $digit10 = [0-9]
 
 tokens:-
   $white+                        ;
+  all                            { key KeyAll }
   always                         { key KeyAlways }
   and                            { key KeyAnd }
   connect                        { key KeyConnect }
   follows                        { key KeyFollows }
+  init                           { key KeyInit }
   model                          { key KeyModel }
   next                           { key KeyNext }
   not                              { key KeyNot }

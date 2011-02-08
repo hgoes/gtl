@@ -10,6 +10,7 @@ import Language.GTL.Syntax
 %error { parseError }
 
 %token
+  "all"             { Key KeyAll }
   "always"          { Key KeyAlways }
   "connect"         { Key KeyConnect }
   "and"             { Key KeyAnd }
@@ -19,6 +20,7 @@ import Language.GTL.Syntax
   "not"             { Key KeyNot }
   "or"              { Key KeyOr }
   "in"              { Key KeyIn }
+  "init"            { Key KeyInit }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
@@ -97,9 +99,13 @@ lits : lit comma_lits { $1:$2 }
 comma_lits : "," lit comma_lits { $2:$3 }
            |                    { [] }
 
-connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
+connect_decl : "connect" id "." id id "." id init_decl ";" { ConnectDecl $2 $4 $5 $7 $8 }
 
 verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
+
+init_decl : "init" "all" { InitAll }
+          | "init" int   { InitOne $2 }
+          |              { InitAll }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

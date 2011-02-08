@@ -1,3 +1,26 @@
+{- Ein Vögelchen, dem noch die Glieder zu zart und weich
+ - erhebt umsonst sein zitterndes Gefider, den Alten gleich
+ - den höh'ren Kreis der Lüfte zu zerteilen,
+ - obgleich der Wille da, den selben nachzueilen.
+ - Ganz ähnlich geht's uns allhier mit unserem Witz und Wissen;
+ - die nimmer ruhende Begier ist nach dem Höh'ren stets beflissen.
+ - Der angebor'ne Stolz will auch die schwersten Sachen sich federleicht,
+ - ja was unmöglich fällt,
+ - sich möglich machen.
+ - Da unserem Witz wie unserem Leben von Gott allhier ein Ziel gestellt
+ - das nicht zu überstreben.
+ - Es kennt die Welt nur einen Salomon
+ - den Gott, um dessen Thron die höchste Weisheit strahlt
+ - den Weisesten gennenet
+ - der doch sein Schwachsein selbst bekennet.
+ - Achja, in dieser reicht das Erkenntnis nicht zu seiner Völligkeit.
+ - Gott lässt uns durch das Sterben, dass uns zu nichts zu machen scheint,
+ - erst alles erben.
+ - Was dunkel war, wird dann ein heller Schein.
+ - Was Stückwerk hieß, wird ganz.
+ - Was kindisch, männlich sein.
+ -                                  -- Telemann
+ -}
 module Language.GTL.PromelaContract where
 
 import Data.BDD
