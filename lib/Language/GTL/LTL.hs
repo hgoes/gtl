@@ -262,6 +262,35 @@ expand untils n node nset = case new node of
                                     (nset',n') = expand untils (n+2) node1 nset
                                in expand untils n' node2 nset'
 
+translateGBA :: (Ord st,Ord f) => GBuchi st a (Set f) -> GBuchi (st,Int) a Bool
+translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elems buchi ]
+                         fsize = Set.size finals
+                         finals_list = Set.toList finals
+                         expand c f st decl mp = case Map.lookup (st,c) mp of
+                           Just _ -> mp
+                           Nothing -> let isFinal = Set.member f (finalSets decl)
+                                          nsuccs = Set.map (\n -> (n,nc)) (successors decl)
+                                          nmp = Map.insert (st,c) (BuchiState { isStart = isStart decl
+                                                                              , vars = vars decl
+                                                                              , finalSets = isFinal
+                                                                              , successors = nsuccs
+                                                                              }) mp
+                                          nc = if isFinal
+                                               then (c+1) `mod` fsize
+                                               else c
+                                          nf = if isFinal
+                                               then finals_list!!nc
+                                               else f
+                                      in foldl (\cmp succ -> expand nc nf succ (buchi!succ) cmp) nmp (successors decl)
+                     in if fsize == 0
+                        then Map.fromAscList [ ((st,0),BuchiState { isStart = isStart decl
+                                                                  , vars = vars decl
+                                                                  , finalSets = True
+                                                                  , successors = Set.map (\n -> (n,0)) (successors decl)
+                                                                  })
+                                             | (st,decl) <- Map.toAscList buchi ]
+                        else foldl (\mp (st,decl) -> expand 0 (head finals_list) st decl mp) Map.empty [ st | st <- Map.toList buchi, isStart $ snd st ]
+
 f1 = Bin Until (Atom "x") (Ground False)
 f2 = Un Not (Bin Until (Ground True) (Atom "x"))
 f3 = Bin Until (Ground True) (Atom "x")
