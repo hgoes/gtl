@@ -3,6 +3,8 @@ module Language.GTL.Parser where
 
 import Language.GTL.Token
 import Language.GTL.Syntax
+
+import Data.Maybe (mapMaybe)
 }
 
 %name gtl
@@ -57,7 +59,12 @@ model_decl : "model" "[" id "]" id model_args model_contract { ModelDecl
                                                                { modelName = $5
                                                                , modelType = $3
                                                                , modelArgs = $6
-                                                               , modelContract = $7
+                                                               , modelContract = mapMaybe (\el -> case el of
+                                                                                              Left c -> Just c
+                                                                                              Right _ -> Nothing) $7
+                                                               , modelInits = mapMaybe (\el -> case el of
+                                                                                           Left _ -> Nothing
+                                                                                           Right c -> Just c) $7
                                                                }
                                                              }
 
@@ -70,8 +77,12 @@ model_args1 : string model_args2 { $1:$2 }
 model_args2 : "," string model_args2 { $2:$3 }
             |                        { [] }
 
-model_contract : "{" formulas "}" { $2 }
-               | ";"              { [] }
+model_contract : "{" formulas_or_inits "}" { $2 }
+               | ";"                       { [] }
+
+formulas_or_inits : formula ";" formulas_or_inits   { (Left $1):$3 }
+                  | init_decl ";" formulas_or_inits { (Right $1):$3 }
+                  |                                 { [] }
 
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
@@ -99,13 +110,12 @@ lits : lit comma_lits { $1:$2 }
 comma_lits : "," lit comma_lits { $2:$3 }
            |                    { [] }
 
-connect_decl : "connect" id "." id id "." id init_decl ";" { ConnectDecl $2 $4 $5 $7 $8 }
+connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
 
 verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
-init_decl : "init" "all" { InitAll }
-          | "init" int   { InitOne $2 }
-          |              { InitAll }
+init_decl : "init" id "all" { ($2,InitAll) }
+          | "init" id int   { ($2,InitOne $3) }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

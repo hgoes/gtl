@@ -10,6 +10,7 @@ data ModelDecl = ModelDecl
                  , modelType :: String
                  , modelArgs :: [String]
                  , modelContract :: [Formula]
+                 , modelInits :: [(String,InitExpr)]
                  } deriving Show
 
 data ConnectDecl = ConnectDecl
@@ -17,7 +18,6 @@ data ConnectDecl = ConnectDecl
                    , connectFromVariable :: String
                    , connectToModel :: String
                    , connectToVariable :: String
-                   , connectInit :: InitExpr
                    } deriving Show
 
 data VerifyDecl = VerifyDecl

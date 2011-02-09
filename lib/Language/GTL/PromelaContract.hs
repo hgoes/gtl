@@ -42,14 +42,14 @@ import Data.Maybe (catMaybes)
 import Debug.Trace
 
 data TransModel s = TransModel
-                    { varsIn :: Map String (Set (Tree s Int))
+                    { varsIn :: Map String (Set (Tree s Int),Tree s Int)
                     , varsOut :: Map String (Set (Maybe (String,String)))
                     , stateMachine :: Buchi (Map String (Tree s Int))
                     } deriving Show
                                
 data TransProgram s = TransProgram
-                      { transModels :: Map String (TransModel s)
-                      , transClaims :: [Buchi (Map (String,String) (Tree s Int))]
+                      { transModels   :: Map String (TransModel s)
+                      , transClaims   :: [Buchi (Map (String,String) (Tree s Int))]
                       } deriving Show
 
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
@@ -123,18 +123,18 @@ translateModel name mdl = do
                                                       ) Nothing Nothing)
                                            (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
                             | target <- Set.toList ns ]
-        Just inc -> mapM (\i -> do
-                             nv <- i #=> tree
-                             t <- true
-                             f <- false
-                             if nv == t
-                               then return $ Just $ checkVar Pr.BinEquals var i
-                               else (do
-                                        nv <- i #&& tree
-                                        if nv == f
-                                          then return $ Just $ checkVar Pr.BinNotEquals var i
-                                          else return Nothing)
-                         ) (Set.toList inc) >>= return.catMaybes
+        Just (inc,init) -> mapM (\i -> do
+                                    nv <- i #=> tree
+                                    t <- true
+                                    f <- false
+                                    if nv == t
+                                      then return $ Just $ checkVar Pr.BinEquals var i
+                                      else (do
+                                               nv <- i #&& tree
+                                               if nv == f
+                                                 then return $ Just $ checkVar Pr.BinNotEquals var i
+                                                 else return Nothing)
+                                ) (Set.toList (Set.insert init inc)) >>= return.catMaybes
       checkVar op var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
                                        (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
                                        (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
@@ -144,9 +144,9 @@ translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
   = do
     let decls = Pr.Decl $ Pr.Declaration Nothing Pr.TypeInt $
-                [ ("conn_"++name++"_"++var,Nothing,Nothing)
+                [ ("conn_"++name++"_"++var,Nothing,Just $ ConstExpr $ ConstInt $ fromIntegral $ nodeHash init)
                 | (name,mdl) <- Map.toList $ transModels prog
-                , (var,_) <- Map.toList (varsIn mdl) ] ++
+                , (var,(_,init)) <- Map.toList (varsIn mdl) ] ++
                 [ ("never_"++name++"_"++var,Nothing,Nothing)
                 | (name,mdl) <- Map.toList $ transModels prog
                 , (var,set) <- Map.toList (varsOut mdl)
@@ -170,6 +170,7 @@ translateContracts' prog
 buildTransProgram :: Monad m => [Sc.Declaration] -> [GTL.Declaration] -> BDDM s Int m (TransProgram s)
 buildTransProgram scade decls
   = do
+    t <- true
     prog <- mapM (\m -> do
                      machine <- gtlsToBuchi (\lst -> do
                                                 res <- mapM relToBDD lst
@@ -179,7 +180,13 @@ buildTransProgram scade decls
                                                                                                Just _ -> error "Contracts can't contain qualified variables"
                                                                                            ) res))
                                             ) (modelContract m)
-                     return (modelName m,TransModel { varsIn = Map.empty 
+                     inits <- mapM (\(v,i) -> do
+                                       r <- case i of
+                                         InitAll -> true
+                                         InitOne x -> encodeSingleton 0 (fromIntegral x::Int)
+                                       return (v,(Set.empty,r))
+                                   ) (modelInits m)
+                     return (modelName m,TransModel { varsIn = Map.fromList inits
                                                     , varsOut = Map.empty
                                                     , stateMachine = machine
                                                     })
@@ -192,20 +199,21 @@ buildTransProgram scade decls
                                                                                              Just rq -> ((rq,name),[tree])) res))
                                           ) (fmap (GTL.Not) $ verifyFormulas claim)
                    ) claims
-    let prog1 = foldl (\cprog c -> let fromMdl = cprog!(connectFromModel c)
-                                       nprog1 = Map.adjust
-                                                (\mdl -> mdl { varsIn = Map.insertWith Set.union
-                                                                        (connectToVariable c)
-                                                                        (bddsForVar (connectFromVariable c) (stateMachine fromMdl))
-                                                                        (varsIn mdl)
-                                                             }) (connectToModel c) cprog
-                                       nprog2 = Map.adjust
-                                                (\mdl -> mdl { varsOut = Map.insertWith Set.union
-                                                                         (connectFromVariable c)
-                                                                         (Set.singleton $ Just (connectToModel c,connectToVariable c))
-                                                                         (varsOut mdl)
-                                                             }) (connectFromModel c) nprog1
-                                   in nprog2
+    let prog1 = foldl (\cprog c
+                       -> let fromMdl = cprog!(connectFromModel c)
+                              nprog1 = Map.adjust
+                                       (\mdl -> mdl { varsIn = Map.insertWith (\(ins_new,_) (ins_old,init_old) -> (Set.union ins_new ins_old,init_old))
+                                                               (connectToVariable c)
+                                                               (bddsForVar (connectFromVariable c) (stateMachine fromMdl),t)
+                                                               (varsIn mdl)
+                                                    }) (connectToModel c) cprog
+                              nprog2 = Map.adjust
+                                       (\mdl -> mdl { varsOut = Map.insertWith Set.union
+                                                                (connectFromVariable c)
+                                                                (Set.singleton $ Just (connectToModel c,connectToVariable c))
+                                                                (varsOut mdl)
+                                                    }) (connectFromModel c) nprog1
+                          in nprog2
                       ) prog conns
         prog2 = foldl (\tprog never -> foldl (\cprog (_,st) -> foldl (\cprog' ((mname,var),_) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union var
                                                                                                                                      (Set.singleton Nothing)
@@ -215,8 +223,8 @@ buildTransProgram scade decls
                                              ) prog1 (Map.toList never)
                       ) prog1 nevers
     return $ TransProgram
-      { transModels = prog2
-      , transClaims = nevers
+      { transModels   = prog2
+      , transClaims   = nevers
       }
   where
     models = [ m | Model m <- decls ]
