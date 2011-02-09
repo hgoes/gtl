@@ -15,6 +15,7 @@ tokens:-
   always                         { key KeyAlways }
   and                            { key KeyAnd }
   connect                        { key KeyConnect }
+  contract                       { key KeyContract }
   follows                        { key KeyFollows }
   init                           { key KeyInit }
   model                          { key KeyModel }

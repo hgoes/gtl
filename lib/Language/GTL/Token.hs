@@ -17,6 +17,7 @@ data KeyWord = KeyAll
              | KeyAlways
              | KeyAnd
              | KeyConnect
+             | KeyContract
              | KeyFollows
              | KeyModel
              | KeyNext

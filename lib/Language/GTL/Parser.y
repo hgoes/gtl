@@ -15,6 +15,7 @@ import Data.Maybe (mapMaybe)
   "all"             { Key KeyAll }
   "always"          { Key KeyAlways }
   "connect"         { Key KeyConnect }
+  "contract"        { Key KeyContract }
   "and"             { Key KeyAnd }
   "follows"         { Key KeyFollows }
   "model"           { Key KeyModel }
@@ -80,9 +81,12 @@ model_args2 : "," string model_args2 { $2:$3 }
 model_contract : "{" formulas_or_inits "}" { $2 }
                | ";"                       { [] }
 
-formulas_or_inits : formula ";" formulas_or_inits   { (Left $1):$3 }
-                  | init_decl ";" formulas_or_inits { (Right $1):$3 }
-                  |                                 { [] }
+formulas_or_inits : mb_contract formula ";" formulas_or_inits   { (Left $2):$4 }
+                  | init_decl ";" formulas_or_inits             { (Right $1):$3 }
+                  |                                             { [] }
+
+mb_contract : "contract" { }
+            |            { }
 
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
