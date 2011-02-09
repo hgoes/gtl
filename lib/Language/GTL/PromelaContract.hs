@@ -32,18 +32,19 @@ import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
 import Language.Promela.Syntax as Pr
 
-import Data.Map as Map
+import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
 import Data.Traversable (mapM)
 import Data.Foldable (foldl,foldlM)
 import Prelude hiding (mapM,foldl)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes,mapMaybe)
 
 import Debug.Trace
 
 data TransModel s = TransModel
-                    { varsIn :: Map String (Set (Tree s Int),Tree s Int)
+                    { varsIn :: Map String (Set (Tree s Int))
                     , varsOut :: Map String (Set (Maybe (String,String)))
+                    , varsInit :: Map String (Tree s Int)
                     , stateMachine :: Buchi (Map String (Tree s Int))
                     } deriving Show
                                
@@ -121,7 +122,11 @@ translateModel name mdl = do
         let checks = [ cond | Right cond <- cond_stps ]
             check_stps = case checks of
               [] -> []
-              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) (concat checks)) Nothing]
+              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y)
+                                 (mapMaybe (\check -> case check of
+                                               [] -> Nothing
+                                               _ -> Just $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) check
+                                           ) checks)) Nothing]
             assigns = [ assign | Left assign <- cond_stps ]
         return $ check_stps ++ (concat assigns)
       getConds (var,tree) = case Map.lookup var (varsIn mdl) of
@@ -134,18 +139,18 @@ translateModel name mdl = do
                                                              ) Nothing Nothing)
                                                   (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
                                    | target <- Set.toList ns ]
-        Just (inc,init) -> mapM (\i -> do
-                                    nv <- i #=> tree
-                                    t <- true
-                                    f <- false
-                                    if nv == t
-                                      then return $ Just $ checkVar Pr.BinEquals var i
-                                      else (do
-                                               nv <- i #&& tree
-                                               if nv == f
-                                                 then return $ Just $ checkVar Pr.BinNotEquals var i
-                                                 else return Nothing)
-                                ) (Set.toList (Set.insert init inc)) >>= return.(Right).catMaybes
+        Just inc -> mapM (\i -> do
+                             nv <- i #=> tree
+                             t <- true
+                             f <- false
+                             if nv == t
+                               then return $ Just $ checkVar Pr.BinEquals var i
+                               else (do
+                                        nv <- i #&& tree
+                                        if nv == f
+                                          then return $ Just $ checkVar Pr.BinNotEquals var i
+                                          else return Nothing)
+                         ) (Set.toList inc) >>= return.(Right).catMaybes
       checkVar op var i = Pr.BinExpr op
                           (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
                           (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
@@ -153,11 +158,16 @@ translateModel name mdl = do
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
   = do
+    t <- true
     let decls = Pr.Decl $ Pr.Declaration Nothing Pr.TypeInt $
-                [ ("conn_"++name++"_"++var,Nothing,Just $ ConstExpr $ ConstInt $ fromIntegral $ nodeHash init)
+                [ ("conn_"++name++"_"++var,Nothing,Just $ ConstExpr $ ConstInt $ fromIntegral $ nodeHash (case Map.lookup var (varsInit mdl) of 
+                                                                                                             Nothing -> t
+                                                                                                             Just init -> init))
                 | (name,mdl) <- Map.toList $ transModels prog
-                , (var,(_,init)) <- Map.toList (varsIn mdl) ] ++
-                [ ("never_"++name++"_"++var,Nothing,Nothing)
+                , (var,_) <- Map.toList (varsIn mdl) ] ++
+                [ ("never_"++name++"_"++var,Nothing,Just $ ConstExpr $ ConstInt $ fromIntegral $ nodeHash (case Map.lookup var (varsInit mdl) of 
+                                                                                                              Nothing -> t
+                                                                                                              Just init -> init))
                 | (name,mdl) <- Map.toList $ transModels prog
                 , (var,set) <- Map.toList (varsOut mdl)
                 , Set.member Nothing set]
@@ -193,12 +203,13 @@ buildTransProgram scade decls
                      inits <- mapM (\(v,i) -> do
                                        r <- case i of
                                          InitAll -> true
-                                         InitOne x -> encodeSingleton 0 (fromIntegral x::Int)
-                                       return (v,(Set.empty,r))
+                                         InitOne x -> encodeRange 0 (fromIntegral x::Int) (fromIntegral x::Int)
+                                       return (v,r)
                                    ) (modelInits m)
-                     return (modelName m,TransModel { varsIn = Map.fromList inits
+                     return (modelName m,TransModel { varsIn = Map.empty
                                                     , varsOut = Map.empty
                                                     , stateMachine = machine
+                                                    , varsInit = Map.fromList inits
                                                     })
                  ) models >>= return.(Map.fromList)
     nevers <- mapM (\claim -> gtlsToBuchi (\lst -> do
@@ -212,9 +223,9 @@ buildTransProgram scade decls
     let prog1 = foldl (\cprog c
                        -> let fromMdl = cprog!(connectFromModel c)
                               nprog1 = Map.adjust
-                                       (\mdl -> mdl { varsIn = Map.insertWith (\(ins_new,_) (ins_old,init_old) -> (Set.union ins_new ins_old,init_old))
+                                       (\mdl -> mdl { varsIn = Map.insertWith Set.union
                                                                (connectToVariable c)
-                                                               (bddsForVar (connectFromVariable c) (stateMachine fromMdl),t)
+                                                               (bddsForVar (connectFromVariable c) (stateMachine fromMdl))
                                                                (varsIn mdl)
                                                     }) (connectToModel c) cprog
                               nprog2 = Map.adjust
@@ -232,8 +243,12 @@ buildTransProgram scade decls
                                                                      ) cprog (Map.toList (vars st))
                                              ) prog1 (Map.toList never)
                       ) prog1 nevers
+        prog3 = fmap (\mdl -> mdl { varsIn = Map.mapWithKey (\k ins -> case Map.lookup k (varsInit mdl) of
+                                                                Nothing -> ins
+                                                                Just i -> Set.insert i ins) (varsIn mdl)
+                                  }) prog2
     return $ TransProgram
-      { transModels   = prog2
+      { transModels   = prog3
       , transClaims   = nevers
       }
   where
