@@ -65,7 +65,11 @@ translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> SBuchi (M
 translateClaim varsIn machine = do
   do_stps <- mapM (\((sth,stl),decl) -> do
                       stps <- getSteps (vars decl)
-                      let nstps = Pr.StmtLabel ("st"++show sth++"_"++show stl) (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
+                      let nstps = Pr.StmtLabel ("st"++show sth++"_"++show stl)
+                                  (Pr.StmtAtomic $
+                                   (case stps of
+                                       [] -> []
+                                       _ -> [Pr.StepStmt (Pr.StmtDStep stps) Nothing]) ++ getFollows (Set.toList $ successors decl))
                       return $ Pr.StepStmt (if finalSets decl
                                             then Pr.StmtLabel ("accept"++show sth++"_"++show stl) nstps
                                             else nstps) Nothing
@@ -102,7 +106,10 @@ translateModel name mdl = do
                       return $ Pr.StepStmt
                         (Pr.StmtLabel
                          ("st"++show st)
-                         (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
+                         (Pr.StmtAtomic $
+                          (case stps of
+                              [] -> []
+                              _ -> [Pr.StepStmt (Pr.StmtDStep stps) Nothing]) ++ getFollows (Set.toList $ successors decl))
                         ) Nothing
                   ) (Map.toList $ stateMachine mdl)
   return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
