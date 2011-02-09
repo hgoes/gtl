@@ -64,20 +64,20 @@ claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachin
 translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> Buchi (Map (String,String) (Tree s Int)) -> BDDM s Int m [Pr.Step]
 translateClaim varsIn machine = do
   do_stps <- mapM (\(st,decl) -> do
-                      let follows = [ (vars $ machine!succ,succ) | succ <- Set.toList $ successors decl ]
-                      if_stps <- mapM getIfSteps follows
-                      let stps = Pr.StmtLabel ("st"++show st) (Pr.StmtIf if_stps)
+                      stps <- getSteps (vars decl)
+                      let nstps = Pr.StmtLabel ("st"++show st) (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
                       return $ Pr.StepStmt (if Set.null (finalSets decl) -- XXX: This is terrible wrong :(
-                                            then stps
-                                            else Pr.StmtLabel ("accept"++show st) stps) Nothing
+                                            then nstps
+                                            else Pr.StmtLabel ("accept"++show st) nstps) Nothing
                   ) (Map.toList machine)
   return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++show name)) Nothing]
                                    | (name,st) <- Map.toList machine, isStart st ]) Nothing
            ] ++ do_stps
   where
-    getIfSteps (cond,follow) = do
-      cond_stps <- mapM getConds (Map.toList cond)
-      return $ (concat cond_stps) ++ [ Pr.StepStmt (Pr.StmtGoto ("st"++show follow)) Nothing ]
+    getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show s) Nothing ] | s <- succs ]) Nothing ]
+    getSteps cond = do
+        cond_stps <- mapM getConds (Map.toList cond)
+        return $ concat cond_stps
     getConds ((mdl,var),tree) = mapM (\i -> do
                                          nv <- i #=> tree
                                          t <- true
