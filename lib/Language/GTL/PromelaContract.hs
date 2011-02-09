@@ -189,7 +189,7 @@ buildTransProgram scade decls
                                                                                                Nothing -> (name,[tree])
                                                                                                Just _ -> error "Contracts can't contain qualified variables"
                                                                                            ) res))
-                                            ) (fmap GTL.Not $ modelContract m)
+                                            ) (modelContract m)
                      inits <- mapM (\(v,i) -> do
                                        r <- case i of
                                          InitAll -> true
