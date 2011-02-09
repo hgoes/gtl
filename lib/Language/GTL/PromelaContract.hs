@@ -61,20 +61,20 @@ translateContracts scade decls
 claimInVars :: TransProgram s -> Buchi (Map (String,String) (Tree s Int)) -> Map (String,String) (Set (Tree s Int))
 claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachine $ (transModels prog)!mname)) | (mname,var) <- Set.toList $ usedVars buchi ]
 
-translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> Buchi (Map (String,String) (Tree s Int)) -> BDDM s Int m [Pr.Step]
+translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> SBuchi (Map (String,String) (Tree s Int)) -> BDDM s Int m [Pr.Step]
 translateClaim varsIn machine = do
-  do_stps <- mapM (\(st,decl) -> do
+  do_stps <- mapM (\((sth,stl),decl) -> do
                       stps <- getSteps (vars decl)
-                      let nstps = Pr.StmtLabel ("st"++show st) (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
-                      return $ Pr.StepStmt (if Set.null (finalSets decl) -- XXX: This is terrible wrong :(
-                                            then nstps
-                                            else Pr.StmtLabel ("accept"++show st) nstps) Nothing
+                      let nstps = Pr.StmtLabel ("st"++show sth++"_"++show stl) (Pr.StmtDStep $ stps ++ getFollows (Set.toList $ successors decl))
+                      return $ Pr.StepStmt (if finalSets decl
+                                            then Pr.StmtLabel ("accept"++show sth++"_"++show stl) nstps
+                                            else nstps) Nothing
                   ) (Map.toList machine)
-  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++show name)) Nothing]
-                                   | (name,st) <- Map.toList machine, isStart st ]) Nothing
+  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++show nameh++"_"++show namel)) Nothing]
+                                   | ((nameh,namel),st) <- Map.toList machine, isStart st ]) Nothing
            ] ++ do_stps
   where
-    getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show s) Nothing ] | s <- succs ]) Nothing ]
+    getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show sh++"_"++show sl) Nothing ] | (sh,sl) <- succs ]) Nothing ]
     getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
         return $ concat cond_stps
@@ -162,7 +162,7 @@ translateContracts' prog
                                                  }
                         ) (Map.toList $ transModels prog)
     nevers <- mapM (\claim -> do
-                       steps <- translateClaim (claimInVars prog claim) claim
+                       steps <- translateClaim (claimInVars prog claim) (translateGBA claim)
                        return $ Pr.Never steps) (transClaims prog)
     return (decls:model_procs++nevers)
 

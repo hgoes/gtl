@@ -110,7 +110,7 @@ data Node a = Node
 
 type Buchi a = GBuchi Integer a (Set Integer)
 
-type SBuchi a = GBuchi (Integer,Integer) a Bool
+type SBuchi a = GBuchi (Integer,Int) a Bool
 
 type GBuchi st a f = Map st (BuchiState st a f)
 
