@@ -66,10 +66,7 @@ translateClaim varsIn machine = do
   do_stps <- mapM (\((sth,stl),decl) -> do
                       stps <- getSteps (vars decl)
                       let nstps = Pr.StmtLabel ("st"++show sth++"_"++show stl)
-                                  (Pr.StmtAtomic $
-                                   (case stps of
-                                       [] -> []
-                                       _ -> [Pr.StepStmt (Pr.StmtDStep stps) Nothing]) ++ getFollows (Set.toList $ successors decl))
+                                  (Pr.StmtAtomic $ stps ++ getFollows (Set.toList $ successors decl))
                       return $ Pr.StepStmt (if finalSets decl
                                             then Pr.StmtLabel ("accept"++show sth++"_"++show stl) nstps
                                             else nstps) Nothing
@@ -81,7 +78,10 @@ translateClaim varsIn machine = do
     getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show sh++"_"++show sl) Nothing ] | (sh,sl) <- succs ]) Nothing ]
     getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
-        return $ concat cond_stps
+        let check_stps = case cond_stps of
+              [] -> []
+              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) (concat cond_stps)) Nothing]
+        return $ check_stps
     getConds ((mdl,var),tree) = mapM (\i -> do
                                          nv <- i #=> tree
                                          t <- true
@@ -94,10 +94,9 @@ translateClaim varsIn machine = do
                                                       then return $ Just $ checkVar Pr.BinNotEquals mdl var i
                                                       else return Nothing)
                                      ) (Set.toList $ varsIn!(mdl,var)) >>= return.catMaybes
-    checkVar op mdl var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
-                                         (Pr.RefExpr (Pr.VarRef ("never_"++mdl++"_"++var) Nothing Nothing))
-                                         (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
-                                        ) Nothing
+    checkVar op mdl var i = Pr.BinExpr op
+                            (Pr.RefExpr (Pr.VarRef ("never_"++mdl++"_"++var) Nothing Nothing))
+                            (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
 
 translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
 translateModel name mdl = do
@@ -119,17 +118,22 @@ translateModel name mdl = do
       getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show s) Nothing ] | s <- succs ]) Nothing ]
       getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
-        return $ concat cond_stps
+        let checks = [ cond | Right cond <- cond_stps ]
+            check_stps = case checks of
+              [] -> []
+              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) (concat checks)) Nothing]
+            assigns = [ assign | Left assign <- cond_stps ]
+        return $ check_stps ++ (concat assigns)
       getConds (var,tree) = case Map.lookup var (varsIn mdl) of
         Nothing -> case Map.lookup var (varsOut mdl) of
-          Nothing -> return []
-          Just ns -> return [ Pr.StepStmt (Pr.StmtAssign
-                                           (Pr.VarRef (case target of
-                                                          Just (mname,var) -> "conn_"++mname++"_"++var
-                                                          Nothing -> "never_"++name++"_"++var
-                                                      ) Nothing Nothing)
-                                           (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
-                            | target <- Set.toList ns ]
+          Nothing -> error $ "Internal error: Variable "++show var++" is neither input nor output"
+          Just ns -> return $ Left [ Pr.StepStmt (Pr.StmtAssign
+                                                  (Pr.VarRef (case target of
+                                                                 Just (mname,var) -> "conn_"++mname++"_"++var
+                                                                 Nothing -> "never_"++name++"_"++var
+                                                             ) Nothing Nothing)
+                                                  (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
+                                   | target <- Set.toList ns ]
         Just (inc,init) -> mapM (\i -> do
                                     nv <- i #=> tree
                                     t <- true
@@ -141,11 +145,10 @@ translateModel name mdl = do
                                                if nv == f
                                                  then return $ Just $ checkVar Pr.BinNotEquals var i
                                                  else return Nothing)
-                                ) (Set.toList (Set.insert init inc)) >>= return.catMaybes
-      checkVar op var i = Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr op
-                                       (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
-                                       (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
-                                      ) Nothing
+                                ) (Set.toList (Set.insert init inc)) >>= return.(Right).catMaybes
+      checkVar op var i = Pr.BinExpr op
+                          (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
+                          (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
 
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
@@ -186,7 +189,7 @@ buildTransProgram scade decls
                                                                                                Nothing -> (name,[tree])
                                                                                                Just _ -> error "Contracts can't contain qualified variables"
                                                                                            ) res))
-                                            ) (modelContract m)
+                                            ) (fmap GTL.Not $ modelContract m)
                      inits <- mapM (\(v,i) -> do
                                        r <- case i of
                                          InitAll -> true
