@@ -309,8 +309,8 @@ relToBDD' GTL.BinLT n   = encodeSignedRange 0 (minBound::Int) (fromIntegral n - 
 relToBDD' GTL.BinLTEq n = encodeSignedRange 0 (minBound::Int) (fromIntegral n)
 relToBDD' GTL.BinGT n   = encodeSignedRange 0 (fromIntegral n + 1) (maxBound::Int)
 relToBDD' GTL.BinGTEq n = encodeSignedRange 0 (fromIntegral n) (maxBound::Int)
-relToBDD' GTL.BinEq n   = encodeSingleton 0 (fromIntegral n::Int)
-relToBDD' GTL.BinNEq n  = encodeSingleton 0 (fromIntegral n::Int) >>= not'
+relToBDD' GTL.BinEq n   = encodeRange 0 (fromIntegral n::Int) (fromIntegral n)
+relToBDD' GTL.BinNEq n  = encodeRange 0 (fromIntegral n::Int) (fromIntegral n) >>= not'
 
 usedVars :: Ord a => Buchi (Map a b) -> Set a
 usedVars buchi = foldl (\set st -> Set.union set (Map.keysSet (vars st))) Set.empty (Map.elems buchi)
