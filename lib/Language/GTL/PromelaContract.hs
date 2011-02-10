@@ -80,25 +80,42 @@ translateClaim varsIn machine = do
     getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show sh++"_"++show sl) Nothing ] | (sh,sl) <- succs ]) Nothing ]
     getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
-        let check_stps = case cond_stps of
-              [] -> []
-              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) (concat cond_stps)) Nothing]
+        let check_stps = case buildConditionCheck (concat cond_stps) of
+              Nothing -> []
+              Just expr -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny expr) Nothing]
         return $ check_stps
     getConds ((mdl,var),tree) = mapM (\i -> do
+                                         let rname = "never_"++mdl++"_"++var
                                          nv <- i #=> tree
                                          t <- true
                                          f <- false
                                          if nv == t
-                                           then return $ Just $ checkVar Pr.BinEquals mdl var i
+                                           then return (True,rname,fromIntegral $ nodeHash i)
                                            else (do
                                                     nv <- i #&& tree
                                                     if nv == f
-                                                      then return $ Just $ checkVar Pr.BinNotEquals mdl var i
-                                                      else return Nothing)
-                                     ) (Set.toList $ varsIn!(mdl,var)) >>= return.catMaybes
-    checkVar op mdl var i = Pr.BinExpr op
-                            (Pr.RefExpr (Pr.VarRef ("never_"++mdl++"_"++var) Nothing Nothing))
-                            (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
+                                                      then return (False,rname,fromIntegral $ nodeHash i)
+                                                      else return (True,rname,fromIntegral $ nodeHash i))
+                                     ) (Set.toList $ varsIn!(mdl,var))
+
+buildConditionCheck :: [(Bool,String,Integer)] -> Maybe Pr.AnyExpression
+buildConditionCheck conds = let pos = [ Pr.BinExpr Pr.BinEquals
+                                        (Pr.RefExpr (Pr.VarRef var Nothing Nothing))
+                                        (Pr.ConstExpr $ Pr.ConstInt i)
+                                      | (True,var,i) <- conds ]
+                                neg = [ Pr.BinExpr Pr.BinNotEquals
+                                        (Pr.RefExpr (Pr.VarRef var Nothing Nothing))
+                                        (Pr.ConstExpr $ Pr.ConstInt i) 
+                                      | (False,var,i) <- conds ]
+                                pf = foldl1 (Pr.BinExpr Pr.BinOr) pos
+                                nf = foldl1 (Pr.BinExpr Pr.BinAnd) neg
+                            in case pos of
+                              [] -> case neg of
+                                [] -> Nothing
+                                _ -> Just nf
+                              _ -> case neg of
+                                [] -> Just pf
+                                _ -> Just $ Pr.BinExpr Pr.BinAnd pf nf
 
 translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
 translateModel name mdl = do
@@ -121,13 +138,9 @@ translateModel name mdl = do
       getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
         let checks = [ cond | Right cond <- cond_stps ]
-            check_stps = case checks of
-              [] -> []
-              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinOr x y)
-                                 (mapMaybe (\check -> case check of
-                                               [] -> Nothing
-                                               _ -> Just $ foldl1 (\x y -> Pr.BinExpr Pr.BinOr x y) check
-                                           ) checks)) Nothing]
+            check_stps = case buildConditionCheck $ concat checks of
+              Nothing -> []
+              Just expr -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny expr) Nothing]
             assigns = [ assign | Left assign <- cond_stps ]
         return $ check_stps ++ (concat assigns)
       getConds (var,tree) = case Map.lookup var (varsIn mdl) of
@@ -141,20 +154,18 @@ translateModel name mdl = do
                                                   (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
                                    | target <- Set.toList ns ]
         Just inc -> mapM (\i -> do
+                             let rname = "conn_"++name++"_"++var
                              nv <- i #=> tree
                              t <- true
                              f <- false
                              if nv == t -- The input matches the condition perfectly
-                               then return $ Just $ checkVar Pr.BinEquals var i
+                               then return (True,rname,fromIntegral $ nodeHash i)
                                else (do
                                         nv <- i #&& tree
                                         if nv == f -- The input doesn't match the condition at all
-                                          then return Nothing --return $ Just $ checkVar Pr.BinNotEquals var i
-                                          else return $ Just $ checkVar Pr.BinEquals var i)
-                         ) (Set.toList inc) >>= return.(Right).catMaybes
-      checkVar op var i = Pr.BinExpr op
-                          (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
-                          (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral $ nodeHash i)
+                                          then return (False,rname,fromIntegral $ nodeHash i)
+                                          else return (True,rname,fromIntegral $ nodeHash i))
+                         ) (Set.toList inc) >>= return.(Right)
 
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
