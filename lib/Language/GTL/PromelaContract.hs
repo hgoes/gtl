@@ -122,10 +122,10 @@ translateModel name mdl = do
         let checks = [ cond | Right cond <- cond_stps ]
             check_stps = case checks of
               [] -> []
-              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y)
+              _ -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ foldl1 (\x y -> Pr.BinExpr Pr.BinOr x y)
                                  (mapMaybe (\check -> case check of
                                                [] -> Nothing
-                                               _ -> Just $ foldl1 (\x y -> Pr.BinExpr Pr.BinAnd x y) check
+                                               _ -> Just $ foldl1 (\x y -> Pr.BinExpr Pr.BinOr x y) check
                                            ) checks)) Nothing]
             assigns = [ assign | Left assign <- cond_stps ]
         return $ check_stps ++ (concat assigns)
@@ -143,13 +143,13 @@ translateModel name mdl = do
                              nv <- i #=> tree
                              t <- true
                              f <- false
-                             if nv == t
+                             if nv == t -- The input matches the condition perfectly
                                then return $ Just $ checkVar Pr.BinEquals var i
                                else (do
                                         nv <- i #&& tree
-                                        if nv == f
-                                          then return $ Just $ checkVar Pr.BinNotEquals var i
-                                          else return Nothing)
+                                        if nv == f -- The input doesn't match the condition at all
+                                          then return Nothing --return $ Just $ checkVar Pr.BinNotEquals var i
+                                          else return $ Just $ checkVar Pr.BinEquals var i)
                          ) (Set.toList inc) >>= return.(Right).catMaybes
       checkVar op var i = Pr.BinExpr op
                           (Pr.RefExpr (Pr.VarRef ("conn_"++name++"_"++var) Nothing Nothing))
