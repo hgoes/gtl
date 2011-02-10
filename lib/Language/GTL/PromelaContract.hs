@@ -31,6 +31,7 @@ import Language.GTL.LTL
 import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
 import Language.Promela.Syntax as Pr
+import Language.GTL.ScadeAnalyzer
 
 import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
@@ -192,6 +193,9 @@ buildTransProgram scade decls
   = do
     t <- true
     prog <- mapM (\m -> do
+                     let (inp_vars,outp_vars) = scadeInterface ((modelArgs m)!!0) scade
+                         inp_map = Map.fromList inp_vars
+                         outp_map = Map.fromList outp_vars
                      machine <- gtlsToBuchi (\lst -> do
                                                 res <- mapM relToBDD lst
                                                 mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old)
@@ -199,7 +203,7 @@ buildTransProgram scade decls
                                                                                                Nothing -> (name,[tree])
                                                                                                Just _ -> error "Contracts can't contain qualified variables"
                                                                                            ) res))
-                                            ) (modelContract m)
+                                            ) (modelContract m) >>= completeCases outp_map
                      inits <- mapM (\(v,i) -> do
                                        r <- case i of
                                          InitAll -> true
@@ -255,6 +259,12 @@ buildTransProgram scade decls
     models = [ m | Model m <- decls ]
     conns = [ c | Connect c <- decls ]
     claims = [ v | Verify v <- decls ]
+
+completeCases :: Monad m => Map String Sc.TypeExpr -> Buchi (Map String (Tree s Int)) -> BDDM s Int m (Buchi (Map String (Tree s Int)))
+completeCases outp machine = do
+  t <- true
+  let outpmp = fmap (const t) outp
+  return $ fmap (\st -> st { vars = Map.union (vars st) outpmp }) machine
 
 bddsForVar :: String -> Buchi (Map String (Tree s Int)) -> Set (Tree s Int)
 bddsForVar var buchi = foldl (\mp st -> case Map.lookup var (vars st) of
