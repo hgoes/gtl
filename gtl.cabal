@@ -5,7 +5,7 @@ Build-Type:     Simple
 Cabal-Version:  >= 1.10
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl
+  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process
   Hs-Source-Dirs: lib
   Exposed-Modules:
     Language.GTL.Token
@@ -19,7 +19,7 @@ Library
     Language.GTL.ScadeContract
     Language.GTL.LTL
     Language.GTL.ScadeToPromela
-
+    Language.GTL.ErrorRefiner
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath
