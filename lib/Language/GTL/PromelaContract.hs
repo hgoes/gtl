@@ -127,7 +127,7 @@ translateModel name mdl = do
                          (Pr.StmtAtomic $
                           (case stps of
                               [] -> []
-                              _ -> [Pr.StepStmt (Pr.StmtDStep stps) Nothing]) ++ getFollows (Set.toList $ successors decl))
+                              _ -> [Pr.StepStmt (Pr.StmtDStep $ stps ++ [Pr.StepStmt (Pr.StmtPrintf ("ENTER "++name++" "++show st) []) Nothing]) Nothing]) ++ getFollows (Set.toList $ successors decl))
                         ) Nothing
                   ) (Map.toList $ stateMachine mdl)
   return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
