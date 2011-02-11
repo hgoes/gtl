@@ -4,6 +4,8 @@ import System.Console.GetOpt
 import System.Environment
 import System.FilePath
 import System.Process
+import Control.Monad (when)
+import System.Exit
 
 import Language.GTL.Lexer as GTL
 import Language.GTL.Parser as GTL
@@ -27,11 +29,13 @@ data TranslationMode
 
 data Options = Options
                { mode :: TranslationMode
+               , showHelp :: Bool
                }
                deriving Show
 
 defaultOptions = Options
   { mode = PromelaContract
+  , showHelp = False
   }
 
 modes :: [(String,TranslationMode)]
@@ -53,6 +57,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                              Nothing -> error $ "Unknown mode "++show str
                                          ) "mode"
                                  ) ("The tranlation mode ("++modeString modes++")")
+          ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ]
 
 x2s :: FilePath -> IO String
@@ -74,7 +79,9 @@ getOptions = do
   args <- getArgs
   case getOpt Permute options args of
     (o,n1:ns,[]) -> return (foldl (flip id) defaultOptions o,n1,ns)
-    (_,_,[]) -> ioError (userError "At least one argument required")
+    (o,_,[]) -> if showHelp $ foldl (flip id) defaultOptions o
+                then putStr (usageInfo header options) >> exitSuccess
+                else ioError (userError "At least one argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 main = do
