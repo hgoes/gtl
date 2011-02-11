@@ -333,3 +333,8 @@ relToBDD' GTL.BinNEq n  = encodeSingleton 0 (fromIntegral n::Int) >>= not'
 
 usedVars :: Ord a => Buchi (Map a b) -> Set a
 usedVars buchi = foldl (\set st -> Set.union set (Map.keysSet (vars st))) Set.empty (Map.elems buchi)
+
+getOutputAutomatas :: TransProgram s -> Map String (Buchi (Map String (Tree s Int)))
+getOutputAutomatas prog = fmap (\mdl -> fmap (\entr -> entr
+                                                       { vars = Map.difference (vars entr) (varsIn mdl)
+                                                       }) (stateMachine mdl)) (transModels prog)
