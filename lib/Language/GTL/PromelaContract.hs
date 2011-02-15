@@ -44,6 +44,10 @@ import Data.Maybe (catMaybes,mapMaybe)
 import System.Process
 import Control.Monad.Trans
 import System.FilePath
+import System.Directory
+import Control.Exception.Extensible
+import System.IO.Error (isDoesNotExistError)
+import Control.Monad (unless)
 
 import Debug.Trace
 
@@ -59,15 +63,35 @@ data TransProgram s = TransProgram
                       , transClaims   :: [Buchi (Map (String,String) (Tree s Int))]
                       } deriving Show
 
-verifyModel :: String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
-verifyModel name scade decls = runBDDM $ do
+deleteTmp :: FilePath -> IO ()
+deleteTmp fp = catchJust (\e -> if isDoesNotExistError e
+                                then Just ()
+                                else Nothing) (removeFile fp) (const $ return ())
+  
+
+verifyModel :: Bool -> String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
+verifyModel keep name scade decls = runBDDM $ do
   prog <- buildTransProgram scade decls
   pr <- translateContracts' prog
   lift $ writeFile (name <.> "pr") (show $ prettyPromela pr)
   lift $ rawSystem "spin" ["-a",name <.> "pr"]
-  lift $ rawSystem "gcc" ["pan.c","-o",name++"-verifier"]
-  outp <- lift $ readProcess ("./"++name++"-verifier") ["-a","-e"] ""
-  traces <- mapM (\trace -> lift $ fmap (traceToBDD prog) $ parseTrace (name <.> "pr") trace) (filterTraces outp)
+  let verifier = name++"-verifier"
+  lift $ rawSystem "gcc" ["pan.c","-o",verifier]
+  unless keep $ lift $ do
+    deleteTmp "pan.c"
+    deleteTmp "pan.h"
+    deleteTmp "pan.m"
+    deleteTmp "pan.t"
+    deleteTmp "pan.b"
+  outp <- lift $ readProcess ("./"++verifier) ["-a","-e"] ""
+  unless keep $ lift $ deleteTmp verifier
+  let trace_files = filterTraces outp
+  traces <- mapM (\trace -> lift $ do
+                     res <- fmap (traceToBDD prog) $ parseTrace (name <.> "pr") trace
+                     unless keep $ deleteTmp trace
+                     return res
+                 ) trace_files
+  unless keep $ lift $ deleteTmp (name <.> "pr")
   case traces of
     [] -> lift $ putStrLn "No errors found."
     _  -> do

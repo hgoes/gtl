@@ -29,12 +29,14 @@ data TranslationMode
 
 data Options = Options
                { mode :: TranslationMode
+               , keepTmpFiles :: Bool
                , showHelp :: Bool
                }
                deriving Show
 
 defaultOptions = Options
   { mode = PromelaContract
+  , keepTmpFiles = False
   , showHelp = False
   }
 
@@ -57,6 +59,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                              Nothing -> error $ "Unknown mode "++show str
                                          ) "mode"
                                  ) ("The tranlation mode ("++modeString modes++")")
+          ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ]
 
@@ -91,8 +94,7 @@ main = do
   let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
       sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
-    PromelaContract -> PrTr.verifyModel (dropExtension gtl_file) sc_decls gtl_decls
-      --print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
+    PromelaContract -> PrTr.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
     NativeC -> translateGTL gtl_decls sc_decls >>= putStr
     ScadeContract -> do
       putStrLn sc_str
