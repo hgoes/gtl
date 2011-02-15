@@ -20,45 +20,46 @@ translateGTL gtlcode scadecode = do
   return $ show $ prettyPromela (generatePromelaCode tps conns)
 
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> [Pr.Module]
-generatePromelaCode tp conns = let procs = fmap (\(name,(int_name,inp,outp)) ->
-                                                  let assignments = [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtCCode $ unlines $
-                                                                                                           [name++"_input."++tvar++" = now."++
-                                                                                                            fmod++"_state."++fvar++";" 
-                                                                                                           | ((fmod,fvar),(tmod,tvar)) <- conns, tmod==name ]++
-                                                                                                           [int_name++"("++
-                                                                                                            (if Map.null inp
-                                                                                                             then ""
-                                                                                                             else "&"++name++"_input,")++
-                                                                                                            "&now."++name++"_state);"
-                                                                                                           ]
-                                                                                                          ) Nothing]
-                                                                                            ]) Nothing]
-                                                  in Pr.ProcType { Pr.proctypeActive = Nothing
-                                                                 , Pr.proctypeName = name
-                                                                 , Pr.proctypeArguments = []
-                                                                 , Pr.proctypePriority = Nothing
-                                                                 , Pr.proctypeProvided = Nothing
-                                                                 , Pr.proctypeSteps = assignments
-                                                                 }) $ Map.toList tp
-                                   states = fmap (\(name,(int_name,inp,outp)) -> Pr.CState ("outC_"++int_name++" "++name++"_state") "Global" Nothing) $ Map.toList tp
-                                   inp_decls = [Pr.CDecl (unlines $
-                                                          (fmap (\(int_name,_,_) -> "\\#include <"++int_name++".h>") (Map.elems tp)) ++
-                                                          (fmap (\(name,(int_name,inp,outp)) -> if Map.null inp
-                                                                                                then "//No input structure for "++name
-                                                                                                else "inC_"++int_name++" "++name++"_input;"
-                                                                ) (Map.toList tp))
-                                                         )]
-                                   init = [Pr.Init Nothing ([Pr.StepStmt (Pr.StmtCCode $ unlines $
-                                                                         fmap (\(name,(int_name,inp,outp)) -> 
-                                                                                int_name++"_reset(&now."++name++"_state);") (Map.toList tp)
-                                                                        ) Nothing,
-                                                             Pr.StepStmt (Pr.StmtAtomic 
-                                                                          [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing) Nothing
-                                                                          | name <- Map.keys tp
-                                                                          ]) Nothing
-                                                            ])
-                                          ]
-                               in inp_decls ++ states ++ procs ++ init
+generatePromelaCode tp conns
+  = let procs = fmap (\(name,(int_name,inp,outp)) ->
+                       let assignments = [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtCCode $ unlines $
+                                                                                [name++"_input."++tvar++" = now."++
+                                                                                 fmod++"_state."++fvar++";" 
+                                                                                | ((fmod,fvar),(tmod,tvar)) <- conns, tmod==name ]++
+                                                                                [int_name++"("++
+                                                                                 (if Map.null inp
+                                                                                  then ""
+                                                                                  else "&"++name++"_input,")++
+                                                                                 "&now."++name++"_state);"
+                                                                                ]
+                                                                               ) Nothing]
+                                                                 ]) Nothing]
+                       in Pr.ProcType { Pr.proctypeActive = Nothing
+                                      , Pr.proctypeName = name
+                                      , Pr.proctypeArguments = []
+                                      , Pr.proctypePriority = Nothing
+                                      , Pr.proctypeProvided = Nothing
+                                      , Pr.proctypeSteps = assignments
+                                      }) $ Map.toList tp
+        states = fmap (\(name,(int_name,inp,outp)) -> Pr.CState ("outC_"++int_name++" "++name++"_state") "Global" Nothing) $ Map.toList tp
+        inp_decls = [Pr.CDecl (unlines $
+                               (fmap (\(int_name,_,_) -> "\\#include <"++int_name++".h>") (Map.elems tp)) ++
+                               (fmap (\(name,(int_name,inp,outp)) -> if Map.null inp
+                                                                     then "//No input structure for "++name
+                                                                     else "inC_"++int_name++" "++name++"_input;"
+                                     ) (Map.toList tp))
+                              )]
+        init = [Pr.Init Nothing ([Pr.StepStmt (Pr.StmtCCode $ unlines $
+                                               fmap (\(name,(int_name,inp,outp)) -> 
+                                                      int_name++"_reset(&now."++name++"_state);") (Map.toList tp)
+                                              ) Nothing,
+                                  Pr.StepStmt (Pr.StmtAtomic 
+                                               [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing) Nothing
+                                               | name <- Map.keys tp
+                                               ]) Nothing
+                                 ])
+               ]
+    in inp_decls ++ states ++ procs ++ init
 
 connectionMap :: [Declaration] -> TypeMap -> [((String,String),(String,String))]
 connectionMap def tp = mapMaybe (\decl -> case decl of
