@@ -82,18 +82,10 @@ getBDDTrace = do
       return (var,tree)
     return (mdl,Map.fromAscList lmp)
 
-{-translateTrace :: (String -> String -> String) -> Map String (Buchi (Map String (Tree s Int))) -> [(String,Integer)] -> [Pr.Step]
-translateTrace f mp trace
-  = fmap (\(proc,entr) -> let st = (mp!proc)!entr
-                              expr = foldl1 (\x y -> x++"&&"++y) [ generateBDDCheck (f proc var) (bitSize (undefined::Int)) tree
-                                                                 | (var,tree) <- Map.toList (vars st)]
-                          in Pr.StepStmt (Pr.StmtCExpr Nothing expr) Nothing
+traceToPromela :: (String -> String -> String) -> BDDTrace s -> [Pr.Step]
+traceToPromela f trace
+  = fmap (\(mdl,vars) -> let expr = foldl1 (\x y -> x++"&&"++y) [ generateBDDCheck (f mdl var) (bitSize (undefined::Int)) tree
+                                                                | (var,tree) <- Map.toList vars]
+                         in Pr.StepStmt (Pr.StmtCExpr Nothing expr) Nothing
          ) trace
-    ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]-}
-
-{-errorRefinement :: String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
-errorRefinement name scade decls
-  = runBDDM $ do
-    prog <- buildTransProgram scade decls
-    promela <- translateContracts' prog
-    writeFile (name <.> "pr") (show $ prettyPromela promela)-}
+    ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
