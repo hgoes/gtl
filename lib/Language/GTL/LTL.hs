@@ -291,6 +291,26 @@ translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elem
                                              | (st,decl) <- Map.toAscList buchi ]
                         else foldl (\mp (st,decl) -> expand 0 (head finals_list) st decl mp) Map.empty [ st | st <- Map.toList buchi, isStart $ snd st ]
 
+buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2) => GBuchi st1 a (Set f1) -> GBuchi st2 b (Set f2) -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
+buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
+                     [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
+  where
+    putIn mp i1 i2 st1 st2
+      = let succs = [ (i,j)
+                    | i <- Set.toList $ successors st1,
+                      j <- Set.toList $ successors st2]
+            nmp = Map.insert (i1,i2) (BuchiState { isStart = isStart st1 && isStart st2
+                                                 , vars = (vars st1,vars st2)
+                                                 , finalSets = Set.union
+                                                               (Set.mapMonotonic (Left) (finalSets st1))
+                                                               (Set.mapMonotonic (Right) (finalSets st2))
+                                                 , successors = Set.fromList succs
+                                                 }) mp
+        in foldl (\tmp (i,j) -> trace tmp i j) nmp succs
+    trace mp i1 i2
+      | Map.member (i1,i2) mp = mp
+      | otherwise = putIn mp i1 i2 (b1!i1) (b2!i2)
+
 f1 = Bin Until (Atom "x") (Ground False)
 f2 = Un Not (Bin Until (Ground True) (Atom "x"))
 f3 = Bin Until (Ground True) (Atom "x")
