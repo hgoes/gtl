@@ -5,6 +5,7 @@ import Data.Maybe (mapMaybe)
 import Data.BDD
 import Data.BDD.Serialization
 import Data.Map as Map hiding (mapMaybe)
+import Data.Set as Set
 import Data.Bits
 import Data.Binary
 import Data.Binary.Put
@@ -15,6 +16,7 @@ import Control.Monad
 import Control.Monad.Trans
 import qualified Data.ByteString.Lazy as LBS
 import Codec.Compression.BZip
+import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
@@ -89,3 +91,17 @@ traceToPromela f trace
                          in Pr.StepStmt (Pr.StmtCExpr Nothing expr) Nothing
          ) trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
+
+traceToBuchi :: BDDTrace s -> Buchi (Maybe (String,Map String (Tree s Int)))
+traceToBuchi trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n==0
+                                                                  , vars = Just st
+                                                                  , finalSets = Set.empty
+                                                                  , successors = Set.singleton (n+1)
+                                                                  })) [0..] trace
+                         len = genericLength trace
+                         end = (len,BuchiState { isStart = False
+                                               , vars = Nothing
+                                               , finalSets = Set.singleton (-1)
+                                               , successors = Set.singleton len
+                                               })
+                     in Map.fromList (end:states)
