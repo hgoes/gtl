@@ -31,7 +31,9 @@ import Language.GTL.LTL
 import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
 import Language.Promela.Syntax as Pr
+import Language.Promela.Pretty (prettyPromela)
 import Language.GTL.ScadeAnalyzer
+import Language.GTL.ErrorRefiner
 
 import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
@@ -39,6 +41,9 @@ import Data.Traversable (mapM)
 import Data.Foldable (foldl,foldlM)
 import Prelude hiding (mapM,foldl)
 import Data.Maybe (catMaybes,mapMaybe)
+import System.Process
+import Control.Monad.Trans
+import System.FilePath
 
 import Debug.Trace
 
@@ -54,11 +59,33 @@ data TransProgram s = TransProgram
                       , transClaims   :: [Buchi (Map (String,String) (Tree s Int))]
                       } deriving Show
 
+verifyModel :: String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
+verifyModel name scade decls = runBDDM $ do
+  prog <- buildTransProgram scade decls
+  pr <- translateContracts' prog
+  lift $ writeFile (name <.> "pr") (show $ prettyPromela pr)
+  lift $ rawSystem "spin" ["-a",name <.> "pr"]
+  lift $ rawSystem "gcc" ["pan.c","-o",name++"-verifier"]
+  outp <- lift $ readProcess ("./"++name++"-verifier") ["-a","-e"] ""
+  traces <- mapM (\trace -> lift $ fmap (traceToBDD prog) $ parseTrace (name <.> "pr") trace) (filterTraces outp)
+  case traces of
+    [] -> lift $ putStrLn "No errors found."
+    _  -> do
+      lift $ putStrLn $ show (length traces) ++ " errors found"
+      lift $ writeTraces (name <.> "gtltrace") traces
+      lift $ putStrLn $ "Written to "++(name <.> "gtltrace")
+  return ()
+
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
 translateContracts scade decls
   = runIdBDDM $ do
     prog <- buildTransProgram scade decls
     translateContracts' prog
+
+traceToBDD :: TransProgram s -> [(String,Integer)] -> [(String,Map String (Tree s Int))]
+traceToBDD prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
+                                               entr = (stateMachine tmdl)!st
+                                           in (mdl,Map.difference (vars entr) (varsIn tmdl))) trace
 
 claimInVars :: TransProgram s -> Buchi (Map (String,String) (Tree s Int)) -> Map (String,String) (Set (Tree s Int))
 claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachine $ (transModels prog)!mname)) | (mname,var) <- Set.toList $ usedVars buchi ]

@@ -5,7 +5,7 @@ Build-Type:     Simple
 Cabal-Version:  >= 1.10
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process
+  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process,filepath,binary,bytestring,bzlib
   Hs-Source-Dirs: lib
   Exposed-Modules:
     Language.GTL.Token

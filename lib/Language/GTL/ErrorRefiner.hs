@@ -3,11 +3,29 @@ module Language.GTL.ErrorRefiner where
 import System.Process
 import Data.Maybe (mapMaybe)
 import Data.BDD
+import Data.BDD.Serialization
 import Data.Map as Map hiding (mapMaybe)
 import Data.Bits
+import Data.Binary
+import Data.Binary.Put
+import Data.Binary.Get
+import System.FilePath
+import Language.Promela.Pretty
+import Control.Monad
+import Control.Monad.Trans
+import qualified Data.ByteString.Lazy as LBS
+import Codec.Compression.BZip
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
+
+type BDDTrace s = [(String,Map String (Tree s Int))]
+
+generateBDDCheck :: String -> Int -> Tree s Int -> String
+generateBDDCheck name w
+  = foldBDD
+    (\sym l r -> "((("++name++"&(1<<"++show (w-sym)++"))=="++name++")?"++l++":"++r++")")
+    (\v -> if v then "1" else "0")
 
 parseTrace :: FilePath -> FilePath -> IO [(String,Integer)]
 parseTrace promela trail = do
@@ -17,17 +35,51 @@ parseTrace promela trail = do
                         _ -> Nothing
                     ) (lines outp)
 
-generateBDDCheck :: String -> Int -> Tree s Int -> String
-generateBDDCheck name w
-  = foldBDD
-    (\sym l r -> "((("++name++"&(1<<"++show (w-sym)++"))=="++name++")?"++l++":"++r++")")
-    (\v -> if v then "1" else "0")
+filterTraces :: String -> [String]
+filterTraces outp = mapMaybe (\ln -> case words ln of
+                                 ["pan:","wrote",fn] -> Just fn
+                                 _ -> Nothing) (lines outp)
 
-translateTrace :: (String -> String -> String) -> Map String (Buchi (Map String (Tree s Int))) -> [(String,Integer)] -> [Pr.Step]
+writeTraces :: FilePath -> [BDDTrace s] -> IO ()
+writeTraces fp traces = LBS.writeFile fp $ compress $ runPut (do
+                                                                 put $ length traces
+                                                                 mapM_ putBDDTrace traces)
+
+putBDDTrace :: BDDTrace s -> Put
+putBDDTrace tr = do
+  put $ length tr
+  mapM_ (\(mdl,mp) -> do
+            put mdl
+            put (Map.size mp)
+            mapM (\(var,tree) -> do
+                     put var
+                     serializeTree tree
+                 ) (Map.toAscList mp)) tr
+
+getBDDTrace :: BDDM s Int Get (BDDTrace s)
+getBDDTrace = do
+  len <- lift get
+  replicateM len $ do
+    mdl <- lift get
+    sz <- lift get
+    lmp <- replicateM sz $ do
+      var <- lift get
+      tree <- deserializeTree 
+      return (var,tree)
+    return (mdl,Map.fromAscList lmp)
+
+{-translateTrace :: (String -> String -> String) -> Map String (Buchi (Map String (Tree s Int))) -> [(String,Integer)] -> [Pr.Step]
 translateTrace f mp trace
   = fmap (\(proc,entr) -> let st = (mp!proc)!entr
                               expr = foldl1 (\x y -> x++"&&"++y) [ generateBDDCheck (f proc var) (bitSize (undefined::Int)) tree
                                                                  | (var,tree) <- Map.toList (vars st)]
                           in Pr.StepStmt (Pr.StmtCExpr Nothing expr) Nothing
          ) trace
-    ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
+    ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]-}
+
+{-errorRefinement :: String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
+errorRefinement name scade decls
+  = runBDDM $ do
+    prog <- buildTransProgram scade decls
+    promela <- translateContracts' prog
+    writeFile (name <.> "pr") (show $ prettyPromela promela)-}

@@ -91,7 +91,8 @@ main = do
   let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
       sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
-    PromelaContract -> print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
+    PromelaContract -> PrTr.verifyModel (dropExtension gtl_file) sc_decls gtl_decls
+      --print $ prettyPromela $ PrTr.translateContracts sc_decls gtl_decls
     NativeC -> translateGTL gtl_decls sc_decls >>= putStr
     ScadeContract -> do
       putStrLn sc_str
