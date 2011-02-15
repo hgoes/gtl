@@ -2,9 +2,11 @@ module Language.GTL.PromelaCIntegration where
 
 import Language.GTL.Parser (gtl)
 import Language.GTL.Lexer (alexScanTokens)
-import Language.GTL.Syntax
+import Language.GTL.Syntax as GTL
 import Language.GTL.ScadeAnalyzer
 import Language.GTL.ErrorRefiner
+import Language.GTL.Translation
+import Language.GTL.LTL
 
 import qualified Language.Promela.Syntax as Pr
 import qualified Language.Scade.Syntax as Sc
@@ -12,6 +14,8 @@ import Language.Promela.Pretty
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Maybe (mapMaybe)
 import Data.BDD
 
@@ -20,13 +24,53 @@ translateGTL traces gtlcode scadecode
   = do
     let tps = typeMap gtlcode scadecode
         conns = connectionMap gtlcode tps
+        claims = case concat [ verifyFormulas decl | Verify decl <- gtlcode ] of
+          [] -> []
+          cl -> [neverClaim $ GTL.Not $ foldl1 (BinOp GTL.And) cl]
     nevers <- case traces of
       Nothing -> return []
       Just tr -> runBDDM (do
                              rtr <- readBDDTraces tr
                              return [generateNeverClaim $ head rtr]
                          )
-    return $ show $ prettyPromela $ (generatePromelaCode tps conns)++nevers
+    return $ show $ prettyPromela $ (generatePromelaCode tps conns)++claims
+
+neverClaim :: Formula -> Pr.Module
+neverClaim f = let states = Map.toList $ translateGBA $ ltlToBuchi $ gtlToLTL f
+                   showSt (i,j) = show i++ "_"++show j
+                   init = Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++showSt i) Nothing]  | (i,st) <- states, isStart st ]) Nothing
+                   steps = [ Pr.StepStmt (Pr.StmtLabel ("st"++showSt i)
+                                          (let inner = Pr.StmtSequence $
+                                                       (if Map.null $ vars st
+                                                        then []
+                                                        else [ Pr.StepStmt (Pr.StmtCExpr Nothing cexpr) Nothing ]) ++
+                                                       [ Pr.StepStmt (Pr.StmtIf
+                                                                      [ [Pr.StepStmt (Pr.StmtGoto $ "st"++showSt j) Nothing]
+                                                                      | j <- Set.toList (successors st)
+                                                                      ]
+                                                                     ) Nothing
+                                                       ]
+                                               cexpr = foldl1 (\x y -> x ++ "&&" ++ y)
+                                                       [ "("++(case ratom of
+                                                                  GTLRel rel lhs rhs -> clit lhs ++ (case rel of
+                                                                                                        BinLT -> "<"
+                                                                                                        BinLTEq -> "<="
+                                                                                                        BinGT -> ">"
+                                                                                                        BinGTEq -> ">="
+                                                                                                        BinEq -> "=="
+                                                                                                        BinNEq -> "!=") ++ clit rhs
+                                                                  _ -> error "Not yet implemented AUINV")++")"
+                                                       | (atom,en) <- Map.toList $ vars st,
+                                                         let ratom = if en then atom else gtlAtomNot atom ]
+                                               clit (Constant x) = show x
+                                               clit (Qualified mdl var) = "now."++mdl++"_state."++var
+                                               clit _ = error "All variables in never claim must be qualified"
+                                           in if finalSets st
+                                              then Pr.StmtLabel ("accept"++showSt i) inner
+                                              else inner)
+                                         ) Nothing
+                           | (i,st) <- states ]
+               in Pr.Never $ [init]++steps
 
 generateNeverClaim :: BDDTrace s -> Pr.Module
 generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var -> "now."++mdl++"_state."++var) trace)
@@ -72,6 +116,8 @@ generatePromelaCode tp conns
                                  ])
                ]
     in inp_decls ++ states ++ procs ++ init
+
+
 
 connectionMap :: [Declaration] -> TypeMap -> [((String,String),(String,String))]
 connectionMap def tp = mapMaybe (\decl -> case decl of
