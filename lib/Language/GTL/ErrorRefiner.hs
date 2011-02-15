@@ -45,6 +45,20 @@ writeTraces fp traces = LBS.writeFile fp $ compress $ runPut (do
                                                                  put $ length traces
                                                                  mapM_ putBDDTrace traces)
 
+runBDDMGet :: Monad m => BDDM s Int Get a -> LBS.ByteString -> BDDM s Int m a
+runBDDMGet act str = do
+  getm <- debase act
+  return $ runGet getm str
+  
+
+readBDDTraces :: FilePath -> BDDM s Int IO [BDDTrace s]
+readBDDTraces fp = do
+  str <- lift $ LBS.readFile fp
+  runBDDMGet (do
+                 len <- lift get
+                 replicateM len getBDDTrace) str
+  
+
 putBDDTrace :: BDDTrace s -> Put
 putBDDTrace tr = do
   put $ length tr
