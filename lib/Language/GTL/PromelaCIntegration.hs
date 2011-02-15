@@ -4,6 +4,7 @@ import Language.GTL.Parser (gtl)
 import Language.GTL.Lexer (alexScanTokens)
 import Language.GTL.Syntax
 import Language.GTL.ScadeAnalyzer
+import Language.GTL.ErrorRefiner
 
 import qualified Language.Promela.Syntax as Pr
 import qualified Language.Scade.Syntax as Sc
@@ -12,12 +13,23 @@ import Language.Promela.Pretty
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
+import Data.BDD
 
-translateGTL :: [Declaration] -> [Sc.Declaration] -> IO String
-translateGTL gtlcode scadecode = do
-  let tps = typeMap gtlcode scadecode
-      conns = connectionMap gtlcode tps 
-  return $ show $ prettyPromela (generatePromelaCode tps conns)
+translateGTL :: Maybe FilePath -> [Declaration] -> [Sc.Declaration] -> IO String
+translateGTL traces gtlcode scadecode
+  = do
+    let tps = typeMap gtlcode scadecode
+        conns = connectionMap gtlcode tps
+    nevers <- case traces of
+      Nothing -> return []
+      Just tr -> runBDDM (do
+                             rtr <- readBDDTraces tr
+                             return [generateNeverClaim $ head rtr]
+                         )
+    return $ show $ prettyPromela $ (generatePromelaCode tps conns)++nevers
+
+generateNeverClaim :: BDDTrace s -> Pr.Module
+generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var -> "now."++mdl++"_state."++var) trace)
 
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> [Pr.Module]
 generatePromelaCode tp conns

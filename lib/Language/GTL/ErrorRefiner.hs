@@ -56,7 +56,7 @@ readBDDTraces fp = do
   str <- lift $ LBS.readFile fp
   runBDDMGet (do
                  len <- lift get
-                 replicateM len getBDDTrace) str
+                 replicateM len getBDDTrace) (decompress str)
   
 
 putBDDTrace :: BDDTrace s -> Put

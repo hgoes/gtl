@@ -29,6 +29,7 @@ data TranslationMode
 
 data Options = Options
                { mode :: TranslationMode
+               , traceFile :: Maybe FilePath
                , keepTmpFiles :: Bool
                , showHelp :: Bool
                }
@@ -36,6 +37,7 @@ data Options = Options
 
 defaultOptions = Options
   { mode = PromelaContract
+  , traceFile = Nothing
   , keepTmpFiles = False
   , showHelp = False
   }
@@ -59,6 +61,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                              Nothing -> error $ "Unknown mode "++show str
                                          ) "mode"
                                  ) ("The tranlation mode ("++modeString modes++")")
+          ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
           ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ]
@@ -95,7 +98,7 @@ main = do
       sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
     PromelaContract -> PrTr.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
-    NativeC -> translateGTL gtl_decls sc_decls >>= putStr
+    NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn
     ScadeContract -> do
       putStrLn sc_str
       print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
