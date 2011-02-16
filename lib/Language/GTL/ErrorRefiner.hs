@@ -26,7 +26,7 @@ type BDDTrace s = [(String,Map String (Tree s Int))]
 generateBDDCheck :: String -> Int -> Tree s Int -> String
 generateBDDCheck name w
   = foldBDD
-    (\sym l r -> "((("++name++"&(1<<"++show (w-sym)++"))=="++name++")?"++l++":"++r++")")
+    (\sym l r -> "((("++name++"|(1<<"++show (w-sym-1)++"))=="++name++")?"++l++":"++r++")")
     (\v -> if v then "1" else "0")
 
 parseTrace :: FilePath -> FilePath -> IO [(String,Integer)]
