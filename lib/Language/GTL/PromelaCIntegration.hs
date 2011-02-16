@@ -47,7 +47,7 @@ neverClaim :: BDDTrace s -> Formula -> Pr.Module
 neverClaim trace f
   = let traceAut = traceToBuchi trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
-        showSt (i,j) = show i++ "_"++show j
+        showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++showSt i) Nothing]  | (i,st) <- states, isStart st ]) Nothing
         steps = [ Pr.StepStmt (Pr.StmtLabel ("st"++showSt i)
                                (let cexprr = case snd (vars st) of
