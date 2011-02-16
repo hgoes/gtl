@@ -25,13 +25,12 @@ data VerifyDecl = VerifyDecl
                   } deriving Show
 
 data Lit = Constant Integer
-         | Variable String
-         | Qualified String String
+         | Variable (Maybe String) String
          deriving (Show,Eq,Ord)
 
 data Formula = BinRel Relation Lit Lit
              | BinOp Operator Formula Formula
-             | Elem String [Lit] Bool
+             | Elem (Maybe String) String [Lit] Bool
              | Not Formula
              | Always Formula
              | Next Formula

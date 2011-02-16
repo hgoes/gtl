@@ -353,25 +353,19 @@ relsToBDD buchi = mapM
 
 
 relToBDD :: Monad m => GTLAtom -> BDDM s Int m (Maybe String,String,Tree s Int)
-relToBDD (GTLRel rel (Variable v) (Constant c)) = do
+relToBDD (GTLRel rel (Variable q v) (Constant c)) = do
   bdd <- relToBDD' rel c
-  return (Nothing,v,bdd)
-relToBDD (GTLRel rel (Qualified m v) (Constant c)) = do
-  bdd <- relToBDD' rel c
-  return (Just m,v,bdd)
-relToBDD (GTLRel rel (Constant c) (Variable v)) = do
+  return (q,v,bdd)
+relToBDD (GTLRel rel (Constant c) (Variable q v)) = do
   bdd <- relToBDD' (relNot rel) c
-  return (Nothing,v,bdd)
-relToBDD (GTLRel rel (Constant c) (Qualified m v)) = do
-  bdd <- relToBDD' (relNot rel) c
-  return (Just m,v,bdd)
-relToBDD (GTLElem v lits p) = do
+  return (q,v,bdd)
+relToBDD (GTLElem q v lits p) = do
   bdd <- encodeSet 0 (Set.fromList $ fmap (\(Constant x) -> fromIntegral x::Int) lits)
   if p
-    then return (Nothing,v,bdd)
+    then return (q,v,bdd)
     else (do
              bdd' <- not' bdd
-             return (Nothing,v,bdd'))
+             return (q,v,bdd'))
 relToBDD _ = error "Invalid relation detected"
 
 relToBDD' :: Monad m => GTL.Relation -> Integer -> BDDM s Int m (Tree s Int)

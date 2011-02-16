@@ -75,7 +75,7 @@ neverClaim trace f
                                              | (atom,en) <- Map.toList $ fst $ vars st,
                                                let ratom = if en then atom else gtlAtomNot atom ]
                                     clit (Constant x) = show x
-                                    clit (Qualified mdl var) = "now."++mdl++"_state."++var
+                                    clit (Variable (Just mdl) var) = "now."++mdl++"_state."++var
                                     clit _ = error "All variables in never claim must be qualified"
                                 in if finalSets st
                                    then Pr.StmtLabel ("accept"++showSt i) inner

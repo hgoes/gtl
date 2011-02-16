@@ -6,12 +6,12 @@ import Language.GTL.LTL as LTL
 import Data.Set as Set
 
 data GTLAtom = GTLRel GTL.Relation GTL.Lit GTL.Lit
-             | GTLElem String [GTL.Lit] Bool
+             | GTLElem (Maybe String) String [GTL.Lit] Bool
              deriving (Show,Eq,Ord)
 
 gtlAtomNot :: GTLAtom -> GTLAtom
 gtlAtomNot (GTLRel rel l r) = GTLRel (relNot rel) l r
-gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
+gtlAtomNot (GTLElem q name lits p) = GTLElem q name lits (not p)
 
 gtlsToBuchi :: Monad m => ([GTLAtom] -> m a) -> [Formula] -> m (Buchi a)
 gtlsToBuchi f = gtlToBuchi f . foldl1 (BinOp GTL.And)
@@ -32,4 +32,4 @@ gtlToLTL (GTL.BinOp op l r) = case op of
 gtlToLTL (GTL.Not x) = LTL.Un LTL.Not (gtlToLTL x)
 gtlToLTL (GTL.Always x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
 gtlToLTL (GTL.Next x) = LTL.Un LTL.Next (gtlToLTL x)
-gtlToLTL (GTL.Elem v lits p) = LTL.Atom (GTLElem v lits p)
+gtlToLTL (GTL.Elem q v lits p) = LTL.Atom (GTLElem q v lits p)

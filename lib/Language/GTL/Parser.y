@@ -91,22 +91,24 @@ mb_contract : "contract" { }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : lit "<" lit                { BinRel BinLT $1 $3 }
-        | lit ">" lit                { BinRel BinGT $1 $3 }
-        | lit "=" lit                { BinRel BinEq $1 $3 }
-        | id "in" "{" lits "}"       { Elem $1 $4 True }
-        | id "not" "in" "{" lits "}" { Elem $1 $5 False }
-        | "not" formula              { Not $2 }
-        | formula "and" formula      { BinOp And $1 $3 }
-        | formula "or" formula       { BinOp Or $1 $3 }
-        | formula "follows" formula  { BinOp Follows $1 $3 }
-        | "always" formula           { Always $2 }
-        | "next" formula             { Next $2 }
-        | "(" formula ")"            { $2 }
+formula : lit "<" lit                 { BinRel BinLT $1 $3 }
+        | lit ">" lit                 { BinRel BinGT $1 $3 }
+        | lit "=" lit                 { BinRel BinEq $1 $3 }
+        | var "in" "{" lits "}"       { Elem (fst $1) (snd $1) $4 True }
+        | var "not" "in" "{" lits "}" { Elem (fst $1) (snd $1) $5 False }
+        | "not" formula               { Not $2 }
+        | formula "and" formula       { BinOp And $1 $3 }
+        | formula "or" formula        { BinOp Or $1 $3 }
+        | formula "follows" formula   { BinOp Follows $1 $3 }
+        | "always" formula            { Always $2 }
+        | "next" formula              { Next $2 }
+        | "(" formula ")"             { $2 }
+
+var : id        { (Nothing,$1) }
+    | id "." id { (Just $1,$3) }
 
 lit : int       { Constant $1 }
-    | id        { Variable $1 }
-    | id "." id { Qualified $1 $3 }
+    | var       { Variable (fst $1) (snd $1) }
 
 lits : lit comma_lits { $1:$2 }
      |                { [] }
