@@ -119,21 +119,21 @@ translateClaim varsIn machine = do
   do_stps <- mapM (\((sth,stl),decl) -> do
                       stps <- getSteps (vars decl)
                       let nstps = Pr.StmtLabel ("st"++show sth++"_"++show stl)
-                                  (Pr.StmtAtomic $ stps ++ getFollows (Set.toList $ successors decl))
-                      return $ Pr.StepStmt (if finalSets decl
-                                            then Pr.StmtLabel ("accept"++show sth++"_"++show stl) nstps
-                                            else nstps) Nothing
+                                  (prAtomic $ stps ++ getFollows (Set.toList $ successors decl))
+                      return $ if finalSets decl
+                               then Pr.StmtLabel ("accept"++show sth++"_"++show stl) nstps
+                               else nstps
                   ) (Map.toList machine)
-  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++show nameh++"_"++show namel)) Nothing]
-                                   | ((nameh,namel),st) <- Map.toList machine, isStart st ]) Nothing
-           ] ++ do_stps
+  return $ fmap toStep $ [prIf [ [Pr.StmtGoto ("st"++show nameh++"_"++show namel)]
+                               | ((nameh,namel),st) <- Map.toList machine, isStart st ]
+                         ] ++ do_stps
   where
-    getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show sh++"_"++show sl) Nothing ] | (sh,sl) <- succs ]) Nothing ]
+    getFollows succs = [ prIf [ [ Pr.StmtGoto $ "st"++show sh++"_"++show sl ] | (sh,sl) <- succs ] ]
     getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
         let check_stps = case buildConditionCheck (concat cond_stps) of
               Nothing -> []
-              Just expr -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny expr) Nothing]
+              Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
         return $ check_stps
     getConds ((mdl,var),tree) = mapM (\i -> do
                                          let rname = "never_"++mdl++"_"++var
@@ -172,35 +172,34 @@ translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
 translateModel name mdl = do
   do_stps <- mapM (\(st,decl) -> do
                       stps <- getSteps (vars decl)
-                      return $ Pr.StepStmt
-                        (Pr.StmtLabel
-                         ("st"++show st)
-                         (Pr.StmtAtomic $
-                          [Pr.StepStmt (Pr.StmtDStep $ stps ++ [Pr.StepStmt (Pr.StmtPrintf ("ENTER "++name++" "++show st++"\n") []) Nothing]) Nothing] ++ getFollows (Set.toList $ successors decl))
-                        ) Nothing
+                      return $ Pr.StmtLabel
+                        ("st"++show st)
+                        (prAtomic $
+                         [prDStep $ stps ++ [Pr.StmtPrintf ("ENTER "++name++" "++show st++"\n") []]]
+                         ++ getFollows (Set.toList $ successors decl))
                   ) (Map.toList $ stateMachine mdl)
-  return $ [Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto ("st"++ show name)) Nothing]
-                                   | (name,st) <- Map.toList (stateMachine mdl), isStart st ]) Nothing
-           ] ++ do_stps
+  return $ fmap toStep $ [prIf [ [ Pr.StmtGoto ("st"++ show name) ]
+                               | (name,st) <- Map.toList (stateMachine mdl), isStart st ]
+                         ] ++ do_stps
     where
-      getFollows succs = [ Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++show s) Nothing ] | s <- succs ]) Nothing ]
+      getFollows succs = [ prIf [ [ Pr.StmtGoto $ "st"++show s ] | s <- succs ] ]
       getSteps cond = do
         cond_stps <- mapM getConds (Map.toList cond)
         let checks = [ cond | Right cond <- cond_stps ]
             check_stps = case buildConditionCheck $ concat checks of
               Nothing -> []
-              Just expr -> [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny expr) Nothing]
+              Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
             assigns = [ assign | Left assign <- cond_stps ]
         return $ check_stps ++ (concat assigns)
       getConds (var,tree) = case Map.lookup var (varsIn mdl) of
         Nothing -> case Map.lookup var (varsOut mdl) of
           Nothing -> error $ "Internal error: Variable "++show var++" is neither input nor output"
-          Just ns -> return $ Left [ Pr.StepStmt (Pr.StmtAssign
-                                                  (Pr.VarRef (case target of
-                                                                 Just (mname,var) -> "conn_"++mname++"_"++var
-                                                                 Nothing -> "never_"++name++"_"++var
-                                                             ) Nothing Nothing)
-                                                  (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))) Nothing
+          Just ns -> return $ Left [ Pr.StmtAssign
+                                     (Pr.VarRef (case target of
+                                                    Just (mname,var) -> "conn_"++mname++"_"++var
+                                                    Nothing -> "never_"++name++"_"++var
+                                                ) Nothing Nothing)
+                                     (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))
                                    | target <- Set.toList ns ]
         Just inc -> mapM (\i -> do
                              let rname = "conn_"++name++"_"++var
