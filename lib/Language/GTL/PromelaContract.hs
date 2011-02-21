@@ -170,50 +170,48 @@ buildConditionCheck conds = let pos = [ Pr.BinExpr Pr.BinEquals
 
 translateModel :: Monad m => String -> TransModel s -> BDDM s Int m [Pr.Step]
 translateModel name mdl = do
-  do_stps <- mapM (\(st,decl) -> do
-                      stps <- getSteps (vars decl)
-                      return $ Pr.StmtLabel
-                        ("st"++show st)
-                        (prAtomic $
-                         [prDStep $ stps ++ [Pr.StmtPrintf ("ENTER "++name++" "++show st++"\n") []]]
-                         ++ getFollows (Set.toList $ successors decl))
-                  ) (Map.toList $ stateMachine mdl)
-  return $ fmap toStep $ [prIf [ [ Pr.StmtGoto ("st"++ show name) ]
-                               | (name,st) <- Map.toList (stateMachine mdl), isStart st ]
-                         ] ++ do_stps
-    where
-      getFollows succs = [ prIf [ [ Pr.StmtGoto $ "st"++show s ] | s <- succs ] ]
-      getSteps cond = do
-        cond_stps <- mapM getConds (Map.toList cond)
-        let checks = [ cond | Right cond <- cond_stps ]
-            check_stps = case buildConditionCheck $ concat checks of
-              Nothing -> []
-              Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
-            assigns = [ assign | Left assign <- cond_stps ]
-        return $ check_stps ++ (concat assigns)
-      getConds (var,tree) = case Map.lookup var (varsIn mdl) of
-        Nothing -> case Map.lookup var (varsOut mdl) of
-          Nothing -> error $ "Internal error: Variable "++show var++" is neither input nor output"
-          Just ns -> return $ Left [ Pr.StmtAssign
-                                     (Pr.VarRef (case target of
-                                                    Just (mname,var) -> "conn_"++mname++"_"++var
-                                                    Nothing -> "never_"++name++"_"++var
-                                                ) Nothing Nothing)
-                                     (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))
-                                   | target <- Set.toList ns ]
-        Just inc -> mapM (\i -> do
-                             let rname = "conn_"++name++"_"++var
-                             nv <- i #=> tree
-                             t <- true
-                             f <- false
-                             if nv == t -- The input matches the condition perfectly
-                               then return (True,rname,fromIntegral $ nodeHash i)
-                               else (do
-                                        nv <- i #&& tree
-                                        if nv == f -- The input doesn't match the condition at all
-                                          then return (False,rname,fromIntegral $ nodeHash i)
-                                          else return (True,rname,fromIntegral $ nodeHash i))
-                         ) (Set.toList inc) >>= return.(Right)
+  inits <- sequence [ genEntry st decl | (st,decl) <- Map.toList $ stateMachine mdl, isStart decl ]
+  sts <- sequence [ do
+                       jumps <- sequence [ genEntry succ (stateMachine mdl!succ) | succ <- Set.toList $ successors decl ]
+                       return $ Pr.StmtLabel ("st"++show st) (prIf jumps)
+                  | (st,decl) <- Map.toList $ stateMachine mdl ]
+  return $ fmap toStep $ [ prIf inits ] ++ sts
+  where
+    genEntry st decl = do
+      stps <- getSteps (vars decl)
+      return [ prAtomic $ [ prDStep $ stps ++ [Pr.StmtPrintf ("ENTER "++name++" "++show st++"\n") []]
+                          , Pr.StmtGoto $ "st"++show st ] ]
+    getSteps cond = do
+      cond_stps <- mapM getConds (Map.toList cond)
+      let checks = [ cond | Right cond <- cond_stps ]
+          check_stps = case buildConditionCheck $ concat checks of
+            Nothing -> []
+            Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
+          assigns = [ assign | Left assign <- cond_stps ]
+      return $ check_stps ++ (concat assigns)
+    getConds (var,tree) = case Map.lookup var (varsIn mdl) of
+      Nothing -> case Map.lookup var (varsOut mdl) of
+        Nothing -> error $ "Internal error: Variable "++show var++" is neither input nor output"
+        Just ns -> return $ Left [ Pr.StmtAssign
+                                   (Pr.VarRef (case target of
+                                                  Just (mname,var) -> "conn_"++mname++"_"++var
+                                                  Nothing -> "never_"++name++"_"++var
+                                              ) Nothing Nothing)
+                                   (Pr.ConstExpr $ Pr.ConstInt $ fromIntegral (nodeHash tree))
+                                 | target <- Set.toList ns ]
+      Just inc -> mapM (\i -> do
+                           let rname = "conn_"++name++"_"++var
+                           nv <- i #=> tree
+                           t <- true
+                           f <- false
+                           if nv == t -- The input matches the condition perfectly
+                             then return (True,rname,fromIntegral $ nodeHash i)
+                             else (do
+                                      nv <- i #&& tree
+                                      if nv == f -- The input doesn't match the condition at all
+                                        then return (False,rname,fromIntegral $ nodeHash i)
+                                        else return (True,rname,fromIntegral $ nodeHash i))
+                       ) (Set.toList inc) >>= return.(Right)
 
 translateContracts' :: Monad m => TransProgram s -> BDDM s Int m [Pr.Module]
 translateContracts' prog
