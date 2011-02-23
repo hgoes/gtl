@@ -116,6 +116,7 @@ expr_bool : expr_bool "and" expr_bool       { ExprBinBool And $1 $3 }
           | "next" expr_bool                { ExprNext $2 }
           | var "in" "{" ints "}"           { ExprElem (fst $1) (snd $1) $4 True }
           | var "not" "in" "{" ints "}"     { ExprElem (fst $1) (snd $1) $5 False }
+          | "(" expr_bool ")"               { $2 }
 
 expr_int : var                          { ExprVar (fst $1) (snd $1) }
          | int                          { ExprConst $1 }
@@ -123,6 +124,7 @@ expr_int : var                          { ExprVar (fst $1) (snd $1) }
          | expr_int "-" expr_int        { ExprBinInt OpMinus $1 $3 }
          | expr_int "*" expr_int        { ExprBinInt OpMult $1 $3 }
          | expr_int "/" expr_int        { ExprBinInt OpDiv $1 $3 }
+         | "(" expr_int ")"             { $2 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
