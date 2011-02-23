@@ -21,6 +21,7 @@
  - Was kindisch, männlich sein.
  -                                  -- Telemann
  -}
+{-# LANGUAGE GADTs #-}
 module Language.GTL.PromelaContract where
 
 import Data.BDD
@@ -279,7 +280,7 @@ buildTransProgram scade decls
                                                                                    (fmap (\(qual,name,tree) -> case qual of
                                                                                              Nothing -> error "Verify formulas must only contain qualified names"
                                                                                              Just rq -> ((rq,name),[tree])) res))
-                                          ) (fmap (GTL.Not) $ verifyFormulas claim)
+                                          ) (fmap (GTL.ExprNot) $ verifyFormulas claim)
                    ) claims
     let prog1 = foldl (\cprog c
                        -> let fromMdl = cprog!(connectFromModel c)
@@ -350,14 +351,14 @@ relsToBDD buchi = mapM
 
 
 relToBDD :: Monad m => GTLAtom -> BDDM s Int m (Maybe String,String,Tree s Int)
-relToBDD (GTLRel rel (Variable q v) (Constant c)) = do
+relToBDD (GTLRel rel (ExprVar q v) (ExprConst c)) = do
   bdd <- relToBDD' rel c
   return (q,v,bdd)
-relToBDD (GTLRel rel (Constant c) (Variable q v)) = do
+relToBDD (GTLRel rel (ExprConst c) (ExprVar q v)) = do
   bdd <- relToBDD' (relNot rel) c
   return (q,v,bdd)
 relToBDD (GTLElem q v lits p) = do
-  bdd <- encodeSet 0 (Set.fromList $ fmap (\(Constant x) -> fromIntegral x::Int) lits)
+  bdd <- encodeSet 0 (Set.fromList $ fmap (fromIntegral::Integer->Int) lits)
   if p
     then return (q,v,bdd)
     else (do

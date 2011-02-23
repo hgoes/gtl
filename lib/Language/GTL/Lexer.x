@@ -33,11 +33,17 @@ tokens:-
   ";"                            { const Semicolon }
   "."                            { const Dot }
   ","                            { const Comma }
+  "<="                           { const LessThanEqual }
   "<"                            { const LessThan }
   "=>"                           { key KeyFollows }
+  ">="                           { const GreaterThanEqual }
   ">"                            { const GreaterThan }
   "="                            { const Equals }
   "!"                            { key KeyNot }
+  "+"				 { const Plus }
+  "-"                            { const Minus }
+  "*"                            { const Mult }
+  "/"                            { const Div }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }
   $digit10+                      { \s -> ConstInt (read s) }

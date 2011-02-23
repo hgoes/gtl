@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 module Language.GTL.PromelaCIntegration where
 
 import Language.GTL.Parser (gtl)
@@ -34,7 +35,7 @@ translateGTL traces gtlcode scadecode
           [] -> []
           cl -> [neverClaim (case rtr of
                                 [] -> []
-                                x:_ -> x) $ GTL.Not $ foldl1 (BinOp GTL.And) cl]
+                                x:_ -> x) $ ExprNot $ foldl1 (ExprBinBool GTL.And) cl]
     {-nevers <- case traces of
       Nothing -> return []
       Just tr -> runBDDM (do
@@ -74,8 +75,9 @@ neverClaim trace f
                                            _ -> error "Not yet implemented AUINV")++")"
                                 | (atom,en) <- Map.toList $ fst $ vars st,
                                   let ratom = if en then atom else gtlAtomNot atom ]
-                       clit (Constant x) = show x
-                       clit (Variable (Just mdl) var) = "now."++mdl++"_state."++var
+                       clit :: Expr a -> String
+                       clit (ExprConst x) = show x
+                       clit (ExprVar (Just mdl) var) = "now."++mdl++"_state."++var
                        clit _ = error "All variables in never claim must be qualified"
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner

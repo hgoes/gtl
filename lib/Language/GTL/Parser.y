@@ -34,9 +34,15 @@ import Data.Maybe (mapMaybe)
   ","               { Comma }
   ";"               { Semicolon }
   "<"               { LessThan }
+  "<="              { LessThanEqual }
   ">"               { GreaterThan }
+  ">="              { GreaterThanEqual }
   "="               { Equals }
   "."               { Dot }
+  "+"               { Plus }
+  "-"               { Minus }
+  "*"               { Mult }
+  "/"               { Div }
   id                { Identifier $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
@@ -46,6 +52,10 @@ import Data.Maybe (mapMaybe)
 %left "and"
 %left "follows"
 %left "not"
+%left "+"
+%left "-"
+%left "*"
+%left "/"
 
 %%
 
@@ -91,29 +101,36 @@ mb_contract : "contract" { }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : lit "<" lit                 { BinRel BinLT $1 $3 }
-        | lit ">" lit                 { BinRel BinGT $1 $3 }
-        | lit "=" lit                 { BinRel BinEq $1 $3 }
-        | var "in" "{" lits "}"       { Elem (fst $1) (snd $1) $4 True }
-        | var "not" "in" "{" lits "}" { Elem (fst $1) (snd $1) $5 False }
-        | "not" formula               { Not $2 }
-        | formula "and" formula       { BinOp And $1 $3 }
-        | formula "or" formula        { BinOp Or $1 $3 }
-        | formula "follows" formula   { BinOp Follows $1 $3 }
-        | "always" formula            { Always $2 }
-        | "next" formula              { Next $2 }
-        | "(" formula ")"             { $2 }
+formula : expr_bool { $1 }
+
+expr_bool : expr_bool "and" expr_bool       { ExprBinBool And $1 $3 }
+          | expr_bool "or" expr_bool        { ExprBinBool Or $1 $3 }
+          | expr_bool "follows" expr_bool   { ExprBinBool Follows $1 $3 }
+          | expr_int "<" expr_int           { ExprRel BinLT $1 $3 }
+          | expr_int "<=" expr_int          { ExprRel BinLTEq $1 $3 }
+          | expr_int ">" expr_int           { ExprRel BinGT $1 $3 }
+          | expr_int ">=" expr_int          { ExprRel BinGTEq $1 $3 }
+          | expr_int "=" expr_int           { ExprRel BinEq $1 $3 }
+          | "not" expr_bool                 { ExprNot $2 }
+          | "always" expr_bool              { ExprAlways $2 }
+          | "next" expr_bool                { ExprNext $2 }
+          | var "in" "{" ints "}"           { ExprElem (fst $1) (snd $1) $4 True }
+          | var "not" "in" "{" ints "}"     { ExprElem (fst $1) (snd $1) $5 False }
+
+expr_int : var                          { ExprVar (fst $1) (snd $1) }
+         | int                          { ExprConst $1 }
+         | expr_int "+" expr_int        { ExprBinInt OpPlus $1 $3 }
+         | expr_int "-" expr_int        { ExprBinInt OpMinus $1 $3 }
+         | expr_int "*" expr_int        { ExprBinInt OpMult $1 $3 }
+         | expr_int "/" expr_int        { ExprBinInt OpDiv $1 $3 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
 
-lit : int       { Constant $1 }
-    | var       { Variable (fst $1) (snd $1) }
-
-lits : lit comma_lits { $1:$2 }
+ints : int comma_ints { $1:$2 }
      |                { [] }
 
-comma_lits : "," lit comma_lits { $2:$3 }
+comma_ints : "," int comma_ints { $2:$3 }
            |                    { [] }
 
 connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }

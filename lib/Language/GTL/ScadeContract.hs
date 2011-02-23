@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 module Language.GTL.ScadeContract where
 
 import Data.Map as Map
@@ -140,9 +141,9 @@ stateToTransition name st
     
                        
 
-litToExpr :: GTL.Lit -> Sc.Expr
-litToExpr (Constant n) = ConstIntExpr n
-litToExpr (Variable Nothing x) = IdExpr $ Path [x]
+litToExpr :: GTL.Expr a -> Sc.Expr
+litToExpr (ExprConst n) = ConstIntExpr n
+litToExpr (ExprVar Nothing x) = IdExpr $ Path [x]
 
 relToExpr :: GTLAtom -> Sc.Expr
 relToExpr (GTLRel rel l r)

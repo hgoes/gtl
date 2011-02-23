@@ -9,8 +9,14 @@ data Token = Identifier String
            | ConstString String
            | ConstInt Integer
            | LessThan
+           | LessThanEqual
            | GreaterThan
+           | GreaterThanEqual
            | Equals
+           | Plus
+           | Minus
+           | Mult
+           | Div
            deriving Show
 
 data KeyWord = KeyAll
