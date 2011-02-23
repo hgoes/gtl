@@ -48,41 +48,40 @@ neverClaim trace f
   = let traceAut = traceToBuchi trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
-        init = Pr.StepStmt (Pr.StmtIf [ [Pr.StepStmt (Pr.StmtGoto $ "st"++showSt i) Nothing]  | (i,st) <- states, isStart st ]) Nothing
-        steps = [ Pr.StepStmt (Pr.StmtLabel ("st"++showSt i)
-                               (let cexprr = case snd (vars st) of
-                                      Nothing -> []
-                                      Just (mdl,vs) -> [ generateBDDCheck ("now."++mdl++"_state."++v) (bitSize (undefined::Int)) tree
-                                                       | (v,tree) <- Map.toList vs]
-                                    inner = case cexprl ++ cexprr of
-                                      [] -> jump
-                                      cexprs -> Pr.StmtSequence
-                                                [Pr.StepStmt (Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) cexprs)) Nothing
-                                                ,Pr.StepStmt jump Nothing]
-                                    jump = Pr.StmtIf
-                                           [ [Pr.StepStmt (Pr.StmtGoto $ "st"++showSt j) Nothing]
-                                           | j <- Set.toList (successors st)]
-                                                       
-                                    cexprl = [ "("++(case ratom of
-                                                        GTLRel rel lhs rhs -> clit lhs ++ (case rel of
-                                                                                              BinLT -> "<"
-                                                                                              BinLTEq -> "<="
-                                                                                              BinGT -> ">"
-                                                                                              BinGTEq -> ">="
-                                                                                              BinEq -> "=="
-                                                                                              BinNEq -> "!=") ++ clit rhs
-                                                        _ -> error "Not yet implemented AUINV")++")"
-                                             | (atom,en) <- Map.toList $ fst $ vars st,
-                                               let ratom = if en then atom else gtlAtomNot atom ]
-                                    clit (Constant x) = show x
-                                    clit (Variable (Just mdl) var) = "now."++mdl++"_state."++var
-                                    clit _ = error "All variables in never claim must be qualified"
-                                in if finalSets st
-                                   then Pr.StmtLabel ("accept"++showSt i) inner
-                                   else inner)
-                              ) Nothing
+        init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
+        steps = [ Pr.StmtLabel ("st"++showSt i)
+                  (let cexprr = case snd (vars st) of
+                         Nothing -> []
+                         Just (mdl,vs) -> [ generateBDDCheck ("now."++mdl++"_state."++v) (bitSize (undefined::Int)) tree
+                                          | (v,tree) <- Map.toList vs]
+                       inner = case cexprl ++ cexprr of
+                         [] -> jump
+                         cexprs -> Pr.prSequence
+                                   [Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) cexprs)
+                                   ,jump]
+                       jump = Pr.prIf
+                              [ [Pr.StmtGoto $ "st"++showSt j]
+                              | j <- Set.toList (successors st)]
+                              
+                       cexprl = [ "("++(case ratom of
+                                           GTLRel rel lhs rhs -> clit lhs ++ (case rel of
+                                                                                 BinLT -> "<"
+                                                                                 BinLTEq -> "<="
+                                                                                 BinGT -> ">"
+                                                                                 BinGTEq -> ">="
+                                                                                 BinEq -> "=="
+                                                                                 BinNEq -> "!=") ++ clit rhs
+                                           _ -> error "Not yet implemented AUINV")++")"
+                                | (atom,en) <- Map.toList $ fst $ vars st,
+                                  let ratom = if en then atom else gtlAtomNot atom ]
+                       clit (Constant x) = show x
+                       clit (Variable (Just mdl) var) = "now."++mdl++"_state."++var
+                       clit _ = error "All variables in never claim must be qualified"
+                   in if finalSets st
+                      then Pr.StmtLabel ("accept"++showSt i) inner
+                      else inner)
                 | (i,st) <- states ]
-    in Pr.Never $ [init]++steps
+    in Pr.prNever $ [init]++steps
 
 generateNeverClaim :: BDDTrace s -> Pr.Module
 generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var -> "now."++mdl++"_state."++var) trace)
@@ -90,18 +89,18 @@ generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var -> "now."++mdl++"_
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> [Pr.Module]
 generatePromelaCode tp conns
   = let procs = fmap (\(name,(int_name,inp,outp)) ->
-                       let assignments = [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtCCode $ unlines $
-                                                                                [name++"_input."++tvar++" = now."++
-                                                                                 fmod++"_state."++fvar++";" 
-                                                                                | ((fmod,fvar),(tmod,tvar)) <- conns, tmod==name ]++
-                                                                                [int_name++"("++
-                                                                                 (if Map.null inp
-                                                                                  then ""
-                                                                                  else "&"++name++"_input,")++
-                                                                                 "&now."++name++"_state);"
-                                                                                ]
-                                                                               ) Nothing]
-                                                                 ]) Nothing]
+                       let assignments = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
+                                                                 [name++"_input."++tvar++" = now."++
+                                                                  fmod++"_state."++fvar++";" 
+                                                                 | ((fmod,fvar),(tmod,tvar)) <- conns, tmod==name ]++
+                                                                 [int_name++"("++
+                                                                  (if Map.null inp
+                                                                   then ""
+                                                                   else "&"++name++"_input,")++
+                                                                  "&now."++name++"_state);"
+                                                                 ]
+                                                                ]
+                                                               ]) Nothing]
                        in Pr.ProcType { Pr.proctypeActive = Nothing
                                       , Pr.proctypeName = name
                                       , Pr.proctypeArguments = []
@@ -117,15 +116,14 @@ generatePromelaCode tp conns
                                                                      else "inC_"++int_name++" "++name++"_input;"
                                      ) (Map.toList tp))
                               )]
-        init = [Pr.Init Nothing ([Pr.StepStmt (Pr.StmtCCode $ unlines $
-                                               fmap (\(name,(int_name,inp,outp)) -> 
-                                                      int_name++"_reset(&now."++name++"_state);") (Map.toList tp)
-                                              ) Nothing,
-                                  Pr.StepStmt (Pr.StmtAtomic 
-                                               [Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing) Nothing
-                                               | name <- Map.keys tp
-                                               ]) Nothing
-                                 ])
+        init = [Pr.prInit ([Pr.StmtCCode $ unlines $
+                            fmap (\(name,(int_name,inp,outp)) -> 
+                                   int_name++"_reset(&now."++name++"_state);") (Map.toList tp),
+                            Pr.prAtomic 
+                            [Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing
+                            | name <- Map.keys tp
+                            ]
+                           ])
                ]
     in inp_decls ++ states ++ procs ++ init
 
