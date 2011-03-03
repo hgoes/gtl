@@ -24,6 +24,10 @@ gtlToBuchi f = ltlToBuchiM (f . fmap (\(at,p) -> if p
                            ) .
              gtlToLTL
 
+getAtomVars :: GTLAtom -> [(Maybe String,String)]
+getAtomVars (GTLElem q n _ _) = [(q,n)]
+getAtomVars (GTLRel _ lhs rhs) = getVars lhs ++ getVars rhs
+
 gtlToLTL :: Formula -> LTL GTLAtom
 gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
 gtlToLTL (GTL.ExprBinBool op l r) = case op of

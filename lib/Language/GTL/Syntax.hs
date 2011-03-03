@@ -149,6 +149,15 @@ relNot rel = case rel of
   BinEq -> BinNEq
   BinNEq -> BinEq
 
+relTurn :: Relation -> Relation
+relTurn rel = case rel of
+  BinLT -> BinGT
+  BinLTEq -> BinGTEq
+  BinGT -> BinLT
+  BinGTEq -> BinLTEq
+  BinEq -> BinEq
+  BinNEq -> BinNEq
+
 pushNot :: Formula -> Formula
 pushNot (ExprNot x) = pushNot' x
 pushNot (ExprBinBool op x y) = ExprBinBool op (pushNot x) (pushNot y)
@@ -173,3 +182,14 @@ pushNot' (ExprBinBool op x y) = case op of
 pushNot' (ExprAlways x) = error "always operator must not be negated"
 pushNot' (ExprNext x) = ExprNext (pushNot' x)
 pushNot' (ExprElem p n lst neg) = ExprElem p n lst (not neg)
+
+getVars :: Expr a -> [(Maybe String,String)]
+getVars (ExprVar q n) = [(q,n)]
+getVars (ExprConst _) = []
+getVars (ExprBinInt _ lhs rhs) = getVars lhs ++ getVars rhs
+getVars (ExprBinBool _ lhs rhs) = getVars lhs ++ getVars rhs
+getVars (ExprRel _ lhs rhs) = getVars lhs ++ getVars rhs
+getVars (ExprElem q n _ _) = [(q,n)]
+getVars (ExprNot e) = getVars e
+getVars (ExprAlways e) = getVars e
+getVars (ExprNext e) = getVars e

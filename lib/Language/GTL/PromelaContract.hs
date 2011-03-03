@@ -303,7 +303,7 @@ buildTransProgram scade decls
                                                                                                                                      (varsOut mdl)
                                                                                                                          }) mname cprog'
                                                                      ) cprog (Map.toList (vars st))
-                                             ) prog1 (Map.toList never)
+                                             ) tprog (Map.toList never)
                       ) prog1 nevers
         prog3 = fmap (\mdl -> mdl { varsIn = Map.mapWithKey (\k ins -> case Map.lookup k (varsInit mdl) of
                                                                 Nothing -> ins
