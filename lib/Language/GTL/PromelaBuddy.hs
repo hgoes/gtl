@@ -26,7 +26,8 @@ data TransModel = TransModel
 
 data TransProgram = TransProgram
                     { transModels :: Map String TransModel
-                    , transClaims :: [Buchi [GTLAtom]]
+                    , transClaims :: [Buchi [Integer]]
+                    , claimChecks :: [String]
                     } deriving Show
 
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
@@ -55,6 +56,7 @@ translateContracts' prog
                                      in (name,proc)) (Map.toList (transModels prog))
         check_funcs = Pr.CCode $ unlines $
                       [ impl | mdl <- Map.elems (transModels prog), impl <- checkFunctions mdl ] ++
+                      claimChecks prog ++
                       [ unlines $ ["void reset_"++name++"(State* now) {"] ++
                         ["  "++(case to of
                                    Just (q,n) -> "now->conn_"++q++"_"++n
@@ -99,8 +101,10 @@ translateModel name mdl
                      | (st,entr) <- Map.toList $ stateMachine mdl, isStart entr ]
     in fmap toStep $ inits:states
 
-parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> String -> Map String (Set (Maybe (String,String))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
-parseGTLAtom mp name outps at
+
+
+parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
+parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> case at of
@@ -110,22 +114,32 @@ parseGTLAtom mp name outps at
                                 (res,isinp) = (case lvars of
                                                   [] -> case rhs of
                                                     ExprVar Nothing n -> if Map.member n outps
-                                                                         then (createBuddyAssign idx name n (outps!n) (relTurn rel) lhs,False)
+                                                                         then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
                                                                          else error "No output variable in relation"
                                                     _ -> case rvars of
                                                       [] -> (createBuddyCompare idx name rel lhs rhs,True)
                                                       _ -> error "Output variables must be alone"
                                                   _ -> case lhs of
-                                                    ExprVar Nothing n -> (createBuddyAssign idx name n (outps!n) rel rhs,False)
+                                                    ExprVar Nothing n -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
                                                     _ -> case lvars of
                                                       [] -> (createBuddyCompare idx name  rel lhs rhs,True)
                                                       _ -> error "Output varibales must be alone"
                                               ) :: (String,Bool)
-                            in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
+                                 in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
+      where
+        name = case arg of
+          Nothing -> Nothing
+          Just (n,_) -> Just n
+        rname = case name of
+          Nothing -> error "Invalid use of unqualified variable"
+          Just n -> n
+        outps = case arg of
+          Nothing -> Map.empty
+          Just (_,s) -> s
 
 createBuddyAssign :: Integer -> String -> String -> Set (Maybe (String,String)) -> Relation -> GTL.Expr Int -> String
 createBuddyAssign count q n outs rel expr
-  = let (cmd,de,_,e) = createBuddyExpr 0 q expr
+  = let (cmd,de,_,e) = createBuddyExpr 0 (Just q) expr
         trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
     in unlines ([ "void assign_"++q++show count++"(State* now) {"] ++
                 fmap ("  "++) cmd ++
@@ -136,11 +150,11 @@ createBuddyAssign count q n outs rel expr
                 fmap ("  "++) de ++
                 ["}"])
 
-createBuddyCompare :: Integer -> String -> Relation -> GTL.Expr Int -> GTL.Expr Int -> String
+createBuddyCompare :: Integer -> Maybe String -> Relation -> GTL.Expr Int -> GTL.Expr Int -> String
 createBuddyCompare count q rel expr1 expr2
   = let (cmd1,de1,v,e1) = createBuddyExpr 0 q expr1
         (cmd2,de2,_,e2) = createBuddyExpr v q expr2
-    in unlines $ ["int cond_"++q++show count++"(State* now) {"]++
+    in unlines $ ["int cond_"++(maybe "_never" id q)++show count++"(State* now) {"]++
        fmap ("  "++) (cmd1++cmd2)++
        ["  DdNode* lhs = "++e1++";"
        ,"  Cudd_Ref(lhs);"
@@ -165,9 +179,14 @@ createBuddyCompare count q rel expr1 expr2
        ["  return res;",
         "}"]
 
-createBuddyExpr :: Integer -> String -> GTL.Expr Int -> ([String],[String],Integer,String)
+createBuddyExpr :: Integer -> Maybe String -> GTL.Expr Int -> ([String],[String],Integer,String)
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,"Cudd_bddSingleton(manager,"++show i++",0)")
-createBuddyExpr v mdl (ExprVar _ n) = ([],[],v,"now->conn_"++mdl++"_"++n)
+createBuddyExpr v mdl (ExprVar q n) = let rmdl = case q of
+                                            Nothing -> case mdl of
+                                              Nothing -> error "Wrong use of unqualified variable"
+                                              Just p -> p
+                                            Just p -> p
+                                      in ([],[],v,"now->conn_"++rmdl++"_"++n)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
@@ -205,7 +224,19 @@ buildTransProgram scade decls
                                                              , stateMachine = undefined
                                                              , checkFunctions = undefined
                                                              })) models
-        tclaims = fmap (\claim -> runIdentity $ gtlsToBuchi return (fmap (GTL.ExprNot) $ verifyFormulas claim)) claims
+        (tclaims,fclaims) = foldl (\(sms,cmp1) claim
+                                   -> let (sm,fm) = runState
+                                                    (gtlsToBuchi (\ats -> do 
+                                                                     mp <- get
+                                                                     let (c,nmp) = foldl (\(cs,cmp2) at -> let ((n,True),nmp) = parseGTLAtom cmp2 Nothing at
+                                                                                                           in (n:cs,nmp)
+                                                                                         ) ([],mp) ats
+                                                                     put nmp
+                                                                     return c
+                                                                 ) (fmap (GTL.ExprNot) $ verifyFormulas claim))
+                                                    cmp1
+                                      in (sm:sms,fm)
+                                  ) ([],Map.empty) claims
         
         tmodels2 = foldl (\cmdls c -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
                                                                           (connectFromVariable c)
@@ -213,22 +244,19 @@ buildTransProgram scade decls
                                                                           (varsOut mdl)
                                                               }) (connectFromModel c) cmdls) tmodels1 conns
         tmodels3 = foldl (\cmdls never ->
-                           foldl (\cmdls' st ->
-                                   foldl (\cmdls'' at ->
-                                           foldl (\cmdls''' (Just q,n) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
-                                                                                                              n (Set.singleton Nothing)
-                                                                                                              (varsOut mdl)
-                                                                                                  }) q cmdls'''
-                                                 ) cmdls'' (getAtomVars at)
-                                         ) cmdls' (vars st)
-                                 ) cmdls never
-                         ) tmodels2 tclaims
+                           foldl (\cmdls' (Just q,n) ->
+                                   Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
+                                                                       n (Set.singleton Nothing)
+                                                                       (varsOut mdl)
+                                                           }) q cmdls'
+                                 ) cmdls $ concat (fmap getVars (verifyFormulas never))
+                         ) tmodels2 claims
         tmodels4 = foldl (\cur m -> Map.adjust
                                     (\entr -> let (sm,fm) = runState (gtlsToBuchi
                                                                       (\ats -> do
                                                                           mp <- get
                                                                           let (c,a,nmp) = foldl (\(chks,ass,cmp) at
-                                                                                                 -> let ((n,f),nmp) = parseGTLAtom cmp (modelName m) (varsOut entr) at
+                                                                                                 -> let ((n,f),nmp) = parseGTLAtom cmp (Just (modelName m,varsOut entr)) at
                                                                                                     in (if f then (n:chks,ass,nmp)
                                                                                                         else (chks,n:ass,nmp))
                                                                                                 ) ([],[],mp) ats
@@ -241,4 +269,5 @@ buildTransProgram scade decls
                                     ) (modelName m) cur) tmodels3 models
     in TransProgram { transModels = tmodels4
                     , transClaims = tclaims
+                    , claimChecks = fmap (\(_,_,f) -> f) $ Map.elems fclaims
                     }

@@ -98,6 +98,12 @@ untils' n (Bin op l r) = let (mpl,nl) = untils' n l
                          in (Map.union mpl mpr,nr+1)
 untils' n (Un op x) = untils' n x
 
+ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
+ltlAtoms f (Atom x) = Set.fromList (f x)
+ltlAtoms _ (Ground _) = Set.empty
+ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
+ltlAtoms f (Un _ x) = ltlAtoms f x
+
 type NodeSet a = Map (Set (LTL a),Set (LTL a)) (Integer,Set Integer)
 
 data Node a = Node
