@@ -12,12 +12,12 @@ import Data.Map as Map
 import Data.Set as Set
 import Control.Monad.Identity
 import Control.Monad.State
-import Prelude hiding (foldl)
+import Prelude hiding (foldl,concat)
 import Data.Foldable
 import Data.List (intersperse)
 
 data TransModel = TransModel
-                  { varsInit :: Map String GTLAtom
+                  { varsInit :: Map String String
                   , varsIn :: Set String
                   , varsOut :: Map String (Set (Maybe (String,String)))
                   , stateMachine :: Buchi ([Integer],[Integer]) --[GTLAtom]
@@ -62,7 +62,20 @@ translateContracts' prog
                                )++" = DD_ONE(manager);" | (from,tos) <- Map.toList (varsOut mdl), to <- Set.toList tos ]++
                         ["}"]
                       | (name,mdl) <- Map.toList (transModels prog) ]
-        init = prInit [ prAtomic $ [ StmtCCode "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);" ] 
+        init = prInit [ prAtomic $ [ StmtCCode $ unlines $
+                                     [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
+                                     concat [ let trgs = if Set.member var (varsIn mdl)
+                                                         then ["now.conn_"++name++"_"++var]
+                                                         else [ case outp of
+                                                                   Nothing -> "now.never_"++name++"_"++var
+                                                                   Just (q,n) -> "now.conn_"++q++"_"++n
+                                                              | outp <- Set.toList ((varsOut mdl)!var) ]
+                                              in [ head trgs++" = "++e++";"
+                                                 , "Cudd_Ref("++head trgs++");"] ++
+                                                 [ trg++" = "++head trgs | trg <- tail trgs ]
+                                            | (name,mdl) <- Map.toList (transModels prog),
+                                              (var,e) <- Map.toList (varsInit mdl) ]
+                                   ]
                         ++ [ StmtRun name [] | (name,_) <- procs ]
                       ]
     in [include]++states++[check_funcs]++[ pr | (_,pr) <- procs]++[init]
@@ -183,7 +196,10 @@ buildTransProgram scade decls
         tmodels1 = Map.fromList $ fmap (\m -> let (inp_vars,outp_vars) = scadeInterface ((modelArgs m)!!0) scade
                                                   outp_map = Map.fromList $ fmap (\(var,_) -> (var,Set.empty)) outp_vars
                                               in (modelName m,
-                                                  TransModel { varsInit = Map.empty
+                                                  TransModel { varsInit = Map.fromList [ (name,case e of
+                                                                                             InitAll -> "DD_ONE(manager)"
+                                                                                             InitOne i -> "Cudd_bddSingleton(manager,"++show i++",0)")
+                                                                                       | (name,e) <- modelInits m ]
                                                              , varsIn = Set.fromList $ fmap fst inp_vars
                                                              , varsOut = outp_map
                                                              , stateMachine = undefined
