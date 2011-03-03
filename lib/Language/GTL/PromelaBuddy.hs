@@ -35,6 +35,7 @@ translateContracts scade decls = translateContracts' (buildTransProgram scade de
 translateContracts' :: TransProgram -> [Pr.Module]
 translateContracts' prog 
   = let include = Pr.CDecl $ unlines ["\\#include <cudd/cudd.h>"
+                                     ,"\\#include <cudd_arith.h>"
                                      ,"DdManager* manager;"]
         states = [ Pr.CState ("DdNode* conn_"++name++"_"++var) "Global" Nothing
                  | (name,mdl) <- Map.toList $ transModels prog
@@ -52,35 +53,35 @@ translateContracts' prog
                                                             , Pr.proctypeSteps = steps
                                                             }
                                      in (name,proc)) (Map.toList (transModels prog))
-        check_funcs = Pr.CDecl $ unlines $
+        check_funcs = Pr.CCode $ unlines $
                       [ impl | mdl <- Map.elems (transModels prog), impl <- checkFunctions mdl ] ++
-                      [ unlines $ ["void reset_"++name++"() {"] ++
+                      [ unlines $ ["void reset_"++name++"(State* now) {"] ++
                         ["  "++(case to of
-                                   Just (q,n) -> "conn_"++q++"_"++n
-                                   Nothing -> "never_"++name++"_"++from
+                                   Just (q,n) -> "now->conn_"++q++"_"++n
+                                   Nothing -> "now->never_"++name++"_"++from
                                )++" = DD_ONE(manager);" | (from,tos) <- Map.toList (varsOut mdl), to <- Set.toList tos ]++
                         ["}"]
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);" ] 
                         ++ [ StmtRun name [] | (name,_) <- procs ]
                       ]
-    in [include,check_funcs]++states++[ pr | (_,pr) <- procs]++[init]
+    in [include]++states++[check_funcs]++[ pr | (_,pr) <- procs]++[init]
 
 translateModel :: String -> TransModel -> [Pr.Step]
 translateModel name mdl
   = let states = fmap (\(st,entr)
                        -> Pr.StmtLabel ("st"++show st) $
-                          prAtomic [ Pr.StmtCCode $ unlines $ ["reset_"++name++"();" ] ++ [ "assign_"++name++show n++"();" | n <- snd $ vars entr ],
+                          prAtomic [ Pr.StmtCCode $ unlines $ ["reset_"++name++"(&now);" ] ++ [ "assign_"++name++show n++"(&now);" | n <- snd $ vars entr ],
                                      prIf [ (if not $ Prelude.null $ fst $ vars nentr
                                              then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                                    [ "cond_"++name++show n++"()" | n <- fst $ vars nentr ] ]
+                                                    [ "cond_"++name++show n++"(&now)" | n <- fst $ vars nentr ] ]
                                              else []) ++ [Pr.StmtGoto $ "st"++show succ ]
                                           | succ <- Set.toList $ successors entr, let nentr = (stateMachine mdl)!succ ]
                                    ]
                       ) (Map.toList $ stateMachine mdl)
         inits = prIf [ [prAtomic $ (if not $ Prelude.null $ fst $ vars entr
                                     then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                           [ "cond_"++name++show n++"()" | n <- fst $ vars entr ] ]
+                                           [ "cond_"++name++show n++"(&now)" | n <- fst $ vars entr ] ]
                                     else []) ++ [Pr.StmtGoto $ "st"++show st ] ]
                      | (st,entr) <- Map.toList $ stateMachine mdl, isStart entr ]
     in fmap toStep $ inits:states
@@ -112,12 +113,12 @@ parseGTLAtom mp name outps at
 createBuddyAssign :: Integer -> String -> String -> Set (Maybe (String,String)) -> Relation -> GTL.Expr Int -> String
 createBuddyAssign count q n outs rel expr
   = let (cmd,de,_,e) = createBuddyExpr 0 q expr
-        trgs = fmap (maybe ("never_"++q++"_"++n) (\(q',n') -> "conn_"++q'++"_"++n')) $ Set.toList outs
-    in unlines ([ "void assign_"++q++show count++"() {"] ++
+        trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
+    in unlines ([ "void assign_"++q++show count++"(State* now) {"] ++
                 fmap ("  "++) cmd ++
                 ["  "++head trgs++" = "++e++";"]++
                 fmap (\trg -> "  "++trg++" = "++head trgs++";") (tail trgs)++
-                ["  Cudd_Ref(conn_"++q++"_"++n++");"
+                ["  Cudd_Ref("++head trgs++");"
                 ]++
                 fmap ("  "++) de ++
                 ["}"])
@@ -126,7 +127,7 @@ createBuddyCompare :: Integer -> String -> Relation -> GTL.Expr Int -> GTL.Expr 
 createBuddyCompare count q rel expr1 expr2
   = let (cmd1,de1,v,e1) = createBuddyExpr 0 q expr1
         (cmd2,de2,_,e2) = createBuddyExpr v q expr2
-    in unlines $ ["int cond_"++q++show count++"() {"]++
+    in unlines $ ["int cond_"++q++show count++"(State* now) {"]++
        fmap ("  "++) (cmd1++cmd2)++
        ["  DdNode* lhs = "++e1++";"
        ,"  Cudd_Ref(lhs);"
@@ -135,12 +136,14 @@ createBuddyCompare count q rel expr1 expr2
        ,"  int res;"
        ]++(case rel of
               GTL.BinEq -> ["  res = Cudd_bddAnd(manager,lhs,rhs)!=Cudd_Not(Cudd_ReadOne(manager));"]
-              GTL.BinLT -> ["  CUDD_ARITH_TYPE lval = Cudd_bddMinimum(mgr,lhs,0);",
-                            "  CUDD_ARITH_TYPE rval = Cudd_bddMaximum(mgr,rhs,0);",
-                            "  res = lval < rval;"]
-              GTL.BinGTEq -> ["  CUDD_ARITH_TYPE lval = Cudd_bddMaximum(mgr,lhs,0);",
-                              "  CUDD_ARITH_TYPE rval = Cudd_bddMinimum(mgr,rhs,0);",
-                              "  res = lval >= rval;"]
+              GTL.BinLT -> ["  CUDD_ARITH_TYPE lval,rval;",
+                            "  int lval_found = Cudd_bddMinimum(manager,lhs,0,&lval);",
+                            "  int rval_found = Cudd_bddMaximum(manager,rhs,0,&rval);",
+                            "  res = lval_found && rval_found && (lval < rval);"]
+              GTL.BinGTEq -> ["  CUDD_ARITH_TYPE lval,rval;",
+                              "  int lval_found = Cudd_bddMaximum(manager,lhs,0,&lval);",
+                              "  int rval_found = Cudd_bddMinimum(manager,rhs,0,&rval);",
+                              "  res = lval_found && rval_found && (lval >= rval);"]
               _ -> ["  //Unimplemented relation: "++show rel]
           )++
        ["  Cudd_RecursiveDeref(manager,rhs);",
@@ -151,7 +154,7 @@ createBuddyCompare count q rel expr1 expr2
 
 createBuddyExpr :: Integer -> String -> GTL.Expr Int -> ([String],[String],Integer,String)
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,"Cudd_bddSingleton(manager,"++show i++",0)")
-createBuddyExpr v mdl (ExprVar _ n) = ([],[],v,"conn_"++mdl++"_"++n)
+createBuddyExpr v mdl (ExprVar _ n) = ([],[],v,"now->conn_"++mdl++"_"++n)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
