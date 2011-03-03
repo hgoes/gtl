@@ -68,15 +68,22 @@ translateContracts' prog
 
 translateModel :: String -> TransModel -> [Pr.Step]
 translateModel name mdl
-  = fmap (\(st,entr) -> toStep $ Pr.StmtLabel ("st"++show st) $
-                        prAtomic [ Pr.StmtCCode $ unlines $ ["reset_"++name++"();" ] ++ [ "assign_"++name++show n++"();" | n <- snd $ vars entr ],
-                                   prIf [ (if not $ Prelude.null $ fst $ vars nentr
-                                           then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                                  [ "cond_"++name++show n++"()" | n <- fst $ vars nentr ] ]
-                                           else []) ++ [Pr.StmtGoto $ "st"++show succ ]
-                                        | succ <- Set.toList $ successors entr, let nentr = (stateMachine mdl)!succ ]
-                                    ]
-         ) (Map.toList $ stateMachine mdl)
+  = let states = fmap (\(st,entr)
+                       -> Pr.StmtLabel ("st"++show st) $
+                          prAtomic [ Pr.StmtCCode $ unlines $ ["reset_"++name++"();" ] ++ [ "assign_"++name++show n++"();" | n <- snd $ vars entr ],
+                                     prIf [ (if not $ Prelude.null $ fst $ vars nentr
+                                             then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                                                    [ "cond_"++name++show n++"()" | n <- fst $ vars nentr ] ]
+                                             else []) ++ [Pr.StmtGoto $ "st"++show succ ]
+                                          | succ <- Set.toList $ successors entr, let nentr = (stateMachine mdl)!succ ]
+                                   ]
+                      ) (Map.toList $ stateMachine mdl)
+        inits = prIf [ [prAtomic $ (if not $ Prelude.null $ fst $ vars entr
+                                    then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                                           [ "cond_"++name++show n++"()" | n <- fst $ vars entr ] ]
+                                    else []) ++ [Pr.StmtGoto $ "st"++show st ] ]
+                     | (st,entr) <- Map.toList $ stateMachine mdl, isStart entr ]
+    in fmap toStep $ inits:states
 
 parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> String -> Map String (Set (Maybe (String,String))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
 parseGTLAtom mp name outps at
