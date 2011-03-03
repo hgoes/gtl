@@ -163,6 +163,7 @@ createBuddyCompare count q rel expr1 expr2
        ,"  int res;"
        ]++(case rel of
               GTL.BinEq -> ["  res = Cudd_bddAnd(manager,lhs,rhs)!=Cudd_Not(Cudd_ReadOne(manager));"]
+              GTL.BinNEq -> ["  res = !((lhs==rhs) && Cudd_IsSingleton(manager,lhs,0));"]
               GTL.BinLT -> ["  CUDD_ARITH_TYPE lval,rval;",
                             "  int lval_found = Cudd_bddMinimum(manager,lhs,0,&lval);",
                             "  int rval_found = Cudd_bddMaximum(manager,rhs,0,&rval);",
