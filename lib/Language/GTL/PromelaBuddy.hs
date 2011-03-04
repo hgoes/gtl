@@ -108,9 +108,11 @@ translateNever buchi
   = let rbuchi = translateGBA buchi
         showSt (i,j) = show i++"_"++show j
         states = fmap (\(st,entr)
-                        -> let body = prAtomic [ prIf [ [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                                         [ "cond__never"++show n++"(&now)" | n <- vars nentr ],
-                                                         Pr.StmtGoto $ "st"++showSt succ]
+                        -> let body = prAtomic [ prIf [ (if Prelude.null (vars nentr)
+                                                        then []
+                                                        else [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                                                              [ "cond__never"++show n++"(&now)" | n <- vars nentr ]]) ++
+                                                        [Pr.StmtGoto $ "st"++showSt succ]
                                                       | succ <- Set.toList $ successors entr, 
                                                         let nentr = rbuchi!succ ]
                                                ]
