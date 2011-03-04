@@ -39,10 +39,10 @@ translateContracts' prog
                                      ,"\\#include <cudd_arith.h>"
                                      ,"\\#include <assert.h>"
                                      ,"DdManager* manager;"]
-        states = [ Pr.CState ("DdNode* conn_"++name++"_"++var) "Global" Nothing
+        states = [ Pr.CState ("DdNode* conn_"++name++"_"++var) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
                  , var <- Set.toList (varsIn mdl) ] ++
-                 [ Pr.CState ("DdNode* never_"++name++"_"++var) "Global" Nothing
+                 [ Pr.CState ("DdNode* never_"++name++"_"++var) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
                  , (var,set) <- Map.toList (varsOut mdl)
                  , Set.member Nothing set]
@@ -67,6 +67,7 @@ translateContracts' prog
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode $ unlines $
                                      [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
+                                     [ "reset_"++name++"(&now);" | (name,_) <- procs ] ++
                                      concat [ let trgs = if Set.member var (varsIn mdl)
                                                          then ["now.conn_"++name++"_"++var]
                                                          else [ case outp of
@@ -129,7 +130,7 @@ translateNever buchi
                      | (st,entr) <- Map.toList rbuchi,
                        isStart entr
                      ]
-    in fmap toStep $ inits:states
+    in fmap toStep $ StmtSkip:inits:states
 
 parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
 parseGTLAtom mp arg at
