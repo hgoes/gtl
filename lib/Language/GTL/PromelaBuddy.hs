@@ -80,7 +80,9 @@ translateContracts' prog
                                    ]
                         ++ [ StmtRun name [] | (name,_) <- procs ]
                       ]
-    in [include]++states++[check_funcs]++[ pr | (_,pr) <- procs]++[init]
+        nevers = [ prNever $ translateNever never
+                 | never <- transClaims prog ]
+    in [include]++states++[check_funcs]++[ pr | (_,pr) <- procs]++[init]++nevers
 
 translateModel :: String -> TransModel -> [Pr.Step]
 translateModel name mdl
@@ -101,7 +103,22 @@ translateModel name mdl
                      | (st,entr) <- Map.toList $ stateMachine mdl, isStart entr ]
     in fmap toStep $ inits:states
 
-
+translateNever :: Buchi [Integer] -> [Pr.Step]
+translateNever buchi
+  = let states = fmap (\(st,entr)
+                        -> Pr.StmtLabel ("st"++show st) $
+                          prAtomic [ prIf [ [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                                             [ "cond__never(&now)" | n <- vars nentr ],
+                                             Pr.StmtGoto $ "st"++show succ]
+                                          | succ <- Set.toList $ successors entr, 
+                                            let nentr = buchi!succ ]
+                                   ]
+                      ) (Map.toList buchi)
+        inits = prIf [ [Pr.StmtGoto $ "st"++show st]
+                     | (st,entr) <- Map.toList buchi,
+                       isStart entr
+                     ]
+    in fmap toStep $ inits:states
 
 parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
 parseGTLAtom mp arg at
