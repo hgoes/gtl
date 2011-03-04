@@ -105,17 +105,21 @@ translateModel name mdl
 
 translateNever :: Buchi [Integer] -> [Pr.Step]
 translateNever buchi
-  = let states = fmap (\(st,entr)
-                        -> Pr.StmtLabel ("st"++show st) $
-                          prAtomic [ prIf [ [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                             [ "cond__never(&now)" | n <- vars nentr ],
-                                             Pr.StmtGoto $ "st"++show succ]
-                                          | succ <- Set.toList $ successors entr, 
-                                            let nentr = buchi!succ ]
-                                   ]
-                      ) (Map.toList buchi)
-        inits = prIf [ [Pr.StmtGoto $ "st"++show st]
-                     | (st,entr) <- Map.toList buchi,
+  = let rbuchi = translateGBA buchi
+        showSt (i,j) = show i++"_"++show j
+        states = fmap (\(st,entr)
+                        -> let body = prAtomic [ prIf [ [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                                                         [ "cond__never"++show n++"(&now)" | n <- vars nentr ],
+                                                         Pr.StmtGoto $ "st"++showSt succ]
+                                                      | succ <- Set.toList $ successors entr, 
+                                                        let nentr = rbuchi!succ ]
+                                               ]
+                           in Pr.StmtLabel ("st"++showSt st) $ if finalSets entr
+                                                               then Pr.StmtLabel ("accept"++showSt st) body
+                                                               else body
+                      ) (Map.toList rbuchi)
+        inits = prIf [ [Pr.StmtGoto $ "st"++showSt st]
+                     | (st,entr) <- Map.toList rbuchi,
                        isStart entr
                      ]
     in fmap toStep $ inits:states
