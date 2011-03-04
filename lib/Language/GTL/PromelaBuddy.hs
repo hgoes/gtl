@@ -37,6 +37,7 @@ translateContracts' :: TransProgram -> [Pr.Module]
 translateContracts' prog 
   = let include = Pr.CDecl $ unlines ["\\#include <cudd/cudd.h>"
                                      ,"\\#include <cudd_arith.h>"
+                                     ,"\\#include <assert.h>"
                                      ,"DdManager* manager;"]
         states = [ Pr.CState ("DdNode* conn_"++name++"_"++var) "Global" Nothing
                  | (name,mdl) <- Map.toList $ transModels prog
@@ -120,7 +121,11 @@ translateNever buchi
                                                                then Pr.StmtLabel ("accept"++showSt st) body
                                                                else body
                       ) (Map.toList rbuchi)
-        inits = prIf [ [Pr.StmtGoto $ "st"++showSt st]
+        inits = prIf [ (if Prelude.null (vars entr)
+                        then []
+                        else [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
+                              [ "cond__never"++show n++"(&now)" | n <- vars entr ]]) ++
+                       [Pr.StmtGoto $ "st"++showSt st]
                      | (st,entr) <- Map.toList rbuchi,
                        isStart entr
                      ]
@@ -164,12 +169,44 @@ createBuddyAssign :: Integer -> String -> String -> Set (Maybe (String,String)) 
 createBuddyAssign count q n outs rel expr
   = let (cmd,de,_,e) = createBuddyExpr 0 (Just q) expr
         trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
+        (cmd2,te) = case rel of
+          BinEq -> ([],e)
+          BinNEq -> ([],"Cudd_Not("++e++")")
+          GTL.BinGT -> (["DdNode* extr = "++e++";",
+                         "Cudd_Ref(extr);",
+                         "CUDD_ARITH_TYPE min;",
+                         "int min_found = Cudd_bddMinimum(manager,extr,0,&min);",
+                         "assert(min_found);",
+                         "Cudd_RecursiveDeref(manager,extr);"
+                        ],"Cudd_Not(Cudd_bddLessThanEqual(manager,min,0))")
+          BinGTEq -> (["DdNode* extr = "++e++";",
+                       "Cudd_Ref(extr);",
+                       "CUDD_ARITH_TYPE min;",
+                       "int min_found = Cudd_bddMinimum(manager,extr,0,&min);",
+                       "assert(min_found);",
+                       "Cudd_RecursiveDeref(manager,extr);"
+                      ],"Cudd_Not(Cudd_bddLessThan(manager,min,0))")
+          GTL.BinLT -> (["DdNode* extr = "++e++";",
+                         "Cudd_Ref(extr);",
+                         "CUDD_ARITH_TYPE max;",
+                         "int max_found = Cudd_bddMaximum(manager,extr,0,&max);",
+                         "assert(max_found);",
+                         "Cudd_RecursiveDeref(manager,extr);"
+                        ],"Cudd_bddLessThan(manager,max,0)")
+          BinLTEq -> (["DdNode* extr = "++e++";",
+                       "Cudd_Ref(extr);",
+                       "CUDD_ARITH_TYPE max;",
+                       "int max_found = Cudd_bddMaximum(manager,extr,0,&max);",
+                       "assert(max_found);",
+                       "Cudd_RecursiveDeref(manager,extr);"
+                      ],"Cudd_bddLessThanEqual(manager,max,0)")
     in unlines ([ "void assign_"++q++show count++"(State* now) {"] ++
-                fmap ("  "++) cmd ++
-                ["  "++head trgs++" = "++e++";"]++
+                fmap ("  "++) (cmd++cmd2) ++
+                ["  "++head trgs++" = "++te++";"]++
                 fmap (\trg -> "  "++trg++" = "++head trgs++";") (tail trgs)++
                 ["  Cudd_Ref("++head trgs++");"
                 ]++
+                ["  printf(\"Assert %s.%s %s %s\\n\","++show q++","++show n++","++show (show rel)++","++show (show expr)++");"]++
                 fmap ("  "++) de ++
                 ["}"])
 
@@ -186,7 +223,7 @@ createBuddyCompare count q rel expr1 expr2
        ,"  int res;"
        ]++(case rel of
               GTL.BinEq -> ["  res = Cudd_bddAnd(manager,lhs,rhs)!=Cudd_Not(Cudd_ReadOne(manager));"]
-              GTL.BinNEq -> ["  res = !((lhs==rhs) && Cudd_IsSingleton(manager,lhs,0));"]
+              GTL.BinNEq -> ["  res = !((lhs==rhs) && Cudd_bddIsSingleton(manager,lhs,0));"]
               GTL.BinLT -> ["  CUDD_ARITH_TYPE lval,rval;",
                             "  int lval_found = Cudd_bddMinimum(manager,lhs,0,&lval);",
                             "  int rval_found = Cudd_bddMaximum(manager,rhs,0,&rval);",
@@ -194,9 +231,11 @@ createBuddyCompare count q rel expr1 expr2
               GTL.BinGTEq -> ["  CUDD_ARITH_TYPE lval,rval;",
                               "  int lval_found = Cudd_bddMaximum(manager,lhs,0,&lval);",
                               "  int rval_found = Cudd_bddMinimum(manager,rhs,0,&rval);",
+                              "  printf(\"because %d >= %d\\n\",lval,rval);",
                               "  res = lval_found && rval_found && (lval >= rval);"]
               _ -> ["  //Unimplemented relation: "++show rel]
           )++
+       ["  printf(\"%s %s %s == %d\\n\","++show (show expr1)++","++show (show rel)++","++show (show expr2)++",res);"]++
        ["  Cudd_RecursiveDeref(manager,rhs);",
         "  Cudd_RecursiveDeref(manager,lhs);"]++
        fmap ("  "++) (de2++de1)++
@@ -205,12 +244,11 @@ createBuddyCompare count q rel expr1 expr2
 
 createBuddyExpr :: Integer -> Maybe String -> GTL.Expr Int -> ([String],[String],Integer,String)
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,"Cudd_bddSingleton(manager,"++show i++",0)")
-createBuddyExpr v mdl (ExprVar q n) = let rmdl = case q of
-                                            Nothing -> case mdl of
-                                              Nothing -> error "Wrong use of unqualified variable"
-                                              Just p -> p
-                                            Just p -> p
-                                      in ([],[],v,"now->conn_"++rmdl++"_"++n)
+createBuddyExpr v mdl (ExprVar q n) = case mdl of
+                                        Nothing -> case q of
+                                          Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
+                                          Nothing -> error "verify claims must not contain qualified variables"
+                                        Just rmdl -> ([],[],v,"now->conn_"++rmdl++"_"++n)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
