@@ -207,7 +207,6 @@ createBuddyAssign count q n outs rel expr
                 fmap (\trg -> "  "++trg++" = "++head trgs++";") (tail trgs)++
                 ["  Cudd_Ref("++head trgs++");"
                 ]++
-                ["  printf(\"Assert %s.%s %s %s\\n\","++show q++","++show n++","++show (show rel)++","++show (show expr)++");"]++
                 fmap ("  "++) de ++
                 ["}"])
 
@@ -229,14 +228,20 @@ createBuddyCompare count q rel expr1 expr2
                             "  int lval_found = Cudd_bddMinimum(manager,lhs,0,&lval);",
                             "  int rval_found = Cudd_bddMaximum(manager,rhs,0,&rval);",
                             "  res = lval_found && rval_found && (lval < rval);"]
+              GTL.BinLTEq -> ["  CUDD_ARITH_TYPE lval,rval;",
+                              "  int lval_found = Cudd_bddMinimum(manager,lhs,0,&lval);",
+                              "  int rval_found = Cudd_bddMaximum(manager,rhs,0,&rval);",
+                              "  res = lval_found && rval_found && (lval <= rval);"]
+              GTL.BinGT -> ["  CUDD_ARITH_TYPE lval,rval;",
+                            "  int lval_found = Cudd_bddMaximum(manager,lhs,0,&lval);",
+                            "  int rval_found = Cudd_bddMinimum(manager,rhs,0,&rval);",
+                            "  res = lval_found && rval_found && (lval > rval);"]
               GTL.BinGTEq -> ["  CUDD_ARITH_TYPE lval,rval;",
                               "  int lval_found = Cudd_bddMaximum(manager,lhs,0,&lval);",
                               "  int rval_found = Cudd_bddMinimum(manager,rhs,0,&rval);",
-                              "  printf(\"because %d >= %d\\n\",lval,rval);",
                               "  res = lval_found && rval_found && (lval >= rval);"]
               _ -> ["  //Unimplemented relation: "++show rel]
           )++
-       ["  printf(\"%s %s %s == %d\\n\","++show (show expr1)++","++show (show rel)++","++show (show expr2)++",res);"]++
        ["  Cudd_RecursiveDeref(manager,rhs);",
         "  Cudd_RecursiveDeref(manager,lhs);"]++
        fmap ("  "++) (de2++de1)++
