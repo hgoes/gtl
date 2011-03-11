@@ -90,7 +90,8 @@ translateModel :: String -> TransModel -> [Pr.Step]
 translateModel name mdl
   = let states = fmap (\(st,entr)
                        -> Pr.StmtLabel ("st"++show st) $
-                          prAtomic [ Pr.StmtCCode $ unlines $ ["reset_"++name++"(&now);" ] ++ [ "assign_"++name++show n++"(&now);" | n <- snd $ vars entr ],
+                          prAtomic [ Pr.StmtPrintf ("ENTER "++show st++"\n") [],
+                                     Pr.StmtCCode $ unlines $ ["reset_"++name++"(&now);" ] ++ [ "assign_"++name++show n++"(&now);" | n <- snd $ vars entr ],
                                      prIf [ (if not $ Prelude.null $ fst $ vars nentr
                                              then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
                                                     [ "cond_"++name++show n++"(&now)" | n <- fst $ vars nentr ] ]
