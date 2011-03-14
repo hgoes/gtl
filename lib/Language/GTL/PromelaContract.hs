@@ -40,7 +40,7 @@ import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
 import Data.Traversable (mapM)
 import Data.Foldable (foldl,foldlM)
-import Prelude hiding (mapM,foldl)
+import Prelude hiding (mapM,foldl,catch)
 import Data.Maybe (catMaybes,mapMaybe)
 import System.Process
 import Control.Monad.Trans
@@ -48,6 +48,7 @@ import System.FilePath
 import System.Directory
 import Control.Exception.Extensible
 import System.IO.Error (isDoesNotExistError)
+import System.Environment
 import Control.Monad (unless)
 
 import Debug.Trace
@@ -77,7 +78,8 @@ verifyModel keep name scade decls = runBDDM $ do
   lift $ writeFile (name <.> "pr") (show $ prettyPromela pr)
   lift $ rawSystem "spin" ["-a",name <.> "pr"]
   let verifier = name++"-verifier"
-  lift $ rawSystem "gcc" ["pan.c","-o",verifier]
+  gcc <- lift $ catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
+  lift $ rawSystem gcc ["pan.c","-o",verifier]
   unless keep $ lift $ do
     deleteTmp "pan.c"
     deleteTmp "pan.h"
