@@ -13,16 +13,16 @@ import Data.Maybe (mapMaybe)
 
 %token
   "all"             { Key KeyAll }
-  "always"          { Key KeyAlways }
+  "always"          { Unary GOpAlways }
   "connect"         { Key KeyConnect }
   "contract"        { Key KeyContract }
-  "and"             { Key KeyAnd }
-  "follows"         { Key KeyFollows }
+  "and"             { Binary GOpAnd }
+  "follows"         { Binary GOpFollows }
   "model"           { Key KeyModel }
-  "next"            { Key KeyNext }
-  "not"             { Key KeyNot }
-  "or"              { Key KeyOr }
-  "in"              { Key KeyIn }
+  "next"            { Unary GOpNext }
+  "not"             { Unary GOpNot }
+  "or"              { Binary GOpOr }
+  "in"              { Binary GOpIn }
   "init"            { Key KeyInit }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
@@ -33,16 +33,17 @@ import Data.Maybe (mapMaybe)
   "}"               { Bracket Curly True }
   ","               { Comma }
   ";"               { Semicolon }
-  "<"               { LessThan }
-  "<="              { LessThanEqual }
-  ">"               { GreaterThan }
-  ">="              { GreaterThanEqual }
-  "="               { Equals }
+  "<"               { Binary GOpLessThan }
+  "<="              { Binary GOpLessThanEqual }
+  ">"               { Binary GOpGreaterThan }
+  ">="              { Binary GOpGreaterThanEqual }
+  "="               { Binary GOpEqual }
+  "!="              { Binary GOpNEqual }
   "."               { Dot }
-  "+"               { Plus }
-  "-"               { Minus }
-  "*"               { Mult }
-  "/"               { Div }
+  "+"               { Binary GOpPlus }
+  "-"               { Binary GOpMinus }
+  "*"               { Binary GOpMult }
+  "/"               { Binary GOpDiv }
   id                { Identifier $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
@@ -56,6 +57,8 @@ import Data.Maybe (mapMaybe)
 %left "-"
 %left "*"
 %left "/"
+%left "<" "<=" ">" ">=" "=" "!="
+%left "in"
 
 %%
 
@@ -101,30 +104,33 @@ mb_contract : "contract" { }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : expr_bool { $1 }
+formula : expr { case typeCheckBool $1 of
+                    Left err -> error err
+                    Right e -> e
+               }
 
-expr_bool : expr_bool "and" expr_bool       { ExprBinBool And $1 $3 }
-          | expr_bool "or" expr_bool        { ExprBinBool Or $1 $3 }
-          | expr_bool "follows" expr_bool   { ExprBinBool Follows $1 $3 }
-          | expr_int "<" expr_int           { ExprRel BinLT $1 $3 }
-          | expr_int "<=" expr_int          { ExprRel BinLTEq $1 $3 }
-          | expr_int ">" expr_int           { ExprRel BinGT $1 $3 }
-          | expr_int ">=" expr_int          { ExprRel BinGTEq $1 $3 }
-          | expr_int "=" expr_int           { ExprRel BinEq $1 $3 }
-          | "not" expr_bool                 { ExprNot $2 }
-          | "always" expr_bool              { ExprAlways $2 }
-          | "next" expr_bool                { ExprNext $2 }
-          | var "in" "{" ints "}"           { ExprElem (fst $1) (snd $1) $4 True }
-          | var "not" "in" "{" ints "}"     { ExprElem (fst $1) (snd $1) $5 False }
-          | "(" expr_bool ")"               { $2 }
-
-expr_int : var                          { ExprVar (fst $1) (snd $1) }
-         | int                          { ExprConst $1 }
-         | expr_int "+" expr_int        { ExprBinInt OpPlus $1 $3 }
-         | expr_int "-" expr_int        { ExprBinInt OpMinus $1 $3 }
-         | expr_int "*" expr_int        { ExprBinInt OpMult $1 $3 }
-         | expr_int "/" expr_int        { ExprBinInt OpDiv $1 $3 }
-         | "(" expr_int ")"             { $2 }
+expr : expr "and" expr        { GBin GOpAnd $1 $3 }
+     | expr "or" expr         { GBin GOpOr $1 $3 }
+     | expr "follows" expr    { GBin GOpFollows $1 $3 }
+     | expr "<" expr          { GBin GOpLessThan $1 $3 }
+     | expr "<=" expr         { GBin GOpLessThanEqual $1 $3 }
+     | expr ">" expr          { GBin GOpGreaterThan $1 $3 }
+     | expr ">=" expr         { GBin GOpGreaterThanEqual $1 $3 }
+     | expr "=" expr          { GBin GOpEqual $1 $3 }
+     | expr "!=" expr         { GBin GOpNEqual $1 $3 }
+     | "not" expr             { GUn GOpNot $2 }
+     | "always" expr          { GUn GOpAlways $2 }
+     | "next" expr            { GUn GOpNext $2 }
+     | expr "in" expr         { GBin GOpIn $1 $3 }
+     | expr "not" "in" expr   { GBin GOpNotIn $1 $4 }
+     | "{" ints "}"           { GSet $2 }
+     | "(" expr ")"           { $2 }
+     | var                    { GVar (fst $1) (snd $1) }
+     | int                    { GConst $1 }
+     | expr "+" expr          { GBin GOpPlus $1 $3 }
+     | expr "-" expr          { GBin GOpMinus $1 $3 }
+     | expr "/" expr          { GBin GOpDiv $1 $3 }
+     | expr "*" expr          { GBin GOpMult $1 $3 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }

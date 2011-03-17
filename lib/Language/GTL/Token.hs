@@ -8,28 +8,15 @@ data Token = Identifier String
            | Comma
            | ConstString String
            | ConstInt Integer
-           | LessThan
-           | LessThanEqual
-           | GreaterThan
-           | GreaterThanEqual
-           | Equals
-           | Plus
-           | Minus
-           | Mult
-           | Div
+           | Unary UnOp
+           | Binary BinOp
            deriving Show
 
 data KeyWord = KeyAll
-             | KeyAlways
-             | KeyAnd
              | KeyConnect
              | KeyContract
-             | KeyFollows
              | KeyModel
              | KeyNext
-             | KeyNot
-             | KeyOr
-             | KeyIn
              | KeyInit
              | KeyVerify
              deriving Show
@@ -38,3 +25,25 @@ data BracketType = Parentheses
                  | Square
                  | Curly
                  deriving Show
+
+data UnOp = GOpAlways
+          | GOpNext
+          | GOpNot
+          deriving (Show,Eq,Ord)
+
+data BinOp = GOpAnd
+           | GOpOr
+           | GOpFollows
+           | GOpIn
+           | GOpNotIn
+           | GOpLessThan
+           | GOpLessThanEqual
+           | GOpGreaterThan
+           | GOpGreaterThanEqual
+           | GOpEqual
+           | GOpNEqual
+           | GOpPlus
+           | GOpMinus
+           | GOpMult
+           | GOpDiv
+           deriving (Show,Eq,Ord)

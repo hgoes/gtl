@@ -1,6 +1,9 @@
 {-# LANGUAGE GADTs #-}
 module Language.GTL.Syntax where
 
+import Language.GTL.Token (UnOp(..),BinOp(..))
+import Control.Monad.Error
+
 data Declaration = Model ModelDecl
                  | Connect ConnectDecl
                  | Verify VerifyDecl
@@ -27,8 +30,15 @@ data VerifyDecl = VerifyDecl
 
 type Formula = Expr Bool
 
+data GExpr = GBin BinOp GExpr GExpr
+           | GUn UnOp GExpr
+           | GConst Integer
+           | GVar (Maybe String) String
+           | GSet [Integer]
+           deriving (Show,Eq,Ord)
+
 data Expr a where
-  ExprVar :: Maybe String -> String -> Expr Int
+  ExprVar :: Maybe String -> String -> Expr a
   ExprConst :: Integer -> Expr Int
   ExprBinInt :: IntOp -> Expr Int -> Expr Int -> Expr Int
   ExprBinBool :: BoolOp -> Expr Bool -> Expr Bool -> Expr Bool
@@ -38,6 +48,76 @@ data Expr a where
   ExprAlways :: Expr Bool -> Expr Bool
   ExprNext :: Expr Bool -> Expr Bool
 
+toBoolOp :: BinOp -> Maybe BoolOp
+toBoolOp GOpAnd = Just And
+toBoolOp GOpOr = Just Or
+toBoolOp GOpFollows = Just Follows
+toBoolOp _ = Nothing
+
+toRelOp :: BinOp -> Maybe Relation
+toRelOp GOpLessThan = Just BinLT
+toRelOp GOpLessThanEqual = Just BinLTEq
+toRelOp GOpGreaterThan = Just BinGT
+toRelOp GOpGreaterThanEqual = Just BinGTEq
+toRelOp GOpEqual = Just BinEq
+toRelOp GOpNEqual = Just BinNEq
+toRelOp _ = Nothing
+
+toElemOp :: BinOp -> Maybe Bool
+toElemOp GOpIn = Just True
+toElemOp GOpNotIn = Just False
+toElemOp _ = Nothing
+
+typeCheckBool :: GExpr -> Either String (Expr Bool)
+typeCheckBool (GVar q n) = Right (ExprVar q n)
+typeCheckBool (GConst c) = Left $ "Expression "++show c++" has type int, expected bool"
+typeCheckBool (GSet c) = Left $ "Expression "++show c++" has type {int}, expected bool"
+typeCheckBool (GBin op l r) = case toBoolOp op of
+  Just bop -> do
+    res_l <- typeCheckBool l
+    res_r <- typeCheckBool r
+    return $ ExprBinBool bop res_l res_r
+  Nothing -> case toRelOp op of
+    Just rop -> do
+      res_l <- typeCheckInt l
+      res_r <- typeCheckInt r
+      return $ ExprRel rop res_l res_r
+    Nothing -> case toElemOp op of
+      Just eop -> case l of
+        GVar q n -> case r of
+          GSet vs -> Right (ExprElem q n vs eop)
+          _ -> Left "Wrong right hand side for in operator"
+        _ -> Left "Wrong left hand side for in operator"
+typeCheckBool (GUn op expr) = case op of
+  GOpNot -> do
+    res <- typeCheckBool expr
+    return $ ExprNot res
+  GOpAlways -> do
+    res <- typeCheckBool expr
+    return $ ExprAlways res
+  GOpNext -> do
+    res <- typeCheckBool expr
+    return $ ExprNext res
+
+toIntOp :: BinOp -> Maybe IntOp
+toIntOp GOpPlus = Just OpPlus
+toIntOp GOpMinus = Just OpMinus
+toIntOp GOpMult = Just OpMult
+toIntOp GOpDiv = Just OpDiv
+toIntOp _ = Nothing
+
+typeCheckInt :: GExpr -> Either String (Expr Int)
+typeCheckInt (GVar q n) = Right (ExprVar q n)
+typeCheckInt (GConst c) = Right (ExprConst c)
+typeCheckInt (GBin op l r) = case toIntOp op of
+  Just iop -> do
+    res_l <- typeCheckInt l
+    res_r <- typeCheckInt r
+    return $ ExprBinInt iop res_l res_r
+  Nothing -> Left $ "Operator "++show op++" has wrong type, expected: int"
+typeCheckInt (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
+typeCheckInt (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
+      
 instance Eq (Expr a) where
   (ExprVar q1 n1) == (ExprVar q2 n2) = q1 == q2 && n1 == n2
   (ExprConst i1) == (ExprConst i2) = i1 == i2
