@@ -8,6 +8,7 @@ import Data.Set as Set
 
 data GTLAtom = GTLRel GTL.Relation (GTL.Expr Int) (GTL.Expr Int)
              | GTLElem (Maybe String) String [Integer] Bool
+             | GTLVar (Maybe String) String
              deriving (Show,Eq,Ord)
 
 gtlAtomNot :: GTLAtom -> GTLAtom
@@ -38,3 +39,4 @@ gtlToLTL (GTL.ExprNot x) = LTL.Un LTL.Not (gtlToLTL x)
 gtlToLTL (GTL.ExprAlways x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
 gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)
 gtlToLTL (GTL.ExprElem q v lits p) = LTL.Atom (GTLElem q v lits p)
+gtlToLTL (GTL.ExprVar q n) = LTL.Atom (GTLVar q n)
