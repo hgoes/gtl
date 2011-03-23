@@ -19,7 +19,7 @@ import Data.Maybe (mapMaybe)
   "and"             { Binary GOpAnd }
   "follows"         { Binary GOpFollows }
   "model"           { Key KeyModel }
-  "next"            { Unary GOpNext }
+  "next"            { Unary (GOpNext $$)}
   "not"             { Unary GOpNot }
   "or"              { Binary GOpOr }
   "in"              { Binary GOpIn }
@@ -120,7 +120,7 @@ expr : expr "and" expr        { GBin GOpAnd $1 $3 }
      | expr "!=" expr         { GBin GOpNEqual $1 $3 }
      | "not" expr             { GUn GOpNot $2 }
      | "always" expr          { GUn GOpAlways $2 }
-     | "next" expr            { GUn GOpNext $2 }
+     | "next" expr            { GUn (GOpNext $1) $2 }
      | expr "in" expr         { GBin GOpIn $1 $3 }
      | expr "not" "in" expr   { GBin GOpNotIn $1 $4 }
      | "{" ints "}"           { GSet $2 }

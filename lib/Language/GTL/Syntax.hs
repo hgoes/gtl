@@ -95,7 +95,7 @@ typeCheckBool (GUn op expr) = case op of
   GOpAlways -> do
     res <- typeCheckBool expr
     return $ ExprAlways res
-  GOpNext -> do
+  GOpNext _ -> do
     res <- typeCheckBool expr
     return $ ExprNext res
 

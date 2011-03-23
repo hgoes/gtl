@@ -16,7 +16,6 @@ data KeyWord = KeyAll
              | KeyConnect
              | KeyContract
              | KeyModel
-             | KeyNext
              | KeyInit
              | KeyVerify
              deriving Show
@@ -27,7 +26,7 @@ data BracketType = Parentheses
                  deriving Show
 
 data UnOp = GOpAlways
-          | GOpNext
+          | GOpNext Integer
           | GOpNot
           deriving (Show,Eq,Ord)
 
