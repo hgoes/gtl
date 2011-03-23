@@ -15,7 +15,6 @@ Library
     Language.GTL.Translation
     Language.GTL.ScadeAnalyzer
     Language.GTL.PromelaCIntegration
-    Language.GTL.PromelaContract
     Language.GTL.ScadeContract
     Language.GTL.LTL
     Language.GTL.ScadeToPromela

@@ -14,7 +14,6 @@ import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
 
-import Language.GTL.PromelaContract as PrTr
 import Language.GTL.PromelaCIntegration
 import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
@@ -23,7 +22,6 @@ import Language.GTL.PromelaBuddy as PrBd
 
 data TranslationMode
      = NativeC
-     | PromelaContract
      | ScadeContract
      | ScadeToPromela
      | PromelaBuddy
@@ -38,14 +36,14 @@ data Options = Options
                deriving Show
 
 defaultOptions = Options
-  { mode = PromelaContract
+  { mode = PromelaBuddy
   , traceFile = Nothing
   , keepTmpFiles = False
   , showHelp = False
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("promela-contract",PromelaContract),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
+modes = [("native-c",NativeC),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
 
 modeString :: [(String,a)] -> String
 modeString [] = ""
@@ -99,7 +97,6 @@ main = do
   let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
       sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
-    PromelaContract -> PrTr.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
     NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn
     ScadeContract -> do
       putStrLn sc_str
