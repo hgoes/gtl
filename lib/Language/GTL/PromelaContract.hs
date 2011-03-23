@@ -371,13 +371,13 @@ relToBDD (GTLVar q n v) = do
   return (q,n,bdd)
 relToBDD _ = error "Invalid relation detected"
 
-relToBDD' :: Monad m => GTL.Relation -> Integer -> BDDM s Int m (Tree s Int)
-relToBDD' GTL.BinLT n   = encodeSignedRange 0 (minBound::Int) (fromIntegral n - 1)
-relToBDD' GTL.BinLTEq n = encodeSignedRange 0 (minBound::Int) (fromIntegral n)
-relToBDD' GTL.BinGT n   = encodeSignedRange 0 (fromIntegral n + 1) (maxBound::Int)
-relToBDD' GTL.BinGTEq n = encodeSignedRange 0 (fromIntegral n) (maxBound::Int)
-relToBDD' GTL.BinEq n   = encodeSingleton 0 (fromIntegral n::Int)
-relToBDD' GTL.BinNEq n  = encodeSingleton 0 (fromIntegral n::Int) >>= not'
+relToBDD' :: Monad m => GTL.Relation -> Int -> BDDM s Int m (Tree s Int)
+relToBDD' GTL.BinLT n   = encodeSignedRange 0 (minBound::Int) (n - 1)
+relToBDD' GTL.BinLTEq n = encodeSignedRange 0 (minBound::Int) n
+relToBDD' GTL.BinGT n   = encodeSignedRange 0 (n + 1) (maxBound::Int)
+relToBDD' GTL.BinGTEq n = encodeSignedRange 0 n (maxBound::Int)
+relToBDD' GTL.BinEq n   = encodeSingleton 0 n
+relToBDD' GTL.BinNEq n  = encodeSingleton 0 n >>= not'
 
 usedVars :: Ord a => Buchi (Map a b) -> Set a
 usedVars buchi = foldl (\set st -> Set.union set (Map.keysSet (vars st))) Set.empty (Map.elems buchi)

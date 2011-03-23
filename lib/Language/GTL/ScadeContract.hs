@@ -141,8 +141,8 @@ stateToTransition name st
     
                        
 
-litToExpr :: GTL.Expr a -> Sc.Expr
-litToExpr (ExprConst n) = ConstIntExpr n
+litToExpr :: Integral a => GTL.Expr a -> Sc.Expr
+litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
 litToExpr (ExprVar Nothing x) = IdExpr $ Path [x]
 
 relToExpr :: GTLAtom -> Sc.Expr

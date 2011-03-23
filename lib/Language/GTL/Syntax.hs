@@ -32,14 +32,14 @@ type Formula = Expr Bool
 
 data GExpr = GBin BinOp GExpr GExpr
            | GUn UnOp GExpr
-           | GConst Integer
+           | GConst Int
            | GVar (Maybe String) String
            | GSet [Integer]
            deriving (Show,Eq,Ord)
 
 data Expr a where
   ExprVar :: Maybe String -> String -> Expr a
-  ExprConst :: Integer -> Expr Int
+  ExprConst :: a -> Expr a
   ExprBinInt :: IntOp -> Expr Int -> Expr Int -> Expr Int
   ExprBinBool :: BoolOp -> Expr Bool -> Expr Bool -> Expr Bool
   ExprRel :: Relation -> Expr Int -> Expr Int -> Expr Bool
@@ -118,7 +118,7 @@ typeCheckInt (GBin op l r) = case toIntOp op of
 typeCheckInt (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
 typeCheckInt (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
       
-instance Eq (Expr a) where
+instance Eq a => Eq (Expr a) where
   (ExprVar q1 n1) == (ExprVar q2 n2) = q1 == q2 && n1 == n2
   (ExprConst i1) == (ExprConst i2) = i1 == i2
   (ExprBinInt op1 l1 r1) == (ExprBinInt op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
@@ -130,7 +130,7 @@ instance Eq (Expr a) where
   (ExprNext e1) == (ExprNext e2) = e1==e2
   _ == _ = False
 
-instance Ord (Expr a) where
+instance Ord a => Ord (Expr a) where
   compare (ExprVar q1 n1) (ExprVar q2 n2) = case compare q1 q2 of
     EQ -> compare n1 n2
     r -> r
@@ -155,7 +155,7 @@ instance Ord (Expr a) where
       r -> r
     r -> r
   compare (ExprRel _ _ _) _ = LT
-  compare (ExprElem q1 n1 s1 p1) (ExprElem q2 n2 s2 p2) = case compare (ExprVar q1 n1) (ExprVar q2 n2) of
+  compare (ExprElem q1 n1 s1 p1) (ExprElem q2 n2 s2 p2) = case compare (ExprVar q1 n1::Expr Int) (ExprVar q2 n2) of
     EQ -> case compare s1 s2 of
       EQ -> compare p1 p2
       r -> r
@@ -168,7 +168,7 @@ instance Ord (Expr a) where
   compare (ExprNext e1) (ExprNext e2) = compare e1 e2
   compare (ExprNext _) _ = LT
 
-instance Show (Expr a) where
+instance Show a => Show (Expr a) where
   show (ExprVar q name) = case q of
     Nothing -> name
     Just rq -> rq ++ "." ++ name
@@ -195,7 +195,7 @@ instance Show (Expr a) where
                                    BinEq -> "="
                                    BinNEq -> "!=") ++
                                " (" ++ show rhs ++ ")"
-  show (ExprElem q name ints pos) = show (ExprVar q name) ++
+  show (ExprElem q name ints pos) = show (ExprVar q name::Expr Int) ++
                                     (if pos then " in "
                                      else " not in ") ++
                                     show ints

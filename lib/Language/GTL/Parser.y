@@ -126,7 +126,7 @@ expr : expr "and" expr        { GBin GOpAnd $1 $3 }
      | "{" ints "}"           { GSet $2 }
      | "(" expr ")"           { $2 }
      | var                    { GVar (fst $1) (snd $1) }
-     | int                    { GConst $1 }
+     | int                    { GConst $ fromIntegral $1 }
      | expr "+" expr          { GBin GOpPlus $1 $3 }
      | expr "-" expr          { GBin GOpMinus $1 $3 }
      | expr "/" expr          { GBin GOpDiv $1 $3 }

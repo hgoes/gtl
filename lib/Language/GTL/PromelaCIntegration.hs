@@ -75,7 +75,7 @@ neverClaim trace f
                                            _ -> error "Not yet implemented AUINV")++")"
                                 | (atom,en) <- Map.toList $ fst $ vars st,
                                   let ratom = if en then atom else gtlAtomNot atom ]
-                       clit :: Expr a -> String
+                       clit :: Show a => Expr a -> String
                        clit (ExprConst x) = show x
                        clit (ExprVar (Just mdl) var) = "now."++mdl++"_state."++var
                        clit _ = error "All variables in never claim must be qualified"

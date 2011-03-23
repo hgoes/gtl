@@ -137,26 +137,17 @@ parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (S
 parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
-    Nothing -> case at of
-      GTLRel rel lhs rhs -> let lvars = [ v | (Nothing,v) <- getVars lhs, Map.member v outps ]
-                                rvars = [ v | (Nothing,v) <- getVars rhs, Map.member v outps ]
-                                idx = fromIntegral $ Map.size mp
-                                (res,isinp) = (case lvars of
-                                                  [] -> case rhs of
-                                                    ExprVar Nothing n -> if Map.member n outps
-                                                                         then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
-                                                                         else error "No output variable in relation"
-                                                    _ -> case rvars of
-                                                      [] -> (createBuddyCompare idx name rel lhs rhs,True)
-                                                      _ -> error "Output variables must be alone"
-                                                  _ -> case lhs of
-                                                    ExprVar Nothing n -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
-                                                    _ -> case lvars of
-                                                      [] -> (createBuddyCompare idx name  rel lhs rhs,True)
-                                                      _ -> error "Output varibales must be alone"
-                                              ) :: (String,Bool)
-                                 in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
-      where
+    Nothing -> let (idx,isinp,res) = case at of
+                     GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
+                     GTLVar q n v -> parseGTLRelation mp arg BinEq (ExprVar q n) (ExprConst v)
+               in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
+        
+
+parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> Relation -> GTL.Expr a -> GTL.Expr a -> (Integer,Bool,String)
+parseGTLRelation mp arg rel lhs rhs
+  = let lvars = [ v | (Nothing,v) <- getVars lhs, Map.member v outps ]
+        rvars = [ v | (Nothing,v) <- getVars rhs, Map.member v outps ]
+        idx = fromIntegral $ Map.size mp
         name = case arg of
           Nothing -> Nothing
           Just (n,_) -> Just n
@@ -166,11 +157,25 @@ parseGTLAtom mp arg at
         outps = case arg of
           Nothing -> Map.empty
           Just (_,s) -> s
+        (res,isinp) = (case lvars of
+                          [] -> case rhs of
+                            ExprVar Nothing n -> if Map.member n outps
+                                                 then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
+                                                 else error "No output variable in relation"
+                            _ -> case rvars of
+                              [] -> (createBuddyCompare idx name rel lhs rhs,True)
+                              _ -> error "Output variables must be alone"
+                          _ -> case lhs of
+                            ExprVar Nothing n -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
+                            _ -> case lvars of
+                              [] -> (createBuddyCompare idx name rel lhs rhs,True)
+                              _ -> error "Output variables must be alone"
+                      ) :: (String,Bool)
+    in (idx,isinp,res)
 
-createBuddyAssign :: Integer -> String -> String -> Set (Maybe (String,String)) -> Relation -> GTL.Expr Int -> String
+createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Set (Maybe (String,String)) -> Relation -> GTL.Expr a -> String
 createBuddyAssign count q n outs rel expr
-  = let (cmd,de,_,e) = createBuddyExpr 0 (Just q) expr
-        trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
+  = let trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
         (cmd2,te) = case rel of
           BinEq -> ([],e)
           BinNEq -> ([],"Cudd_Not("++e++")")
@@ -202,6 +207,7 @@ createBuddyAssign count q n outs rel expr
                        "assert(max_found);",
                        "Cudd_RecursiveDeref(manager,extr);"
                       ],"Cudd_bddLessThanEqual(manager,max,0)")
+        (cmd,de,_,e) = createBuddyExpr 0 (Just q) expr
     in unlines ([ "void assign_"++q++show count++"(State* now) {"] ++
                 fmap ("  "++) (cmd++cmd2) ++
                 ["  "++head trgs++" = "++te++";"]++
@@ -211,7 +217,7 @@ createBuddyAssign count q n outs rel expr
                 fmap ("  "++) de ++
                 ["}"])
 
-createBuddyCompare :: Integer -> Maybe String -> Relation -> GTL.Expr Int -> GTL.Expr Int -> String
+createBuddyCompare :: BuddyConst a => Integer -> Maybe String -> Relation -> GTL.Expr a -> GTL.Expr a -> String
 createBuddyCompare count q rel expr1 expr2
   = let (cmd1,de1,v,e1) = createBuddyExpr 0 q expr1
         (cmd2,de2,_,e2) = createBuddyExpr v q expr2
@@ -249,8 +255,19 @@ createBuddyCompare count q rel expr1 expr2
        ["  return res;",
         "}"]
 
-createBuddyExpr :: Integer -> Maybe String -> GTL.Expr Int -> ([String],[String],Integer,String)
-createBuddyExpr v mdl (ExprConst i) = ([],[],v,"Cudd_bddSingleton(manager,"++show i++",0)")
+class BuddyConst t where
+  buddyConst :: t -> String
+
+instance BuddyConst Int where
+  buddyConst n = "Cudd_bddSingleton(manager,"++show n++",0)"
+
+instance BuddyConst Bool where
+  buddyConst v = let var = "Cudd_bddIthVar(manager,0)"
+                 in if v then var
+                    else "Cudd_Not("++var++")"
+
+createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr a -> ([String],[String],Integer,String)
+createBuddyExpr v mdl (ExprConst i) = ([],[],v,buddyConst i)
 createBuddyExpr v mdl (ExprVar q n) = case mdl of
                                         Nothing -> case q of
                                           Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
