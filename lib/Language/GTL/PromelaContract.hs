@@ -366,6 +366,9 @@ relToBDD (GTLElem q v lits p) = do
     else (do
              bdd' <- not' bdd
              return (q,v,bdd'))
+relToBDD (GTLVar q n v) = do
+  bdd <- unit 0 v
+  return (q,n,bdd)
 relToBDD _ = error "Invalid relation detected"
 
 relToBDD' :: Monad m => GTL.Relation -> Integer -> BDDM s Int m (Tree s Int)
