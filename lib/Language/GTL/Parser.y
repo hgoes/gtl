@@ -57,11 +57,11 @@ import qualified Data.Map as Map
 %left "and"
 %left "follows"
 %left "not"
+%left "<" "<=" ">" ">=" "=" "!="
 %left "+"
 %left "-"
 %left "*"
 %left "/"
-%left "<" "<=" ">" ">=" "=" "!="
 %left "in"
 
 %%

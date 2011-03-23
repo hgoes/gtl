@@ -96,6 +96,7 @@ typeCheckBool bind (GBin op l r) = case toBoolOp op of
           GSet vs -> Right (ExprElem q n vs eop)
           _ -> Left "Wrong right hand side for in operator"
         _ -> Left "Wrong left hand side for in operator"
+      Nothing -> error $ "Invalid operator: "++show op
 typeCheckBool bind (GUn op expr) = case op of
   GOpNot -> do
     res <- typeCheckBool bind expr

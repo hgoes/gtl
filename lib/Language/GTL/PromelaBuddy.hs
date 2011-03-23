@@ -18,7 +18,7 @@ import Data.List (intersperse)
 
 data TransModel = TransModel
                   { varsInit :: Map String String
-                  , varsIn :: Set String
+                  , varsIn :: Map String Integer
                   , varsOut :: Map String (Set (Maybe (String,String)))
                   , stateMachine :: Buchi ([Integer],[Integer]) --[GTLAtom]
                   , checkFunctions :: [String]
@@ -33,15 +33,21 @@ data TransProgram = TransProgram
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
 translateContracts scade decls = translateContracts' (buildTransProgram scade decls)
 
+varName :: String -> String -> Integer -> String
+varName mdl var lvl = "conn_"++mdl++"_"++var++(if lvl==0
+                                               then ""
+                                               else "_"++show lvl)
+
 translateContracts' :: TransProgram -> [Pr.Module]
 translateContracts' prog 
   = let include = Pr.CDecl $ unlines ["\\#include <cudd/cudd.h>"
                                      ,"\\#include <cudd_arith.h>"
                                      ,"\\#include <assert.h>"
                                      ,"DdManager* manager;"]
-        states = [ Pr.CState ("DdNode* conn_"++name++"_"++var) "Global" (Just "NULL")
+        states = [ Pr.CState ("DdNode* "++varName name var n) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
-                 , var <- Set.toList (varsIn mdl) ] ++
+                 , (var,hist) <- Map.toList (varsIn mdl) 
+                 , n <- [0..hist] ] ++
                  [ Pr.CState ("DdNode* never_"++name++"_"++var) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
                  , (var,set) <- Map.toList (varsOut mdl)
@@ -59,16 +65,23 @@ translateContracts' prog
                       [ impl | mdl <- Map.elems (transModels prog), impl <- checkFunctions mdl ] ++
                       claimChecks prog ++
                       [ unlines $ ["void reset_"++name++"(State* now) {"] ++
-                        ["  "++(case to of
-                                   Just (q,n) -> "now->conn_"++q++"_"++n
-                                   Nothing -> "now->never_"++name++"_"++from
-                               )++" = DD_ONE(manager);" | (from,tos) <- Map.toList (varsOut mdl), to <- Set.toList tos ]++
+                        ["  "++vname lvl++" = "++(if lvl==0
+                                                  then "DD_ONE(manager);"
+                                                  else vname (lvl-1))
+                        | (from,tos) <- Map.toList (varsOut mdl), to <- Set.toList tos, 
+                          let hist = case to of
+                                Nothing -> 0
+                                Just (q,n) -> (varsIn ((transModels prog)!q))!n, 
+                          let vname l = case to of
+                                Just (q,n) -> "now->"++varName q n l
+                                Nothing -> "now->never_"++name++"_"++from,
+                          lvl <- reverse [0..hist] ]++
                         ["}"]
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode $ unlines $
                                      [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
                                      [ "reset_"++name++"(&now);" | (name,_) <- procs ] ++
-                                     concat [ let trgs = if Set.member var (varsIn mdl)
+                                     concat [ let trgs = if Map.member var (varsIn mdl)
                                                          then ["now.conn_"++name++"_"++var]
                                                          else [ case outp of
                                                                    Nothing -> "now.never_"++name++"_"++var
@@ -272,7 +285,7 @@ createBuddyExpr v mdl (ExprVar q n lvl) = case mdl of
   Nothing -> case q of
     Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
     Nothing -> error "verify claims must not contain qualified variables"
-  Just rmdl -> ([],[],v,"now->conn_"++rmdl++"_"++n)
+  Just rmdl -> ([],[],v,"now->"++varName rmdl n lvl)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
@@ -300,12 +313,13 @@ buildTransProgram scade decls
         
         tmodels1 = Map.fromList $ fmap (\m -> let (inp_vars,outp_vars) = scadeInterface ((modelArgs m)!!0) scade
                                                   outp_map = Map.fromList $ fmap (\(var,_) -> (var,Set.empty)) outp_vars
+                                                  hist = maximumHistory (modelContract m)
                                               in (modelName m,
                                                   TransModel { varsInit = Map.fromList [ (name,case e of
                                                                                              InitAll -> "DD_ONE(manager)"
                                                                                              InitOne i -> "Cudd_bddSingleton(manager,"++show i++",0)")
                                                                                        | (name,e) <- modelInits m ]
-                                                             , varsIn = Set.fromList $ fmap fst inp_vars
+                                                             , varsIn = Map.fromList $ [ (v,hist!v) | (v,_) <- inp_vars ]
                                                              , varsOut = outp_map
                                                              , stateMachine = undefined
                                                              , checkFunctions = undefined
@@ -357,3 +371,6 @@ buildTransProgram scade decls
                     , transClaims = tclaims
                     , claimChecks = fmap (\(_,_,f) -> f) $ Map.elems fclaims
                     }
+
+maximumHistory :: [GTL.Expr a] -> Map String Integer
+maximumHistory exprs = foldl (\mp (Nothing,n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
