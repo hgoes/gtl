@@ -57,12 +57,12 @@ data TransModel s = TransModel
                     { varsIn :: Map String (Set (Tree s Int))
                     , varsOut :: Map String (Set (Maybe (String,String)))
                     , varsInit :: Map String (Tree s Int)
-                    , stateMachine :: Buchi (Map String (Tree s Int))
+                    , stateMachine :: Buchi (Map (String,Integer) (Tree s Int))
                     } deriving Show
                                
 data TransProgram s = TransProgram
                       { transModels   :: Map String (TransModel s)
-                      , transClaims   :: [Buchi (Map (String,String) (Tree s Int))]
+                      , transClaims   :: [Buchi (Map (String,(String,Integer)) (Tree s Int))]
                       } deriving Show
 
 deleteTmp :: FilePath -> IO ()
@@ -109,15 +109,16 @@ translateContracts scade decls
     prog <- buildTransProgram scade decls
     translateContracts' prog
 
-traceToBDD :: TransProgram s -> [(String,Integer)] -> [(String,Map String (Tree s Int))]
+traceToBDD :: TransProgram s -> [(String,Integer)] -> [(String,Map (String,Integer) (Tree s Int))]
 traceToBDD prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
                                                entr = (stateMachine tmdl)!st
-                                           in (mdl,Map.difference (vars entr) (varsIn tmdl))) trace
+                                           in (mdl,Map.filterWithKey (\(name,lvl) e -> not $ Map.member name (varsIn tmdl)) (vars entr))) trace
 
-claimInVars :: TransProgram s -> Buchi (Map (String,String) (Tree s Int)) -> Map (String,String) (Set (Tree s Int))
-claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachine $ (transModels prog)!mname)) | (mname,var) <- Set.toList $ usedVars buchi ]
+claimInVars :: TransProgram s -> Buchi (Map (String,(String,Integer)) (Tree s Int)) -> Map (String,(String,Integer)) (Set (Tree s Int))
+claimInVars prog buchi = Map.fromList [ ((mname,var),bddsForVar var (stateMachine $ (transModels prog)!mname))
+                                      | (mname,var) <- Set.toList $ usedVars buchi ]
 
-translateClaim :: Monad m => Map (String,String) (Set (Tree s Int)) -> SBuchi (Map (String,String) (Tree s Int)) -> BDDM s Int m [Pr.Step]
+translateClaim :: Monad m => Map (String,(String,Integer)) (Set (Tree s Int)) -> SBuchi (Map (String,(String,Integer)) (Tree s Int)) -> BDDM s Int m [Pr.Step]
 translateClaim varsIn machine = do
   do_stps <- mapM (\((sth,stl),decl) -> do
                       stps <- getSteps (vars decl)
@@ -138,7 +139,7 @@ translateClaim varsIn machine = do
               Nothing -> []
               Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
         return $ check_stps
-    getConds ((mdl,var),tree) = mapM (\i -> do
+    getConds ((mdl,(var,lvl)),tree) = mapM (\i -> do
                                          let rname = "never_"++mdl++"_"++var
                                          nv <- i #=> tree
                                          t <- true
@@ -150,7 +151,7 @@ translateClaim varsIn machine = do
                                                     if nv == f
                                                       then return (False,rname,fromIntegral $ nodeHash i)
                                                       else return (True,rname,fromIntegral $ nodeHash i))
-                                     ) (Set.toList $ varsIn!(mdl,var))
+                                     ) (Set.toList $ varsIn!(mdl,(var,lvl)))
 
 buildConditionCheck :: [(Bool,String,Integer)] -> Maybe Pr.AnyExpression
 buildConditionCheck conds = let pos = [ Pr.BinExpr Pr.BinEquals
@@ -192,7 +193,7 @@ translateModel name mdl = do
             Just expr -> [Pr.StmtExpr $ Pr.ExprAny expr]
           assigns = [ assign | Left assign <- cond_stps ]
       return $ check_stps ++ (concat assigns)
-    getConds (var,tree) = case Map.lookup var (varsIn mdl) of
+    getConds ((var,lvl),tree) = case Map.lookup var (varsIn mdl) of
       Nothing -> case Map.lookup var (varsOut mdl) of
         Nothing -> error $ "Internal error: Variable "++show var++" is neither input nor output"
         Just ns -> return $ Left [ Pr.StmtAssign
@@ -259,8 +260,8 @@ buildTransProgram scade decls
                      machine <- gtlsToBuchi (\lst -> do
                                                 res <- mapM relToBDD lst
                                                 mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old)
-                                                                                     (fmap (\(qual,name,tree) -> case qual of
-                                                                                               Nothing -> (name,[tree])
+                                                                                     (fmap (\(qual,name,lvl,tree) -> case qual of
+                                                                                               Nothing -> ((name,lvl),[tree])
                                                                                                Just _ -> error "Contracts can't contain qualified variables"
                                                                                            ) res))
                                             ) (modelContract m) >>= completeCases outp_map
@@ -279,9 +280,9 @@ buildTransProgram scade decls
     nevers <- mapM (\claim -> gtlsToBuchi (\lst -> do
                                               res <- mapM relToBDD lst
                                               mapM (\(x:xs) -> foldlM (#&&) x xs) (Map.fromListWith (\old new -> new ++ old)
-                                                                                   (fmap (\(qual,name,tree) -> case qual of
+                                                                                   (fmap (\(qual,name,lvl,tree) -> case qual of
                                                                                              Nothing -> error "Verify formulas must only contain qualified names"
-                                                                                             Just rq -> ((rq,name),[tree])) res))
+                                                                                             Just rq -> ((rq,(name,lvl)),[tree])) res))
                                           ) (fmap (GTL.ExprNot) $ verifyFormulas claim)
                    ) claims
     let prog1 = foldl (\cprog c
@@ -289,7 +290,7 @@ buildTransProgram scade decls
                               nprog1 = Map.adjust
                                        (\mdl -> mdl { varsIn = Map.insertWith Set.union
                                                                (connectToVariable c)
-                                                               (bddsForVar (connectFromVariable c) (stateMachine fromMdl))
+                                                               (bddsForVar (connectFromVariable c,0) (stateMachine fromMdl))
                                                                (varsIn mdl)
                                                     }) (connectToModel c) cprog
                               nprog2 = Map.adjust
@@ -300,10 +301,11 @@ buildTransProgram scade decls
                                                     }) (connectFromModel c) nprog1
                           in nprog2
                       ) prog conns
-        prog2 = foldl (\tprog never -> foldl (\cprog (_,st) -> foldl (\cprog' ((mname,var),_) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union var
-                                                                                                                                     (Set.singleton Nothing)
-                                                                                                                                     (varsOut mdl)
-                                                                                                                         }) mname cprog'
+        prog2 = foldl (\tprog never -> foldl (\cprog (_,st) -> foldl (\cprog' ((mname,(var,lvl)),_)
+                                                                      -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union var
+                                                                                                             (Set.singleton Nothing)
+                                                                                                             (varsOut mdl)
+                                                                                                 }) mname cprog'
                                                                      ) cprog (Map.toList (vars st))
                                              ) tprog (Map.toList never)
                       ) prog1 nevers
@@ -320,13 +322,13 @@ buildTransProgram scade decls
     conns = [ c | Connect c <- decls ]
     claims = [ v | Verify v <- decls ]
 
-completeCases :: Monad m => Map String Sc.TypeExpr -> Buchi (Map String (Tree s Int)) -> BDDM s Int m (Buchi (Map String (Tree s Int)))
+completeCases :: Monad m => Map String Sc.TypeExpr -> Buchi (Map (String,Integer) (Tree s Int)) -> BDDM s Int m (Buchi (Map (String,Integer) (Tree s Int)))
 completeCases outp machine = do
   t <- true
-  let outpmp = fmap (const t) outp
+  let outpmp = Map.fromList $ fmap (\(v,_) -> ((v,0),t)) (Map.toList outp)
   return $ fmap (\st -> st { vars = Map.union (vars st) outpmp }) machine
 
-bddsForVar :: String -> Buchi (Map String (Tree s Int)) -> Set (Tree s Int)
+bddsForVar :: (String,Integer) -> Buchi (Map (String,Integer) (Tree s Int)) -> Set (Tree s Int)
 bddsForVar var buchi = foldl (\mp st -> case Map.lookup var (vars st) of
                                  Nothing -> mp
                                  Just tree -> Set.insert tree mp
@@ -352,23 +354,23 @@ relsToBDD buchi = mapM
                   buchi-}
 
 
-relToBDD :: Monad m => GTLAtom -> BDDM s Int m (Maybe String,String,Tree s Int)
-relToBDD (GTLRel rel (ExprVar q v) (ExprConst c)) = do
+relToBDD :: Monad m => GTLAtom -> BDDM s Int m (Maybe String,String,Integer,Tree s Int)
+relToBDD (GTLRel rel (ExprVar q v lvl) (ExprConst c)) = do
   bdd <- relToBDD' rel c
-  return (q,v,bdd)
-relToBDD (GTLRel rel (ExprConst c) (ExprVar q v)) = do
+  return (q,v,lvl,bdd)
+relToBDD (GTLRel rel (ExprConst c) (ExprVar q v lvl)) = do
   bdd <- relToBDD' (relNot rel) c
-  return (q,v,bdd)
+  return (q,v,lvl,bdd)
 relToBDD (GTLElem q v lits p) = do
   bdd <- encodeSet 0 (Set.fromList $ fmap (fromIntegral::Integer->Int) lits)
   if p
-    then return (q,v,bdd)
+    then return (q,v,0,bdd)
     else (do
              bdd' <- not' bdd
-             return (q,v,bdd'))
-relToBDD (GTLVar q n v) = do
+             return (q,v,0,bdd'))
+relToBDD (GTLVar q n lvl v) = do
   bdd <- unit 0 v
-  return (q,n,bdd)
+  return (q,n,lvl,bdd)
 relToBDD _ = error "Invalid relation detected"
 
 relToBDD' :: Monad m => GTL.Relation -> Int -> BDDM s Int m (Tree s Int)
@@ -382,7 +384,7 @@ relToBDD' GTL.BinNEq n  = encodeSingleton 0 n >>= not'
 usedVars :: Ord a => Buchi (Map a b) -> Set a
 usedVars buchi = foldl (\set st -> Set.union set (Map.keysSet (vars st))) Set.empty (Map.elems buchi)
 
-getOutputAutomatas :: TransProgram s -> Map String (Buchi (Map String (Tree s Int)))
+getOutputAutomatas :: TransProgram s -> Map String (Buchi (Map (String,Integer) (Tree s Int)))
 getOutputAutomatas prog = fmap (\mdl -> fmap (\entr -> entr
-                                                       { vars = Map.difference (vars entr) (varsIn mdl)
+                                                       { vars = Map.filterWithKey (\(var,_) _ -> not $ Map.member var (varsIn mdl)) (vars entr)
                                                        }) (stateMachine mdl)) (transModels prog)

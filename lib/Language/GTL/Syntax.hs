@@ -3,6 +3,7 @@ module Language.GTL.Syntax where
 
 import Language.GTL.Token (UnOp(..),BinOp(..))
 import Control.Monad.Error
+import Data.Map as Map
 
 data Declaration = Model ModelDecl
                  | Connect ConnectDecl
@@ -39,7 +40,7 @@ data GExpr = GBin BinOp GExpr GExpr
            deriving (Show,Eq,Ord)
 
 data Expr a where
-  ExprVar :: Maybe String -> String -> Expr a
+  ExprVar :: Maybe String -> String -> Integer -> Expr a
   ExprConst :: a -> Expr a
   ExprBinInt :: IntOp -> Expr Int -> Expr Int -> Expr Int
   ExprBinBool :: BoolOp -> Expr Bool -> Expr Bool -> Expr Bool
@@ -69,19 +70,25 @@ toElemOp GOpIn = Just True
 toElemOp GOpNotIn = Just False
 toElemOp _ = Nothing
 
-typeCheckBool :: GExpr -> Either String (Expr Bool)
-typeCheckBool (GVar q n) = Right (ExprVar q n)
-typeCheckBool (GConst c) = Left $ "Expression "++show c++" has type int, expected bool"
-typeCheckBool (GSet c) = Left $ "Expression "++show c++" has type {int}, expected bool"
-typeCheckBool (GBin op l r) = case toBoolOp op of
+type ExistsBinding = Map String (Maybe String,String,Integer)
+
+typeCheckBool :: ExistsBinding -> GExpr -> Either String (Expr Bool)
+typeCheckBool bind (GVar q n) = case q of
+  Just _ -> Right (ExprVar q n 0)
+  Nothing -> case Map.lookup n bind of
+    Nothing -> Right (ExprVar q n 0)
+    Just (q',n',lvl) -> Right (ExprVar q' n' lvl)
+typeCheckBool _ (GConst c) = Left $ "Expression "++show c++" has type int, expected bool"
+typeCheckBool _ (GSet c) = Left $ "Expression "++show c++" has type {int}, expected bool"
+typeCheckBool bind (GBin op l r) = case toBoolOp op of
   Just bop -> do
-    res_l <- typeCheckBool l
-    res_r <- typeCheckBool r
+    res_l <- typeCheckBool bind l
+    res_r <- typeCheckBool bind r
     return $ ExprBinBool bop res_l res_r
   Nothing -> case toRelOp op of
     Just rop -> do
-      res_l <- typeCheckInt l
-      res_r <- typeCheckInt r
+      res_l <- typeCheckInt bind l
+      res_r <- typeCheckInt bind r
       return $ ExprRel rop res_l res_r
     Nothing -> case toElemOp op of
       Just eop -> case l of
@@ -89,16 +96,17 @@ typeCheckBool (GBin op l r) = case toBoolOp op of
           GSet vs -> Right (ExprElem q n vs eop)
           _ -> Left "Wrong right hand side for in operator"
         _ -> Left "Wrong left hand side for in operator"
-typeCheckBool (GUn op expr) = case op of
+typeCheckBool bind (GUn op expr) = case op of
   GOpNot -> do
-    res <- typeCheckBool expr
+    res <- typeCheckBool bind expr
     return $ ExprNot res
   GOpAlways -> do
-    res <- typeCheckBool expr
+    res <- typeCheckBool Map.empty expr  -- Maybe find a nicer solution, an error perhaps?
     return $ ExprAlways res
   GOpNext _ -> do
-    res <- typeCheckBool expr
+    res <- typeCheckBool (fmap (\(q,n,lvl) -> (q,n,lvl+1)) bind) expr
     return $ ExprNext res
+typeCheckBool bind (GExists v q n expr) = typeCheckBool (Map.insert v (q,n,0) bind) expr
 
 toIntOp :: BinOp -> Maybe IntOp
 toIntOp GOpPlus = Just OpPlus
@@ -107,20 +115,24 @@ toIntOp GOpMult = Just OpMult
 toIntOp GOpDiv = Just OpDiv
 toIntOp _ = Nothing
 
-typeCheckInt :: GExpr -> Either String (Expr Int)
-typeCheckInt (GVar q n) = Right (ExprVar q n)
-typeCheckInt (GConst c) = Right (ExprConst c)
-typeCheckInt (GBin op l r) = case toIntOp op of
+typeCheckInt :: ExistsBinding -> GExpr -> Either String (Expr Int)
+typeCheckInt bind (GVar q n) = case q of
+  Just _ -> Right (ExprVar q n 0)
+  Nothing -> case Map.lookup n bind of
+    Nothing -> Right (ExprVar q n 0)
+    Just (q',n',lvl) -> Right (ExprVar q' n' lvl)
+typeCheckInt _ (GConst c) = Right (ExprConst c)
+typeCheckInt bind (GBin op l r) = case toIntOp op of
   Just iop -> do
-    res_l <- typeCheckInt l
-    res_r <- typeCheckInt r
+    res_l <- typeCheckInt bind l
+    res_r <- typeCheckInt bind r
     return $ ExprBinInt iop res_l res_r
   Nothing -> Left $ "Operator "++show op++" has wrong type, expected: int"
-typeCheckInt (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
-typeCheckInt (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
+typeCheckInt _ (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
+typeCheckInt _ (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
       
 instance Eq a => Eq (Expr a) where
-  (ExprVar q1 n1) == (ExprVar q2 n2) = q1 == q2 && n1 == n2
+  (ExprVar q1 n1 lvl1) == (ExprVar q2 n2 lvl2) = q1 == q2 && n1 == n2 && lvl1 == lvl2
   (ExprConst i1) == (ExprConst i2) = i1 == i2
   (ExprBinInt op1 l1 r1) == (ExprBinInt op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
   (ExprBinBool op1 l1 r1) == (ExprBinBool op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
@@ -132,10 +144,12 @@ instance Eq a => Eq (Expr a) where
   _ == _ = False
 
 instance Ord a => Ord (Expr a) where
-  compare (ExprVar q1 n1) (ExprVar q2 n2) = case compare q1 q2 of
-    EQ -> compare n1 n2
+  compare (ExprVar q1 n1 lvl1) (ExprVar q2 n2 lvl2) = case compare q1 q2 of
+    EQ -> case compare n1 n2 of
+      EQ -> compare lvl1 lvl2
+      r -> r
     r -> r
-  compare (ExprVar _ _) _ = LT
+  compare (ExprVar _ _ _) _ = LT
   compare (ExprConst i1) (ExprConst i2) = compare i1 i2
   compare (ExprConst _) _ = LT
   compare (ExprBinInt op1 l1 r1) (ExprBinInt op2 l2 r2) = case compare op1 op2 of
@@ -156,7 +170,7 @@ instance Ord a => Ord (Expr a) where
       r -> r
     r -> r
   compare (ExprRel _ _ _) _ = LT
-  compare (ExprElem q1 n1 s1 p1) (ExprElem q2 n2 s2 p2) = case compare (ExprVar q1 n1::Expr Int) (ExprVar q2 n2) of
+  compare (ExprElem q1 n1 s1 p1) (ExprElem q2 n2 s2 p2) = case compare (ExprVar q1 n1 0::Expr Int) (ExprVar q2 n2 0) of
     EQ -> case compare s1 s2 of
       EQ -> compare p1 p2
       r -> r
@@ -170,9 +184,13 @@ instance Ord a => Ord (Expr a) where
   compare (ExprNext _) _ = LT
 
 instance Show a => Show (Expr a) where
-  show (ExprVar q name) = case q of
-    Nothing -> name
-    Just rq -> rq ++ "." ++ name
+  show (ExprVar q name lvl) = let suff = case lvl of
+                                    0 -> ""
+                                    _ -> "#"++show lvl
+                                  pref = case q of
+                                    Nothing -> name
+                                    Just rq -> rq ++ "." ++ name
+                              in pref++suff
   show (ExprConst i) = show i
   show (ExprBinInt op lhs rhs) = "(" ++ show lhs ++ ")" ++
                                  (case op of
@@ -196,7 +214,7 @@ instance Show a => Show (Expr a) where
                                    BinEq -> "="
                                    BinNEq -> "!=") ++
                                " (" ++ show rhs ++ ")"
-  show (ExprElem q name ints pos) = show (ExprVar q name::Expr Int) ++
+  show (ExprElem q name ints pos) = show (ExprVar q name 0::Expr Int) ++
                                     (if pos then " in "
                                      else " not in ") ++
                                     show ints
@@ -264,13 +282,13 @@ pushNot' (ExprAlways x) = error "always operator must not be negated"
 pushNot' (ExprNext x) = ExprNext (pushNot' x)
 pushNot' (ExprElem p n lst neg) = ExprElem p n lst (not neg)
 
-getVars :: Expr a -> [(Maybe String,String)]
-getVars (ExprVar q n) = [(q,n)]
+getVars :: Expr a -> [(Maybe String,String,Integer)]
+getVars (ExprVar q n lvl) = [(q,n,lvl)]
 getVars (ExprConst _) = []
 getVars (ExprBinInt _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprBinBool _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprRel _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (ExprElem q n _ _) = [(q,n)]
+getVars (ExprElem q n _ _) = [(q,n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e

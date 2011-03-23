@@ -5,6 +5,7 @@ import Language.GTL.Token
 import Language.GTL.Syntax
 
 import Data.Maybe (mapMaybe)
+import qualified Data.Map as Map
 }
 
 %name gtl
@@ -107,7 +108,7 @@ mb_contract : "contract" { }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : expr { case typeCheckBool $1 of
+formula : expr { case typeCheckBool Map.empty $1 of
                     Left err -> error err
                     Right e -> e
                }

@@ -139,14 +139,14 @@ parseGTLAtom mp arg at
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> let (idx,isinp,res) = case at of
                      GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
-                     GTLVar q n v -> parseGTLRelation mp arg BinEq (ExprVar q n) (ExprConst v)
+                     GTLVar q n lvl v -> parseGTLRelation mp arg BinEq (ExprVar q n lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
         
 
 parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> Relation -> GTL.Expr a -> GTL.Expr a -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
-  = let lvars = [ v | (Nothing,v) <- getVars lhs, Map.member v outps ]
-        rvars = [ v | (Nothing,v) <- getVars rhs, Map.member v outps ]
+  = let lvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars lhs, Map.member v outps ]
+        rvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars rhs, Map.member v outps ]
         idx = fromIntegral $ Map.size mp
         name = case arg of
           Nothing -> Nothing
@@ -159,14 +159,14 @@ parseGTLRelation mp arg rel lhs rhs
           Just (_,s) -> s
         (res,isinp) = (case lvars of
                           [] -> case rhs of
-                            ExprVar Nothing n -> if Map.member n outps
-                                                 then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
-                                                 else error "No output variable in relation"
+                            ExprVar Nothing n lvl -> if Map.member n outps
+                                                     then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
+                                                     else error "No output variable in relation"
                             _ -> case rvars of
                               [] -> (createBuddyCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
                           _ -> case lhs of
-                            ExprVar Nothing n -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
+                            ExprVar Nothing n lvl -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
                             _ -> case lvars of
                               [] -> (createBuddyCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
@@ -268,11 +268,11 @@ instance BuddyConst Bool where
 
 createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr a -> ([String],[String],Integer,String)
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,buddyConst i)
-createBuddyExpr v mdl (ExprVar q n) = case mdl of
-                                        Nothing -> case q of
-                                          Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
-                                          Nothing -> error "verify claims must not contain qualified variables"
-                                        Just rmdl -> ([],[],v,"now->conn_"++rmdl++"_"++n)
+createBuddyExpr v mdl (ExprVar q n lvl) = case mdl of
+  Nothing -> case q of
+    Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
+    Nothing -> error "verify claims must not contain qualified variables"
+  Just rmdl -> ([],[],v,"now->conn_"++rmdl++"_"++n)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
@@ -330,7 +330,7 @@ buildTransProgram scade decls
                                                                           (varsOut mdl)
                                                               }) (connectFromModel c) cmdls) tmodels1 conns
         tmodels3 = foldl (\cmdls never ->
-                           foldl (\cmdls' (Just q,n) ->
+                           foldl (\cmdls' (Just q,n,lvl) ->
                                    Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
                                                                        n (Set.singleton Nothing)
                                                                        (varsOut mdl)

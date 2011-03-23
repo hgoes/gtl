@@ -21,7 +21,7 @@ import Data.List (genericLength)
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
 
-type BDDTrace s = [(String,Map String (Tree s Int))]
+type BDDTrace s = [(String,Map (String,Integer) (Tree s Int))]
 
 generateBDDCheck :: String -> Int -> Tree s Int -> String
 generateBDDCheck name w
@@ -84,7 +84,7 @@ getBDDTrace = do
       return (var,tree)
     return (mdl,Map.fromAscList lmp)
 
-traceToPromela :: (String -> String -> String) -> BDDTrace s -> [Pr.Step]
+traceToPromela :: (String -> (String,Integer) -> String) -> BDDTrace s -> [Pr.Step]
 traceToPromela f trace
   = fmap (\(mdl,vars) -> let expr = foldl1 (\x y -> x++"&&"++y) [ generateBDDCheck (f mdl var) (bitSize (undefined::Int)) tree
                                                                 | (var,tree) <- Map.toList vars]
@@ -92,7 +92,7 @@ traceToPromela f trace
          ) trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
 
-traceToBuchi :: BDDTrace s -> Buchi (Maybe (String,Map String (Tree s Int)))
+traceToBuchi :: BDDTrace s -> Buchi (Maybe (String,Map (String,Integer) (Tree s Int)))
 traceToBuchi trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n==0
                                                                   , vars = Just st
                                                                   , finalSets = Set.empty

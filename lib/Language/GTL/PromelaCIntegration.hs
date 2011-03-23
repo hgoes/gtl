@@ -54,7 +54,7 @@ neverClaim trace f
                   (let cexprr = case snd (vars st) of
                          Nothing -> []
                          Just (mdl,vs) -> [ generateBDDCheck ("now."++mdl++"_state."++v) (bitSize (undefined::Int)) tree
-                                          | (v,tree) <- Map.toList vs]
+                                          | ((v,lvl),tree) <- Map.toList vs]
                        inner = case cexprl ++ cexprr of
                          [] -> jump
                          cexprs -> Pr.prSequence
@@ -77,7 +77,7 @@ neverClaim trace f
                                   let ratom = if en then atom else gtlAtomNot atom ]
                        clit :: Show a => Expr a -> String
                        clit (ExprConst x) = show x
-                       clit (ExprVar (Just mdl) var) = "now."++mdl++"_state."++var
+                       clit (ExprVar (Just mdl) var lvl) = "now."++mdl++"_state."++var
                        clit _ = error "All variables in never claim must be qualified"
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner
@@ -86,7 +86,7 @@ neverClaim trace f
     in Pr.prNever $ [init]++steps
 
 generateNeverClaim :: BDDTrace s -> Pr.Module
-generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var -> "now."++mdl++"_state."++var) trace)
+generateNeverClaim trace = Pr.Never (traceToPromela (\mdl (var,lvl) -> "now."++mdl++"_state."++var) trace)
 
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> [Pr.Module]
 generatePromelaCode tp conns

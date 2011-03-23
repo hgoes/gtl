@@ -143,7 +143,7 @@ stateToTransition name st
 
 litToExpr :: Integral a => GTL.Expr a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
-litToExpr (ExprVar Nothing x) = IdExpr $ Path [x]
+litToExpr (ExprVar Nothing x lvl) = IdExpr $ Path [x]
 
 relToExpr :: GTLAtom -> Sc.Expr
 relToExpr (GTLRel rel l r)
