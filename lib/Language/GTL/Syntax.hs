@@ -35,6 +35,7 @@ data GExpr = GBin BinOp GExpr GExpr
            | GConst Int
            | GVar (Maybe String) String
            | GSet [Integer]
+           | GExists String (Maybe String) String GExpr
            deriving (Show,Eq,Ord)
 
 data Expr a where

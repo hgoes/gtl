@@ -5,6 +5,7 @@ data Token = Identifier String
            | Bracket BracketType Bool
            | Dot
            | Semicolon
+           | Colon
            | Comma
            | ConstString String
            | ConstInt Integer
@@ -18,6 +19,7 @@ data KeyWord = KeyAll
              | KeyModel
              | KeyInit
              | KeyVerify
+             | KeyExists
              deriving Show
 
 data BracketType = Parentheses

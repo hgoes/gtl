@@ -22,6 +22,7 @@ tokens:-
   next $digit10*                 { \s -> Unary (GOpNext (case drop 4 s of
                                                             [] -> 1
                                                             r -> read r)) }
+  exists                         { key KeyExists }
   not                              { un GOpNot }
   or                             { bin GOpOr }
   in                             { bin GOpIn }
@@ -33,6 +34,7 @@ tokens:-
   "{"                            { const $ Bracket Curly False }
   "}"                            { const $ Bracket Curly True }
   ";"                            { const Semicolon }
+  ":"                            { const Colon }
   "."                            { const Dot }
   ","                            { const Comma }
   "<="                           { bin GOpLessThanEqual }
