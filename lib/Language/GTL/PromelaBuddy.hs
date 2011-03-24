@@ -19,7 +19,7 @@ import Data.List (intersperse)
 data TransModel = TransModel
                   { varsInit :: Map String String
                   , varsIn :: Map String Integer
-                  , varsOut :: Map String (Set (Maybe (String,String)))
+                  , varsOut :: Map String (Map (Maybe (String,String)) (Set Integer))
                   , stateMachine :: Buchi ([Integer],[Integer]) --[GTLAtom]
                   , checkFunctions :: [String]
                   } deriving Show
@@ -33,10 +33,12 @@ data TransProgram = TransProgram
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
 translateContracts scade decls = translateContracts' (buildTransProgram scade decls)
 
-varName :: String -> String -> Integer -> String
-varName mdl var lvl = "conn_"++mdl++"_"++var++(if lvl==0
-                                               then ""
-                                               else "_"++show lvl)
+varName :: Bool -> String -> String -> Integer -> String
+varName nvr mdl var lvl = (if nvr
+                           then "never_"
+                           else "conn_")++mdl++"_"++var++(if lvl==0
+                                                          then ""
+                                                          else "_"++show lvl)
 
 translateContracts' :: TransProgram -> [Pr.Module]
 translateContracts' prog 
@@ -44,14 +46,17 @@ translateContracts' prog
                                      ,"\\#include <cudd_arith.h>"
                                      ,"\\#include <assert.h>"
                                      ,"DdManager* manager;"]
-        states = [ Pr.CState ("DdNode* "++varName name var n) "Global" (Just "NULL")
+        states = [ Pr.CState ("DdNode* "++varName False name var n) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
                  , (var,hist) <- Map.toList (varsIn mdl) 
                  , n <- [0..hist] ] ++
-                 [ Pr.CState ("DdNode* never_"++name++"_"++var) "Global" (Just "NULL")
+                 [ Pr.CState ("DdNode* "++varName True name var lvl) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
                  , (var,set) <- Map.toList (varsOut mdl)
-                 , Set.member Nothing set]
+                 , lvl <- case Map.lookup Nothing set of
+                   Nothing -> []
+                   Just lvls -> [0..(Set.findMax lvls)]
+                 ]
         procs = fmap (\(name,mdl) -> let steps = translateModel name mdl
                                          proc = Pr.ProcType { Pr.proctypeActive = Nothing
                                                             , Pr.proctypeName = name
@@ -68,35 +73,36 @@ translateContracts' prog
                         ["  "++vname lvl++" = "++(if lvl==0
                                                   then "DD_ONE(manager);"
                                                   else vname (lvl-1))
-                        | (from,tos) <- Map.toList (varsOut mdl), to <- Set.toList tos, 
+                        | (from,tos) <- Map.toList (varsOut mdl), to <- Map.keys tos, 
                           let hist = case to of
                                 Nothing -> 0
                                 Just (q,n) -> (varsIn ((transModels prog)!q))!n, 
                           let vname l = case to of
-                                Just (q,n) -> "now->"++varName q n l
-                                Nothing -> "now->never_"++name++"_"++from,
+                                Just (q,n) -> "now->"++varName False q n l
+                                Nothing -> "now->"++varName True name from l,
                           lvl <- reverse [0..hist] ]++
                         ["}"]
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode $ unlines $
                                      [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
-                                     --[ "reset_"++name++"(&now);" | (name,_) <- procs ] ++
-                                     [ "now."++varName name var clvl++" = Cudd_ReadOne(manager);"
+                                     [ "now."++varName False name var clvl++" = Cudd_ReadOne(manager);"
                                      | (name,mdl) <- Map.toList $ transModels prog, 
                                        (var,lvl) <- Map.toList $ varsIn mdl,
                                        clvl <- [0..lvl]
                                      ] ++
-                                     [ "now.never_"++name++"_"++var++" = Cudd_ReadOne(manager);"
+                                     [ "now."++varName True name var lvl++" = Cudd_ReadOne(manager);"
                                      | (name,mdl) <- Map.toList $ transModels prog,
                                        (var,outs) <- Map.toList $ varsOut mdl,
-                                       Set.member Nothing outs
+                                       lvl <- case Map.lookup Nothing outs of
+                                         Nothing -> []
+                                         Just lvls -> [0..(Set.findMax lvls)]
                                      ] ++
                                      concat [ let trgs = if Map.member var (varsIn mdl)
                                                          then ["now.conn_"++name++"_"++var]
                                                          else [ case outp of
                                                                    Nothing -> "now.never_"++name++"_"++var
                                                                    Just (q,n) -> "now.conn_"++q++"_"++n
-                                                              | outp <- Set.toList ((varsOut mdl)!var) ]
+                                                              | outp <- Map.keys ((varsOut mdl)!var) ]
                                               in [ head trgs++" = "++e++";"
                                                  , "Cudd_Ref("++head trgs++");"] ++
                                                  [ trg++" = "++head trgs | trg <- tail trgs ]
@@ -156,7 +162,7 @@ translateNever buchi
                      ]
     in fmap toStep $ StmtSkip:inits:states
 
-parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
+parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
 parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
@@ -166,7 +172,7 @@ parseGTLAtom mp arg at
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
         
 
-parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Set (Maybe (String,String)))) -> Relation -> GTL.Expr a -> GTL.Expr a -> (Integer,Bool,String)
+parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr a -> GTL.Expr a -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
   = let lvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars lhs, Map.member v outps ]
         rvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars rhs, Map.member v outps ]
@@ -196,9 +202,11 @@ parseGTLRelation mp arg rel lhs rhs
                       ) :: (String,Bool)
     in (idx,isinp,res)
 
-createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Set (Maybe (String,String)) -> Relation -> GTL.Expr a -> String
+createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Map (Maybe (String,String)) (Set Integer) -> Relation -> GTL.Expr a -> String
 createBuddyAssign count q n outs rel expr
-  = let trgs = fmap (maybe ("now->never_"++q++"_"++n) (\(q',n') -> "now->conn_"++q'++"_"++n')) $ Set.toList outs
+  = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var 
+               | (var,lvls) <- Map.toList outs
+               , lvl <- Set.toList lvls]
         (cmd2,te) = case rel of
           BinEq -> ([],e)
           BinNEq -> ([],"Cudd_Not("++e++")")
@@ -293,9 +301,9 @@ createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr a -> ([St
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,buddyConst i)
 createBuddyExpr v mdl (ExprVar q n lvl) = case mdl of
   Nothing -> case q of
-    Just rq -> ([],[],v,"now->never_"++rq++"_"++n)
+    Just rq -> ([],[],v,"now->"++varName True rq n lvl)
     Nothing -> error "verify claims must not contain qualified variables"
-  Just rmdl -> ([],[],v,"now->"++varName rmdl n lvl)
+  Just rmdl -> ([],[],v,"now->"++varName False rmdl n lvl)
 createBuddyExpr v mdl (ExprBinInt op lhs rhs)
   = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
         (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
@@ -322,11 +330,11 @@ buildTransProgram scade decls
         claims = [ v | Verify v <- decls ]
         
         tmodels1 = Map.fromList $ fmap (\m -> let (inp_vars,outp_vars) = scadeInterface ((modelArgs m)!!0) scade
-                                                  outp_map = Map.fromList $ fmap (\(var,_) -> (var,Set.empty)) outp_vars
+                                                  outp_map = Map.fromList $ fmap (\(var,_) -> (var,Map.empty)) outp_vars
                                                   hist = maximumHistory (modelContract m)
                                               in (modelName m,
                                                   TransModel { varsInit = Map.fromList [ (name,case e of
-                                                                                             InitAll -> "DD_ONE(manager)"
+                                                                                             InitAll -> "Cudd_ReadOne(manager)"
                                                                                              InitOne i -> "Cudd_bddSingleton(manager,"++show i++",0)")
                                                                                        | (name,e) <- modelInits m ]
                                                              , varsIn = Map.fromList $ [ (v,hist!v) | (v,_) <- inp_vars ]
@@ -348,15 +356,15 @@ buildTransProgram scade decls
                                       in (sm:sms,fm)
                                   ) ([],Map.empty) claims
         
-        tmodels2 = foldl (\cmdls c -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
+        tmodels2 = foldl (\cmdls c -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                           (connectFromVariable c)
-                                                                          (Set.singleton $ Just (connectToModel c,connectToVariable c))
+                                                                          (Map.singleton (Just (connectToModel c,connectToVariable c)) (Set.singleton 0))
                                                                           (varsOut mdl)
                                                               }) (connectFromModel c) cmdls) tmodels1 conns
         tmodels3 = foldl (\cmdls never ->
                            foldl (\cmdls' (Just q,n,lvl) ->
-                                   Map.adjust (\mdl -> mdl { varsOut = Map.insertWith Set.union
-                                                                       n (Set.singleton Nothing)
+                                   Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
+                                                                       n (Map.singleton Nothing (Set.singleton lvl))
                                                                        (varsOut mdl)
                                                            }) q cmdls'
                                  ) cmdls $ concat (fmap getVars (verifyFormulas never))
