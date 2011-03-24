@@ -3,9 +3,9 @@ module Language.GTL.ScadeContract where
 
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List hiding (foldl1,find,concat)
+import Data.List as List hiding (foldl,foldl1,find,concat)
 import Data.Foldable
-import Prelude hiding (foldl1,concat)
+import Prelude hiding (foldl,foldl1,concat)
 import Control.Monad.Identity
 
 import Language.GTL.LTL as LTL
@@ -143,7 +143,7 @@ stateToTransition name st
 
 litToExpr :: Integral a => GTL.Expr a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
-litToExpr (ExprVar Nothing x lvl) = IdExpr $ Path [x]
+litToExpr (ExprVar Nothing x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
 litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
                                                OpPlus -> BinPlus
                                                OpMinus -> BinMinus
