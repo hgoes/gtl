@@ -99,7 +99,7 @@ traceToBuchi trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n=
                                                                   , successors = Set.singleton (n+1)
                                                                   })) [0..] trace
                          len = genericLength trace
-                         end = (len,BuchiState { isStart = False
+                         end = (len,BuchiState { isStart = len==0
                                                , vars = Nothing
                                                , finalSets = Set.singleton (-1)
                                                , successors = Set.singleton len
