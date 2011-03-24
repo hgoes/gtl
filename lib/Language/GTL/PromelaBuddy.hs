@@ -73,9 +73,9 @@ translateContracts' prog
                         ["  "++vname lvl++" = "++(if lvl==0
                                                   then "DD_ONE(manager);"
                                                   else vname (lvl-1))
-                        | (from,tos) <- Map.toList (varsOut mdl), to <- Map.keys tos, 
+                        | (from,tos) <- Map.toList (varsOut mdl), (to,lvls) <- Map.toList tos, 
                           let hist = case to of
-                                Nothing -> 0
+                                Nothing -> Set.findMax lvls
                                 Just (q,n) -> (varsIn ((transModels prog)!q))!n, 
                           let vname l = case to of
                                 Just (q,n) -> "now->"++varName False q n l
