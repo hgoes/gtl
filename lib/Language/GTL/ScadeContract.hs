@@ -144,6 +144,11 @@ stateToTransition name st
 litToExpr :: Integral a => GTL.Expr a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
 litToExpr (ExprVar Nothing x lvl) = IdExpr $ Path [x]
+litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
+                                               OpPlus -> BinPlus
+                                               OpMinus -> BinMinus
+                                               OpMult -> BinTimes
+                                               OpDiv -> BinDiv) (litToExpr l) (litToExpr r)
 
 relToExpr :: GTLAtom -> Sc.Expr
 relToExpr (GTLRel rel l r)
