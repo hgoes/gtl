@@ -13,7 +13,7 @@ import qualified Language.Promela.Syntax as Pr
 import qualified Language.Scade.Syntax as Sc
 import Language.Promela.Pretty
 
-import Data.Map (Map)
+import Data.Map (Map,(!))
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -31,18 +31,19 @@ translateGTL traces gtlcode scadecode
         return rtr
     let tps = typeMap gtlcode scadecode
         conns = connectionMap gtlcode tps
-        claims = case concat [ verifyFormulas decl | Verify decl <- gtlcode ] of
-          [] -> []
-          cl -> [neverClaim (case rtr of
-                                [] -> []
-                                x:_ -> x) $ ExprNot $ foldl1 (ExprBinBool GTL.And) cl]
+        rformula = case concat [ verifyFormulas decl | Verify decl <- gtlcode ] of
+          [] -> ExprConst False
+          cl -> ExprNot $ foldl1 (ExprBinBool GTL.And) cl
+        claims = [neverClaim (case rtr of
+                                 [] -> []
+                                 x:_ -> x) rformula]
     {-nevers <- case traces of
       Nothing -> return []
       Just tr -> runBDDM (do
                              rtr <- readBDDTraces tr
                              return [generateNeverClaim $ head rtr]
                          )-}
-    return $ show $ prettyPromela $ (generatePromelaCode tps conns)++claims
+    return $ show $ prettyPromela $ (generatePromelaCode tps conns (maximumHistory [rformula]))++claims
 
 neverClaim :: BDDTrace s -> Formula -> Pr.Module
 neverClaim trace f
@@ -77,7 +78,9 @@ neverClaim trace f
                                   let ratom = if en then atom else gtlAtomNot atom ]
                        clit :: Show a => Expr a -> String
                        clit (ExprConst x) = show x
-                       clit (ExprVar (Just mdl) var lvl) = "now."++mdl++"_state."++var
+                       clit (ExprVar (Just mdl) var lvl) = if lvl==0
+                                                           then "now."++mdl++"_state."++var
+                                                           else "now.history_"++mdl++"_"++var++"_"++show lvl
                        clit (ExprBinInt op lhs rhs) = "("++clit lhs++(case op of
                                                                          OpPlus -> "+"
                                                                          OpMinus -> "-"
@@ -93,8 +96,8 @@ neverClaim trace f
 generateNeverClaim :: BDDTrace s -> Pr.Module
 generateNeverClaim trace = Pr.Never (traceToPromela (\mdl (var,lvl) -> "now."++mdl++"_state."++var) trace)
 
-generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> [Pr.Module]
-generatePromelaCode tp conns
+generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (Maybe String,String) Integer -> [Pr.Module]
+generatePromelaCode tp conns history
   = let procs = fmap (\(name,(int_name,inp,outp)) ->
                        let assignments = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
                                                                  [name++"_input."++tvar++" = now."++
@@ -115,7 +118,18 @@ generatePromelaCode tp conns
                                       , Pr.proctypeProvided = Nothing
                                       , Pr.proctypeSteps = assignments
                                       }) $ Map.toList tp
-        states = fmap (\(name,(int_name,inp,outp)) -> Pr.CState ("outC_"++int_name++" "++name++"_state") "Global" Nothing) $ Map.toList tp
+        states = (fmap (\(name,(int_name,inp,outp)) -> Pr.CState ("outC_"++int_name++" "++name++"_state") "Global" Nothing) $ Map.toList tp)
+                 ++ [ Pr.CState ((case tp of
+                                     Sc.TypeInt -> "kcg_int"
+                                     Sc.TypeBool -> "kcg_bool"
+                                 )++
+                                 " history_"++q++"_"++n++"_"++show lvl) "Global" (Just "0")
+                    | ((Just q,n),lvl) <- Map.toList history,
+                      let (_,tpin,tpout) = tp!q,
+                      let tp = case Map.lookup n tpin of
+                            Nothing -> tpout!n
+                            Just t -> t,
+                      clvl <- [1..lvl]]
         inp_decls = [Pr.CDecl (unlines $
                                (fmap (\(int_name,_,_) -> "\\#include <"++int_name++".h>") (Map.elems tp)) ++
                                (fmap (\(name,(int_name,inp,outp)) -> if Map.null inp
