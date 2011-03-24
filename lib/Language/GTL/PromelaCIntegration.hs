@@ -78,7 +78,12 @@ neverClaim trace f
                        clit :: Show a => Expr a -> String
                        clit (ExprConst x) = show x
                        clit (ExprVar (Just mdl) var lvl) = "now."++mdl++"_state."++var
-                       clit _ = error "All variables in never claim must be qualified"
+                       clit (ExprBinInt op lhs rhs) = "("++clit lhs++(case op of
+                                                                         OpPlus -> "+"
+                                                                         OpMinus -> "-"
+                                                                         OpMult -> "*"
+                                                                         OpDiv -> "/")++clit rhs++")"
+                       clit e = error $ "All variables in never claim must be qualified ["++show e++"]"
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner
                       else inner)
