@@ -45,6 +45,11 @@ translateGTL traces gtlcode scadecode
                          )-}
     return $ show $ prettyPromela $ (generatePromelaCode tps conns (maximumHistory [rformula]))++claims
 
+varName :: String -> String -> Integer -> String
+varName q v lvl = if lvl==0
+                  then q++"_state."++v
+                  else "history_"++q++"_"++v++"_"++show lvl
+
 neverClaim :: BDDTrace s -> Formula -> Pr.Module
 neverClaim trace f
   = let traceAut = traceToBuchi trace
@@ -54,7 +59,7 @@ neverClaim trace f
         steps = [ Pr.StmtLabel ("st"++showSt i)
                   (let cexprr = case snd (vars st) of
                          Nothing -> []
-                         Just (mdl,vs) -> [ generateBDDCheck ("now."++mdl++"_state."++v) (bitSize (undefined::Int)) tree
+                         Just (mdl,vs) -> [ generateBDDCheck ("now."++varName mdl v lvl) (bitSize (undefined::Int)) tree
                                           | ((v,lvl),tree) <- Map.toList vs]
                        inner = case cexprl ++ cexprr of
                          [] -> jump
@@ -78,9 +83,7 @@ neverClaim trace f
                                   let ratom = if en then atom else gtlAtomNot atom ]
                        clit :: Show a => Expr a -> String
                        clit (ExprConst x) = show x
-                       clit (ExprVar (Just mdl) var lvl) = if lvl==0
-                                                           then "now."++mdl++"_state."++var
-                                                           else "now.history_"++mdl++"_"++var++"_"++show lvl
+                       clit (ExprVar (Just mdl) var lvl) = "now."++varName mdl var lvl
                        clit (ExprBinInt op lhs rhs) = "("++clit lhs++(case op of
                                                                          OpPlus -> "+"
                                                                          OpMinus -> "-"
@@ -100,6 +103,12 @@ generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (Ma
 generatePromelaCode tp conns history
   = let procs = fmap (\(name,(int_name,inp,outp)) ->
                        let assignments = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
+                                                                 [ "now."++varName name v lvl++" = now."++varName name v (lvl-1)++";"
+                                                                 | v <- (Map.keys inp) ++ (Map.keys outp),
+                                                                   lvl <- case Map.lookup (Just name,v) history of
+                                                                     Nothing -> []
+                                                                     Just c -> reverse [1..c]
+                                                                 ]++
                                                                  [name++"_input."++tvar++" = now."++
                                                                   fmod++"_state."++fvar++";" 
                                                                  | ((fmod,fvar),(tmod,tvar)) <- conns, tmod==name ]++
