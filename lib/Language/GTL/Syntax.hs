@@ -293,3 +293,6 @@ getVars (ExprElem q n _ _) = [(q,n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
+
+maximumHistory :: [Expr a] -> Map (Maybe String,String) Integer
+maximumHistory exprs = foldl (\mp (q,n,lvl) -> Map.insertWith max (q,n) lvl mp) Map.empty (concat $ fmap getVars exprs)

@@ -337,7 +337,7 @@ buildTransProgram scade decls
                                                                                              InitAll -> "Cudd_ReadOne(manager)"
                                                                                              InitOne i -> "Cudd_bddSingleton(manager,"++show i++",0)")
                                                                                        | (name,e) <- modelInits m ]
-                                                             , varsIn = Map.fromList $ [ (v,hist!v) | (v,_) <- inp_vars ]
+                                                             , varsIn = Map.fromList $ [ (v,hist!(Nothing,v)) | (v,_) <- inp_vars ]
                                                              , varsOut = outp_map
                                                              , stateMachine = undefined
                                                              , checkFunctions = undefined
@@ -389,6 +389,3 @@ buildTransProgram scade decls
                     , transClaims = tclaims
                     , claimChecks = fmap (\(_,_,f) -> f) $ Map.elems fclaims
                     }
-
-maximumHistory :: [GTL.Expr a] -> Map String Integer
-maximumHistory exprs = foldl (\mp (Nothing,n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
