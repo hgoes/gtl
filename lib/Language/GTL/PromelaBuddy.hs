@@ -80,7 +80,17 @@ translateContracts' prog
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode $ unlines $
                                      [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
-                                     [ "reset_"++name++"(&now);" | (name,_) <- procs ] ++
+                                     --[ "reset_"++name++"(&now);" | (name,_) <- procs ] ++
+                                     [ "now."++varName name var clvl++" = Cudd_ReadOne(manager);"
+                                     | (name,mdl) <- Map.toList $ transModels prog, 
+                                       (var,lvl) <- Map.toList $ varsIn mdl,
+                                       clvl <- [0..lvl]
+                                     ] ++
+                                     [ "now.never_"++name++"_"++var++" = Cudd_ReadOne(manager);"
+                                     | (name,mdl) <- Map.toList $ transModels prog,
+                                       (var,outs) <- Map.toList $ varsOut mdl,
+                                       Set.member Nothing outs
+                                     ] ++
                                      concat [ let trgs = if Map.member var (varsIn mdl)
                                                          then ["now.conn_"++name++"_"++var]
                                                          else [ case outp of
