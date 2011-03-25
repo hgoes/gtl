@@ -25,7 +25,7 @@ data TranslationMode
      | ScadeContract
      | ScadeToPromela
      | PromelaBuddy
-     deriving Show
+     deriving (Show,Eq)
 
 data Options = Options
                { mode :: TranslationMode
@@ -45,14 +45,21 @@ defaultOptions = Options
 modes :: [(String,TranslationMode)]
 modes = [("native-c",NativeC),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
 
-modeString :: [(String,a)] -> String
-modeString [] = ""
-modeString [(name,_)] = show name
-modeString names = buildOr names
+modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
+modeString def [] = ""
+modeString def [(name,md)] = show name ++ (if md==def
+                                           then "(default)"
+                                           else "")
+modeString def names = buildOr names
   where
-    buildOr ((name,_):names) = case names of
-      [(name2,_)] -> show name ++ " or " ++ show name2
-      _ -> show name ++ ", "++buildOr names
+    buildOr ((name,md):names) = show name ++ (if md==def
+                                              then "(default)"
+                                              else "")++
+                                case names of
+                                  [(name2,md2)] -> " or " ++ show name2 ++ (if md2==def
+                                                                            then "(default)"
+                                                                            else "")
+                                  _ -> ", "++buildOr names
 
 
 options :: [OptDescr (Options -> Options)]
@@ -60,7 +67,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                              Just rmode -> opt { mode = rmode }
                                              Nothing -> error $ "Unknown mode "++show str
                                          ) "mode"
-                                 ) ("The tranlation mode ("++modeString modes++")")
+                                 ) ("The tranlation mode ("++modeString (mode defaultOptions) modes++")")
           ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
           ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
