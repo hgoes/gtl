@@ -104,9 +104,13 @@ typeCheckBool bind (GUn op expr) = case op of
   GOpAlways -> do
     res <- typeCheckBool Map.empty expr  -- Maybe find a nicer solution, an error perhaps?
     return $ ExprAlways res
-  GOpNext _ -> do
+  GOpNext -> do
     res <- typeCheckBool (fmap (\(q,n,lvl) -> (q,n,lvl+1)) bind) expr
     return $ ExprNext res
+  GOpFinally Nothing -> error "Unbounded finally not allowed"
+  GOpFinally (Just n) -> do
+    res <- mapM (\i -> typeCheckBool (fmap (\(q,n,lvl) -> (q,n,lvl+i)) bind) expr) [0..n]
+    return $ foldl1 (\x y -> ExprBinBool Or x (ExprNext y)) res
 typeCheckBool bind (GExists v q n expr) = typeCheckBool (Map.insert v (q,n,0) bind) expr
 
 toIntOp :: BinOp -> Maybe IntOp

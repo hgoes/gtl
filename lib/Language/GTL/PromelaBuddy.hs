@@ -1,3 +1,11 @@
+{- Lascia ch'io pianga
+   mia cruda sorte,
+   e che sospiri la libertà.
+   Il duolo infranga queste ritorte
+   de' miei martiri sol per pietà.
+
+                       -- G.F. Händel
+-}
 {-# LANGUAGE GADTs #-}
 module Language.GTL.PromelaBuddy where
 

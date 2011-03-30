@@ -20,9 +20,10 @@ tokens:-
   follows                        { bin GOpFollows }
   init                           { key KeyInit }
   model                          { key KeyModel }
-  next $digit10*                 { \s -> Unary (GOpNext (case drop 4 s of
-                                                            [] -> 1
-                                                            r -> read r)) }
+  finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
+                                                            [] -> Nothing
+                                                            r -> Just (read r))) }
+  next                           { un GOpNext }
   exists                         { key KeyExists }
   not                              { un GOpNot }
   or                             { bin GOpOr }
