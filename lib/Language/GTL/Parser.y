@@ -20,7 +20,7 @@ import qualified Data.Map as Map
   "and"             { Binary GOpAnd }
   "exists"          { Key KeyExists }
   "finally"         { Unary (GOpFinally $$) }
-  "follows"         { Binary GOpFollows }
+  "implies"         { Binary GOpImplies }
   "model"           { Key KeyModel }
   "next"            { Unary GOpNext}
   "not"             { Unary GOpNot }
@@ -56,7 +56,7 @@ import qualified Data.Map as Map
 %left "always" "next" "finally"
 %left "or"
 %left "and"
-%left "follows"
+%left "implies"
 %left "not"
 %left "<" "<=" ">" ">=" "=" "!="
 %left "+"
@@ -116,7 +116,7 @@ formula : expr { case typeCheckBool Map.empty $1 of
 
 expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "or" expr               { GBin GOpOr $1 $3 }
-     | expr "follows" expr          { GBin GOpFollows $1 $3 }
+     | expr "implies" expr          { GBin GOpImplies $1 $3 }
      | expr "<" expr                { GBin GOpLessThan $1 $3 }
      | expr "<=" expr               { GBin GOpLessThanEqual $1 $3 }
      | expr ">" expr                { GBin GOpGreaterThan $1 $3 }

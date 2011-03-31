@@ -35,7 +35,7 @@ gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
 gtlToLTL (GTL.ExprBinBool op l r) = case op of
   GTL.And -> LTL.Bin LTL.And (gtlToLTL l) (gtlToLTL r)
   GTL.Or -> LTL.Bin LTL.Or (gtlToLTL l) (gtlToLTL r)
-  GTL.Follows -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL l)) (gtlToLTL r)
+  GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL l)) (gtlToLTL r)
 gtlToLTL (GTL.ExprNot x) = LTL.Un LTL.Not (gtlToLTL x)
 gtlToLTL (GTL.ExprAlways x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
 gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)

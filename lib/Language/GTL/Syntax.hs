@@ -53,7 +53,7 @@ data Expr a where
 toBoolOp :: BinOp -> Maybe BoolOp
 toBoolOp GOpAnd = Just And
 toBoolOp GOpOr = Just Or
-toBoolOp GOpFollows = Just Follows
+toBoolOp GOpImplies = Just Implies
 toBoolOp _ = Nothing
 
 toRelOp :: BinOp -> Maybe Relation
@@ -208,7 +208,7 @@ instance Show a => Show (Expr a) where
                                   (case op of
                                       And -> "and"
                                       Or -> "or"
-                                      Follows -> "follows") ++
+                                      Implies -> "implies") ++
                                   " ("++show rhs++")"
   show (ExprRel rel lhs rhs) = "(" ++ show lhs ++ ") " ++
                                (case rel of
@@ -228,7 +228,7 @@ instance Show a => Show (Expr a) where
   show (ExprNext e) = "next ("++show e++")"
                                                                
   
-data BoolOp = And | Or | Follows deriving (Show,Eq,Ord)
+data BoolOp = And | Or | Implies deriving (Show,Eq,Ord)
 
 data IntOp = OpPlus | OpMinus | OpMult | OpDiv deriving (Show,Eq,Ord)
 
@@ -282,7 +282,7 @@ pushNot' (ExprNot x) = x
 pushNot' (ExprBinBool op x y) = case op of
   And -> ExprBinBool Or (pushNot' x) (pushNot' y)
   Or -> ExprBinBool And (pushNot' x) (pushNot' y)
-  Follows -> ExprBinBool And (pushNot x) (pushNot' y)
+  Implies -> ExprBinBool And (pushNot x) (pushNot' y)
 pushNot' (ExprAlways x) = error "always operator must not be negated"
 pushNot' (ExprNext x) = ExprNext (pushNot' x)
 pushNot' (ExprElem p n lst neg) = ExprElem p n lst (not neg)

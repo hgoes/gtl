@@ -35,7 +35,7 @@ data UnOp = GOpAlways
 
 data BinOp = GOpAnd
            | GOpOr
-           | GOpFollows
+           | GOpImplies
            | GOpIn
            | GOpNotIn
            | GOpLessThan

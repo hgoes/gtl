@@ -17,7 +17,7 @@ tokens:-
   and                            { bin GOpAnd }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
-  follows                        { bin GOpFollows }
+  implies                        { bin GOpImplies }
   init                           { key KeyInit }
   model                          { key KeyModel }
   finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
@@ -41,7 +41,7 @@ tokens:-
   ","                            { const Comma }
   "<="                           { bin GOpLessThanEqual }
   "<"                            { bin GOpLessThan }
-  "=>"                           { bin GOpFollows }
+  "=>"                           { bin GOpImplies }
   ">="                           { bin GOpGreaterThanEqual }
   ">"                            { bin GOpGreaterThan }
   "="                            { bin GOpEqual }
