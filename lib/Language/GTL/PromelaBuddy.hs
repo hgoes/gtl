@@ -176,14 +176,14 @@ parseGTLAtom mp arg at
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> let (idx,isinp,res) = case at of
                      GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
-                     GTLVar q n lvl v -> parseGTLRelation mp arg BinEq (ExprVar q n lvl) (ExprConst v)
+                     GTLVar q n lvl v -> parseGTLRelation mp arg BinEq (ExprVar (q,n) lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
         
 
-parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr a -> GTL.Expr a -> (Integer,Bool,String)
+parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
-  = let lvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars lhs, Map.member v outps ]
-        rvars = [ (v,lvl) | (Nothing,v,lvl) <- getVars rhs, Map.member v outps ]
+  = let lvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars lhs, Map.member v outps ]
+        rvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars rhs, Map.member v outps ]
         idx = fromIntegral $ Map.size mp
         name = case arg of
           Nothing -> Nothing
@@ -196,21 +196,21 @@ parseGTLRelation mp arg rel lhs rhs
           Just (_,s) -> s
         (res,isinp) = (case lvars of
                           [] -> case rhs of
-                            ExprVar Nothing n lvl -> if Map.member n outps
-                                                     then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
-                                                     else error "No output variable in relation"
+                            ExprVar (Nothing,n) lvl -> if Map.member n outps
+                                                       then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
+                                                       else error "No output variable in relation"
                             _ -> case rvars of
                               [] -> (createBuddyCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
                           _ -> case lhs of
-                            ExprVar Nothing n lvl -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
+                            ExprVar (Nothing,n) lvl -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
                             _ -> case lvars of
                               [] -> (createBuddyCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
                       ) :: (String,Bool)
     in (idx,isinp,res)
 
-createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Map (Maybe (String,String)) (Set Integer) -> Relation -> GTL.Expr a -> String
+createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Map (Maybe (String,String)) (Set Integer) -> Relation -> GTL.Expr (Maybe String,String) a -> String
 createBuddyAssign count q n outs rel expr
   = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var 
                | (var,lvls) <- Map.toList outs
@@ -256,7 +256,7 @@ createBuddyAssign count q n outs rel expr
                 fmap ("  "++) de ++
                 ["}"])
 
-createBuddyCompare :: BuddyConst a => Integer -> Maybe String -> Relation -> GTL.Expr a -> GTL.Expr a -> String
+createBuddyCompare :: BuddyConst a => Integer -> Maybe String -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> String
 createBuddyCompare count q rel expr1 expr2
   = let (cmd1,de1,v,e1) = createBuddyExpr 0 q expr1
         (cmd2,de2,_,e2) = createBuddyExpr v q expr2
@@ -305,9 +305,9 @@ instance BuddyConst Bool where
                  in if v then var
                     else "Cudd_Not("++var++")"
 
-createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr a -> ([String],[String],Integer,String)
+createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr (Maybe String,String) a -> ([String],[String],Integer,String)
 createBuddyExpr v mdl (ExprConst i) = ([],[],v,buddyConst i)
-createBuddyExpr v mdl (ExprVar q n lvl) = case mdl of
+createBuddyExpr v mdl (ExprVar (q,n) lvl) = case mdl of
   Nothing -> case q of
     Just rq -> ([],[],v,"now->"++varName True rq n lvl)
     Nothing -> error "verify claims must not contain qualified variables"
@@ -370,7 +370,7 @@ buildTransProgram scade decls
                                                                           (varsOut mdl)
                                                               }) (connectFromModel c) cmdls) tmodels1 conns
         tmodels3 = foldl (\cmdls never ->
-                           foldl (\cmdls' (Just q,n,lvl) ->
+                           foldl (\cmdls' ((Just q,n),lvl) ->
                                    Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                        n (Map.singleton Nothing (Set.singleton lvl))
                                                                        (varsOut mdl)

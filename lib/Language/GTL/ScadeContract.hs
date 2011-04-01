@@ -141,9 +141,9 @@ stateToTransition name st
     
                        
 
-litToExpr :: Integral a => GTL.Expr a -> Sc.Expr
+litToExpr :: Integral a => GTL.Expr (Maybe String,String) a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
-litToExpr (ExprVar Nothing x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
+litToExpr (ExprVar (Nothing,x) lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
 litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
                                                OpPlus -> BinPlus
                                                OpMinus -> BinMinus

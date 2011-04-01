@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables #-}
+{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables,FlexibleInstances #-}
 module Language.GTL.Syntax where
 
 import Language.GTL.Token (UnOp(..),BinOp(..))
@@ -32,7 +32,7 @@ data VerifyDecl = VerifyDecl
                   { verifyFormulas :: [Formula]
                   } deriving Show
 
-type Formula = Expr Bool
+type Formula = Expr (Maybe String,String) Bool
 
 data GExpr = GBin BinOp GExpr GExpr
            | GUn UnOp GExpr
@@ -42,28 +42,28 @@ data GExpr = GBin BinOp GExpr GExpr
            | GExists String (Maybe String) String GExpr
            deriving (Show,Eq,Ord)
 
-data Expr a where
-  ExprVar :: Maybe String -> String -> Integer -> Expr a
-  ExprConst :: a -> Expr a
-  ExprBinInt :: IntOp -> Expr Int -> Expr Int -> Expr Int
-  ExprBinBool :: BoolOp -> Expr Bool -> Expr Bool -> Expr Bool
-  ExprRel :: Relation -> Expr Int -> Expr Int -> Expr Bool
-  ExprElem :: Maybe String -> String -> [Integer] -> Bool -> Expr Bool
-  ExprNot :: Expr Bool -> Expr Bool
-  ExprAlways :: Expr Bool -> Expr Bool
-  ExprNext :: Expr Bool -> Expr Bool
+data Expr v a where
+  ExprVar :: v -> Integer -> Expr v a
+  ExprConst :: a -> Expr v a
+  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int
+  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool
+  ExprRel :: Relation -> Expr v Int -> Expr v Int -> Expr v Bool
+  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool
+  ExprNot :: Expr v Bool -> Expr v Bool
+  ExprAlways :: Expr v Bool -> Expr v Bool
+  ExprNext :: Expr v Bool -> Expr v Bool
   deriving Typeable
 
-castSer :: (Typeable a,Typeable b,Monad m) => a -> m b
-castSer = maybe (error "Internal serialization error") return . cast
+castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)
+castSer = maybe (error "Internal serialization error") return . gcast
 
-instance (Binary a,Typeable a) => Binary (Expr a) where
-  put (ExprVar q n hist) = put (0::Word8) >> put q >> put n >> put hist
+instance (Binary a,Binary v,Typeable a) => Binary (Expr v a) where
+  put (ExprVar n hist) = put (0::Word8) >> put n >> put hist
   put (ExprConst c) = put (1::Word8) >> put c
   put (ExprBinInt op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
   put (ExprBinBool op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
   put (ExprRel rel lhs rhs) = put (3::Word8) >> put rel >> put lhs >> put rhs
-  put (ExprElem q n vals b) = put (4::Word8) >> put q >> put n >> put vals >> put b
+  put (ExprElem n vals b) = put (4::Word8) >> put n >> put vals >> put b
   put (ExprNot e) = put (5::Word8) >> put e
   put (ExprAlways e) = put (6::Word8) >> put e
   put (ExprNext e) = put (7::Word8) >> put e
@@ -71,20 +71,19 @@ instance (Binary a,Typeable a) => Binary (Expr a) where
     i <- get :: Get Word8
     case i of
       0 -> do
-        q <- get
         n <- get
         hist <- get
-        return (ExprVar q n hist)
+        return (ExprVar n hist)
       1 -> do
         c <- get
         return (ExprConst c)
-      2 -> case cast (ExprBinInt undefined undefined undefined) of
+      2 -> case gcast (ExprBinInt undefined undefined undefined) of
         Nothing -> do
           op <- get
           lhs <- get
           rhs <- get
           castSer (ExprBinBool op lhs rhs)
-        Just (_::Expr a) -> do
+        Just (_::Expr v a) -> do
           op <- get
           lhs <- get
           rhs <- get
@@ -95,11 +94,10 @@ instance (Binary a,Typeable a) => Binary (Expr a) where
         rhs <- get
         castSer (ExprRel rel lhs rhs)
       4 -> do
-        q <- get
         n <- get
         vals <- get
         b <- get
-        castSer (ExprElem q n vals b)
+        castSer (ExprElem n vals b)
       5 -> do
         e <- get
         castSer (ExprNot e)
@@ -132,12 +130,12 @@ toElemOp _ = Nothing
 
 type ExistsBinding = Map String (Maybe String,String,Integer)
 
-typeCheckBool :: ExistsBinding -> GExpr -> Either String (Expr Bool)
+typeCheckBool :: ExistsBinding -> GExpr -> Either String (Expr (Maybe String,String) Bool)
 typeCheckBool bind (GVar q n) = case q of
-  Just _ -> Right (ExprVar q n 0)
+  Just _ -> Right (ExprVar (q,n) 0)
   Nothing -> case Map.lookup n bind of
-    Nothing -> Right (ExprVar q n 0)
-    Just (q',n',lvl) -> Right (ExprVar q' n' lvl)
+    Nothing -> Right (ExprVar (q,n) 0)
+    Just (q',n',lvl) -> Right (ExprVar (q',n') lvl)
 typeCheckBool _ (GConst c) = Left $ "Expression "++show c++" has type int, expected bool"
 typeCheckBool _ (GSet c) = Left $ "Expression "++show c++" has type {int}, expected bool"
 typeCheckBool bind (GBin op l r) = case toBoolOp op of
@@ -153,7 +151,7 @@ typeCheckBool bind (GBin op l r) = case toBoolOp op of
     Nothing -> case toElemOp op of
       Just eop -> case l of
         GVar q n -> case r of
-          GSet vs -> Right (ExprElem q n vs eop)
+          GSet vs -> Right (ExprElem (q,n) vs eop)
           _ -> Left "Wrong right hand side for in operator"
         _ -> Left "Wrong left hand side for in operator"
       Nothing -> error $ "Invalid operator: "++show op
@@ -180,12 +178,12 @@ toIntOp GOpMult = Just OpMult
 toIntOp GOpDiv = Just OpDiv
 toIntOp _ = Nothing
 
-typeCheckInt :: ExistsBinding -> GExpr -> Either String (Expr Int)
+typeCheckInt :: ExistsBinding -> GExpr -> Either String (Expr (Maybe String,String) Int)
 typeCheckInt bind (GVar q n) = case q of
-  Just _ -> Right (ExprVar q n 0)
+  Just _ -> Right (ExprVar (q,n) 0)
   Nothing -> case Map.lookup n bind of
-    Nothing -> Right (ExprVar q n 0)
-    Just (q',n',lvl) -> Right (ExprVar q' n' lvl)
+    Nothing -> Right (ExprVar (q,n) 0)
+    Just (q',n',lvl) -> Right (ExprVar (q',n') lvl)
 typeCheckInt _ (GConst c) = Right (ExprConst c)
 typeCheckInt bind (GBin op l r) = case toIntOp op of
   Just iop -> do
@@ -196,25 +194,23 @@ typeCheckInt bind (GBin op l r) = case toIntOp op of
 typeCheckInt _ (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
 typeCheckInt _ (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
       
-instance Eq a => Eq (Expr a) where
-  (ExprVar q1 n1 lvl1) == (ExprVar q2 n2 lvl2) = q1 == q2 && n1 == n2 && lvl1 == lvl2
+instance (Eq a,Eq v) => Eq (Expr v a) where
+  (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
   (ExprConst i1) == (ExprConst i2) = i1 == i2
   (ExprBinInt op1 l1 r1) == (ExprBinInt op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
   (ExprBinBool op1 l1 r1) == (ExprBinBool op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
   (ExprRel rel1 l1 r1) == (ExprRel rel2 l2 r2) = rel1==rel2 && l1==l2 && r1==r2
-  (ExprElem q1 n1 s1 p1) == (ExprElem q2 n2 s2 p2) = q1==q2 && n1==n2 && s1==s2 && p1==p2
+  (ExprElem n1 s1 p1) == (ExprElem n2 s2 p2) = n1==n2 && s1==s2 && p1==p2
   (ExprNot e1) == (ExprNot e2) = e1==e2
   (ExprAlways e1) == (ExprAlways e2) = e1==e2
   (ExprNext e1) == (ExprNext e2) = e1==e2
   _ == _ = False
 
-instance Ord a => Ord (Expr a) where
-  compare (ExprVar q1 n1 lvl1) (ExprVar q2 n2 lvl2) = case compare q1 q2 of
-    EQ -> case compare n1 n2 of
-      EQ -> compare lvl1 lvl2
-      r -> r
+instance (Ord a,Ord v) => Ord (Expr v a) where
+  compare (ExprVar n1 lvl1) (ExprVar n2 lvl2) = case compare n1 n2 of
+    EQ -> compare lvl1 lvl2
     r -> r
-  compare (ExprVar _ _ _) _ = LT
+  compare (ExprVar _ _) _ = LT
   compare (ExprConst i1) (ExprConst i2) = compare i1 i2
   compare (ExprConst _) _ = LT
   compare (ExprBinInt op1 l1 r1) (ExprBinInt op2 l2 r2) = case compare op1 op2 of
@@ -235,12 +231,12 @@ instance Ord a => Ord (Expr a) where
       r -> r
     r -> r
   compare (ExprRel _ _ _) _ = LT
-  compare (ExprElem q1 n1 s1 p1) (ExprElem q2 n2 s2 p2) = case compare (ExprVar q1 n1 0::Expr Int) (ExprVar q2 n2 0) of
+  compare (ExprElem n1 s1 p1) (ExprElem n2 s2 p2) = case compare (ExprVar n1 0::Expr v Int) (ExprVar n2 0) of
     EQ -> case compare s1 s2 of
       EQ -> compare p1 p2
       r -> r
     r -> r
-  compare (ExprElem _ _ _ _) _ = LT
+  compare (ExprElem _ _ _) _ = LT
   compare (ExprNot e1) (ExprNot e2) = compare e1 e2
   compare (ExprNot _) _ = LT
   compare (ExprAlways e1) (ExprAlways e2) = compare e1 e2
@@ -248,14 +244,14 @@ instance Ord a => Ord (Expr a) where
   compare (ExprNext e1) (ExprNext e2) = compare e1 e2
   compare (ExprNext _) _ = LT
 
-instance Show a => Show (Expr a) where
-  show (ExprVar q name lvl) = let suff = case lvl of
-                                    0 -> ""
-                                    _ -> "#"++show lvl
-                                  pref = case q of
-                                    Nothing -> name
-                                    Just rq -> rq ++ "." ++ name
-                              in pref++suff
+instance (Show a) => Show (Expr (Maybe String,String) a) where
+  show (ExprVar (q,name) lvl) = let suff = case lvl of
+                                      0 -> ""
+                                      _ -> "#"++show lvl
+                                    pref = case q of
+                                      Nothing -> name
+                                      Just rq -> rq ++ "." ++ name
+                                in pref++suff
   show (ExprConst i) = show i
   show (ExprBinInt op lhs rhs) = "(" ++ show lhs ++ ")" ++
                                  (case op of
@@ -279,10 +275,10 @@ instance Show a => Show (Expr a) where
                                    BinEq -> "="
                                    BinNEq -> "!=") ++
                                " (" ++ show rhs ++ ")"
-  show (ExprElem q name ints pos) = show (ExprVar q name 0::Expr Int) ++
-                                    (if pos then " in "
-                                     else " not in ") ++
-                                    show ints
+  show (ExprElem (q,name) ints pos) = show (ExprVar (q,name) 0::Expr (Maybe String,String) Int) ++
+                                      (if pos then " in "
+                                       else " not in ") ++
+                                      show ints
   show (ExprNot e) = "not ("++show e++")"
   show (ExprAlways e) = "always ("++show e++")"
   show (ExprNext e) = "next ("++show e++")"
@@ -356,18 +352,18 @@ pushNot' (ExprBinBool op x y) = case op of
   Implies -> ExprBinBool And (pushNot x) (pushNot' y)
 pushNot' (ExprAlways x) = error "always operator must not be negated"
 pushNot' (ExprNext x) = ExprNext (pushNot' x)
-pushNot' (ExprElem p n lst neg) = ExprElem p n lst (not neg)
+pushNot' (ExprElem n lst neg) = ExprElem n lst (not neg)
 
-getVars :: Expr a -> [(Maybe String,String,Integer)]
-getVars (ExprVar q n lvl) = [(q,n,lvl)]
+getVars :: Expr v a -> [(v,Integer)]
+getVars (ExprVar n lvl) = [(n,lvl)]
 getVars (ExprConst _) = []
 getVars (ExprBinInt _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprBinBool _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprRel _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (ExprElem q n _ _) = [(q,n,0)]
+getVars (ExprElem n _ _) = [(n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
 
-maximumHistory :: [Expr a] -> Map (Maybe String,String) Integer
-maximumHistory exprs = foldl (\mp (q,n,lvl) -> Map.insertWith max (q,n) lvl mp) Map.empty (concat $ fmap getVars exprs)
+maximumHistory :: Ord v => [Expr v a] -> Map v Integer
+maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)

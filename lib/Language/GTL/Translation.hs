@@ -3,10 +3,12 @@ module Language.GTL.Translation where
 
 import Language.GTL.Syntax as GTL
 import Language.GTL.LTL as LTL
+import Data.Binary
+import Data.Word
 
 import Data.Set as Set
 
-data GTLAtom = GTLRel GTL.Relation (GTL.Expr Int) (GTL.Expr Int)
+data GTLAtom = GTLRel GTL.Relation (GTL.Expr (Maybe String,String) Int) (GTL.Expr (Maybe String,String) Int)
              | GTLElem (Maybe String) String [Integer] Bool
              | GTLVar (Maybe String) String Integer Bool
              deriving (Show,Eq,Ord)
@@ -26,9 +28,10 @@ gtlToBuchi f = ltlToBuchiM (f . fmap (\(at,p) -> if p
                            ) .
              gtlToLTL
 
-getAtomVars :: GTLAtom -> [(Maybe String,String,Integer)]
-getAtomVars (GTLElem q n _ _) = [(q,n,0)]
+getAtomVars :: GTLAtom -> [((Maybe String,String),Integer)]
+getAtomVars (GTLElem q n _ _) = [((q,n),0)]
 getAtomVars (GTLRel _ lhs rhs) = getVars lhs ++ getVars rhs
+getAtomVars (GTLVar q n h _) = [((q,n),h)]
 
 gtlToLTL :: Formula -> LTL GTLAtom
 gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
@@ -39,5 +42,5 @@ gtlToLTL (GTL.ExprBinBool op l r) = case op of
 gtlToLTL (GTL.ExprNot x) = LTL.Un LTL.Not (gtlToLTL x)
 gtlToLTL (GTL.ExprAlways x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
 gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)
-gtlToLTL (GTL.ExprElem q v lits p) = LTL.Atom (GTLElem q v lits p)
-gtlToLTL (GTL.ExprVar q n lvl) = LTL.Atom (GTLVar q n lvl True)
+gtlToLTL (GTL.ExprElem (q,v) lits p) = LTL.Atom (GTLElem q v lits p)
+gtlToLTL (GTL.ExprVar (q,n) lvl) = LTL.Atom (GTLVar q n lvl True)
