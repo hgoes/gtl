@@ -1,9 +1,12 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables #-}
 module Language.GTL.Syntax where
 
 import Language.GTL.Token (UnOp(..),BinOp(..))
 import Control.Monad.Error
 import Data.Map as Map
+import Data.Binary
+import Data.Word
+import Data.Typeable
 
 data Declaration = Model ModelDecl
                  | Connect ConnectDecl
@@ -49,6 +52,63 @@ data Expr a where
   ExprNot :: Expr Bool -> Expr Bool
   ExprAlways :: Expr Bool -> Expr Bool
   ExprNext :: Expr Bool -> Expr Bool
+  deriving Typeable
+
+castSer :: (Typeable a,Typeable b,Monad m) => a -> m b
+castSer = maybe (error "Internal serialization error") return . cast
+
+instance (Binary a,Typeable a) => Binary (Expr a) where
+  put (ExprVar q n hist) = put (0::Word8) >> put q >> put n >> put hist
+  put (ExprConst c) = put (1::Word8) >> put c
+  put (ExprBinInt op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
+  put (ExprBinBool op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
+  put (ExprRel rel lhs rhs) = put (3::Word8) >> put rel >> put lhs >> put rhs
+  put (ExprElem q n vals b) = put (4::Word8) >> put q >> put n >> put vals >> put b
+  put (ExprNot e) = put (5::Word8) >> put e
+  put (ExprAlways e) = put (6::Word8) >> put e
+  put (ExprNext e) = put (7::Word8) >> put e
+  get = do
+    i <- get :: Get Word8
+    case i of
+      0 -> do
+        q <- get
+        n <- get
+        hist <- get
+        return (ExprVar q n hist)
+      1 -> do
+        c <- get
+        return (ExprConst c)
+      2 -> case cast (ExprBinInt undefined undefined undefined) of
+        Nothing -> do
+          op <- get
+          lhs <- get
+          rhs <- get
+          castSer (ExprBinBool op lhs rhs)
+        Just (_::Expr a) -> do
+          op <- get
+          lhs <- get
+          rhs <- get
+          castSer (ExprBinInt op lhs rhs)
+      3 -> do
+        rel <- get
+        lhs <- get
+        rhs <- get
+        castSer (ExprRel rel lhs rhs)
+      4 -> do
+        q <- get
+        n <- get
+        vals <- get
+        b <- get
+        castSer (ExprElem q n vals b)
+      5 -> do
+        e <- get
+        castSer (ExprNot e)
+      6 -> do
+        e <- get
+        castSer (ExprAlways e)
+      7 -> do
+        e <- get
+        castSer (ExprNext e)
 
 toBoolOp :: BinOp -> Maybe BoolOp
 toBoolOp GOpAnd = Just And
@@ -226,11 +286,18 @@ instance Show a => Show (Expr a) where
   show (ExprNot e) = "not ("++show e++")"
   show (ExprAlways e) = "always ("++show e++")"
   show (ExprNext e) = "next ("++show e++")"
-                                                               
-  
-data BoolOp = And | Or | Implies deriving (Show,Eq,Ord)
 
-data IntOp = OpPlus | OpMinus | OpMult | OpDiv deriving (Show,Eq,Ord)
+data BoolOp = And | Or | Implies deriving (Show,Eq,Ord,Enum)
+
+instance Binary BoolOp where
+  put x = put (fromIntegral (fromEnum x) :: Word8)
+  get = fmap (toEnum . fromIntegral :: Word8 -> BoolOp) get
+
+data IntOp = OpPlus | OpMinus | OpMult | OpDiv deriving (Show,Eq,Ord,Enum)
+
+instance Binary IntOp where
+  put x = put (fromIntegral (fromEnum x) :: Word8)
+  get = fmap (toEnum . fromIntegral :: Word8 -> IntOp) get
 
 data Relation = BinLT
               | BinLTEq
@@ -238,7 +305,11 @@ data Relation = BinLT
               | BinGTEq
               | BinEq
               | BinNEq
-              deriving (Show,Eq,Ord)
+              deriving (Show,Eq,Ord,Enum)
+
+instance Binary Relation where
+  put x = put (fromIntegral (fromEnum x) :: Word8)
+  get = fmap (toEnum . fromIntegral :: Word8 -> Relation) get
 
 data InitExpr = InitAll
               | InitOne Integer
