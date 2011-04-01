@@ -345,7 +345,7 @@ buildTransProgram scade decls
                                                                                              InitAll -> "Cudd_ReadOne(manager)"
                                                                                              InitOne i -> "Cudd_bddSingleton(manager,"++show i++",0)")
                                                                                        | (name,e) <- modelInits m ]
-                                                             , varsIn = Map.fromList $ [ (v,hist!(Nothing,v)) | (v,_) <- inp_vars ]
+                                                             , varsIn = Map.fromList $ [ (v,hist!v) | (v,_) <- inp_vars ]
                                                              , varsOut = outp_map
                                                              , stateMachine = undefined
                                                              , checkFunctions = undefined
@@ -354,7 +354,7 @@ buildTransProgram scade decls
                                    -> let (sm,fm) = runState
                                                     (gtlsToBuchi (\ats -> do 
                                                                      mp <- get
-                                                                     let (c,nmp) = foldl (\(cs,cmp2) at -> let ((n,True),nmp) = parseGTLAtom cmp2 Nothing at
+                                                                     let (c,nmp) = foldl (\(cs,cmp2) at -> let ((n,True),nmp) = parseGTLAtom cmp2 Nothing (mapGTLVars (\(q,n) -> (Just q,n)) at)
                                                                                                            in (n:cs,nmp)
                                                                                          ) ([],mp) ats
                                                                      put nmp
@@ -370,7 +370,7 @@ buildTransProgram scade decls
                                                                           (varsOut mdl)
                                                               }) (connectFromModel c) cmdls) tmodels1 conns
         tmodels3 = foldl (\cmdls never ->
-                           foldl (\cmdls' ((Just q,n),lvl) ->
+                           foldl (\cmdls' ((q,n),lvl) ->
                                    Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                        n (Map.singleton Nothing (Set.singleton lvl))
                                                                        (varsOut mdl)
@@ -382,7 +382,7 @@ buildTransProgram scade decls
                                                                       (\ats -> do
                                                                           mp <- get
                                                                           let (c,a,nmp) = foldl (\(chks,ass,cmp) at
-                                                                                                 -> let ((n,f),nmp) = parseGTLAtom cmp (Just (modelName m,varsOut entr)) at
+                                                                                                 -> let ((n,f),nmp) = parseGTLAtom cmp (Just (modelName m,varsOut entr)) (mapGTLVars (\n -> (Nothing,n)) at)
                                                                                                     in (if f then (n:chks,ass,nmp)
                                                                                                         else (chks,n:ass,nmp))
                                                                                                 ) ([],[],mp) ats

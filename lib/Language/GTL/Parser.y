@@ -99,7 +99,9 @@ model_args2 : "," string model_args2 { $2:$3 }
 model_contract : "{" formulas_or_inits "}" { $2 }
                | ";"                       { [] }
 
-formulas_or_inits : mb_contract formula ";" formulas_or_inits   { (Left $2):$4 }
+formulas_or_inits : mb_contract formula ";" formulas_or_inits   { (Left $ mapVars (\(q,n) -> case q of
+                                                                                      Nothing -> n
+                                                                                      Just _ -> error "qualified varibles not allowed in contract") $2):$4 }
                   | init_decl ";" formulas_or_inits             { (Right $1):$3 }
                   |                                             { [] }
 
@@ -150,7 +152,9 @@ comma_ints : "," int comma_ints { $2:$3 }
 
 connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
 
-verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
+verify_decl : "verify" "{" formulas "}" { VerifyDecl $ fmap (mapVars (\(q,n) -> case q of 
+                                                                         Just rq -> (rq,n)
+                                                                         Nothing -> error "No unqualified variables allowed in verify block")) $3 }
 
 init_decl : "init" id "all" { ($2,InitAll) }
           | "init" id int   { ($2,InitOne $3) }

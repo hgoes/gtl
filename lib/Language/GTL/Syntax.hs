@@ -17,7 +17,7 @@ data ModelDecl = ModelDecl
                  { modelName :: String
                  , modelType :: String
                  , modelArgs :: [String]
-                 , modelContract :: [Formula]
+                 , modelContract :: [Expr String Bool]
                  , modelInits :: [(String,InitExpr)]
                  } deriving Show
 
@@ -29,7 +29,7 @@ data ConnectDecl = ConnectDecl
                    } deriving Show
 
 data VerifyDecl = VerifyDecl
-                  { verifyFormulas :: [Formula]
+                  { verifyFormulas :: [Expr (String,String) Bool]
                   } deriving Show
 
 type Formula = Expr (Maybe String,String) Bool
@@ -364,3 +364,14 @@ getVars (ExprNext e) = getVars e
 
 maximumHistory :: Ord v => [Expr v a] -> Map v Integer
 maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
+
+mapVars :: (v -> w) -> Expr v a -> Expr w a
+mapVars f (ExprVar n lvl) = ExprVar (f n) lvl
+mapVars f (ExprConst c) = ExprConst c
+mapVars f (ExprBinInt op lhs rhs) = ExprBinInt op (mapVars f lhs) (mapVars f rhs)
+mapVars f (ExprBinBool op lhs rhs) = ExprBinBool op (mapVars f lhs) (mapVars f rhs)
+mapVars f (ExprRel rel lhs rhs) = ExprRel rel (mapVars f lhs) (mapVars f rhs)
+mapVars f (ExprElem n vals b) = ExprElem (f n) vals b
+mapVars f (ExprNot e) = ExprNot (mapVars f e)
+mapVars f (ExprAlways e) = ExprAlways (mapVars f e)
+mapVars f (ExprNext e) = ExprNext (mapVars f e)

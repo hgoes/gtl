@@ -54,7 +54,7 @@ buildTest opname ins outs = UserOpDecl
   }
 
 buchiToScade :: String -> Map String TypeExpr -> Map String TypeExpr
-                -> Buchi (Set (GTLAtom (Maybe String,String)))
+                -> Buchi (Set (GTLAtom String))
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
   = UserOpDecl
@@ -80,7 +80,7 @@ buchiToScade name ins outs buchi
                               }
     }
 
-startState :: Buchi (Set (GTLAtom (Maybe String,String))) -> Sc.State
+startState :: Buchi (Set (GTLAtom String)) -> Sc.State
 startState buchi = Sc.State
   { stateInitial = True
   , stateFinal = False
@@ -113,7 +113,7 @@ failState = Sc.State
   , stateSynchro = Nothing
   }
 
-buchiToStates :: Buchi (Set (GTLAtom (Maybe String,String))) -> [Sc.State]
+buchiToStates :: Buchi (Set (GTLAtom String)) -> [Sc.State]
 buchiToStates buchi = startState buchi :
                       failState :
                       [ Sc.State
@@ -132,7 +132,7 @@ buchiToStates buchi = startState buchi :
                        }
                      | (num,st) <- Map.toList buchi ]
 
-stateToTransition :: Integer -> BuchiState st (Set (GTLAtom (Maybe String,String))) f -> Sc.Transition
+stateToTransition :: Integer -> BuchiState st (Set (GTLAtom String)) f -> Sc.Transition
 stateToTransition name st
   = Transition
     (relsToExpr $ Set.toList (vars st))
@@ -141,16 +141,16 @@ stateToTransition name st
     
                        
 
-litToExpr :: Integral a => GTL.Expr (Maybe String,String) a -> Sc.Expr
+litToExpr :: Integral a => GTL.Expr String a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
-litToExpr (ExprVar (Nothing,x) lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
+litToExpr (ExprVar x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
 litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
                                                OpPlus -> BinPlus
                                                OpMinus -> BinMinus
                                                OpMult -> BinTimes
                                                OpDiv -> BinDiv) (litToExpr l) (litToExpr r)
 
-relToExpr :: GTLAtom (Maybe String,String) -> Sc.Expr
+relToExpr :: GTLAtom String -> Sc.Expr
 relToExpr (GTLRel rel l r)
   = BinaryExpr (case rel of
                    BinLT -> BinLesser
@@ -161,6 +161,6 @@ relToExpr (GTLRel rel l r)
                    BinNEq -> BinDifferent
                ) (litToExpr l) (litToExpr r)
 
-relsToExpr :: [GTLAtom (Maybe String,String)] -> Sc.Expr
+relsToExpr :: [GTLAtom String] -> Sc.Expr
 relsToExpr [] = ConstBoolExpr True
 relsToExpr xs = foldl1 (BinaryExpr BinAnd) (fmap relToExpr xs)

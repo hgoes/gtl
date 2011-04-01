@@ -50,7 +50,7 @@ varName q v lvl = if lvl==0
                   then q++"_state."++v
                   else "history_"++q++"_"++v++"_"++show lvl
 
-neverClaim :: BDDTrace s -> Formula -> Pr.Module
+neverClaim :: BDDTrace s -> Expr (String,String) Bool -> Pr.Module
 neverClaim trace f
   = let traceAut = traceToBuchi trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
@@ -81,9 +81,9 @@ neverClaim trace f
                                            _ -> error "Not yet implemented AUINV")++")"
                                 | (atom,en) <- Map.toList $ fst $ vars st,
                                   let ratom = if en then atom else gtlAtomNot atom ]
-                       clit :: Show a => Expr (Maybe String,String) a -> String
+                       clit :: Show a => Expr (String,String) a -> String
                        clit (ExprConst x) = show x
-                       clit (ExprVar (Just mdl,var) lvl) = "now."++varName mdl var lvl
+                       clit (ExprVar (mdl,var) lvl) = "now."++varName mdl var lvl
                        clit (ExprBinInt op lhs rhs) = "("++clit lhs++(case op of
                                                                          OpPlus -> "+"
                                                                          OpMinus -> "-"
@@ -99,13 +99,13 @@ neverClaim trace f
 generateNeverClaim :: BDDTrace s -> Pr.Module
 generateNeverClaim trace = Pr.Never (traceToPromela (\mdl (var,lvl) -> "now."++mdl++"_state."++var) trace)
 
-generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (Maybe String,String) Integer -> [Pr.Module]
+generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (String,String) Integer -> [Pr.Module]
 generatePromelaCode tp conns history
   = let procs = fmap (\(name,(int_name,inp,outp)) ->
                        let assignments = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
                                                                  [ "now."++varName name v lvl++" = now."++varName name v (lvl-1)++";"
                                                                  | v <- (Map.keys inp) ++ (Map.keys outp),
-                                                                   lvl <- case Map.lookup (Just name,v) history of
+                                                                   lvl <- case Map.lookup (name,v) history of
                                                                      Nothing -> []
                                                                      Just c -> reverse [1..c]
                                                                  ]++
@@ -133,7 +133,7 @@ generatePromelaCode tp conns history
                                      Sc.TypeBool -> "kcg_bool"
                                  )++
                                  " history_"++q++"_"++n++"_"++show lvl) "Global" (Just "0")
-                    | ((Just q,n),lvl) <- Map.toList history,
+                    | ((q,n),lvl) <- Map.toList history,
                       let (_,tpin,tpout) = tp!q,
                       let tp = case Map.lookup n tpin of
                             Nothing -> tpout!n

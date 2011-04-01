@@ -13,6 +13,11 @@ data GTLAtom v = GTLRel GTL.Relation (GTL.Expr v Int) (GTL.Expr v Int)
                | GTLVar v Integer Bool
                deriving (Show,Eq,Ord)
 
+mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
+mapGTLVars f (GTLRel rel lhs rhs) = GTLRel rel (mapVars f lhs) (mapVars f rhs)
+mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b
+mapGTLVars f (GTLVar v i b) = GTLVar (f v) i b
+
 gtlAtomNot :: GTLAtom v -> GTLAtom v
 gtlAtomNot (GTLRel rel l r) = GTLRel (relNot rel) l r
 gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
