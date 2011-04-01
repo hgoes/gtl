@@ -109,5 +109,6 @@ main = do
       putStrLn sc_str
       print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
     ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
-    PromelaBuddy -> print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
+    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
+      --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
   return ()

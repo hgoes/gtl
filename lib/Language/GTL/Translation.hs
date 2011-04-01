@@ -13,6 +13,29 @@ data GTLAtom v = GTLRel GTL.Relation (GTL.Expr v Int) (GTL.Expr v Int)
                | GTLVar v Integer Bool
                deriving (Show,Eq,Ord)
 
+instance Binary v => Binary (GTLAtom v) where
+  put (GTLRel rel lhs rhs) = put (0::Word8) >> put rel >> put lhs >> put rhs
+  put (GTLElem v vals b) = put (1::Word8) >> put v >> put vals >> put b
+  put (GTLVar v h b) = put (2::Word8) >> put v >> put h >> put b
+  get = do
+    i <- get :: Get Word8
+    case i of
+      0 -> do
+        rel <- get
+        lhs <- get
+        rhs <- get
+        return $ GTLRel rel lhs rhs
+      1 -> do
+        v <- get
+        vals <- get
+        b <- get
+        return $ GTLElem v vals b
+      2 -> do
+        v <- get
+        h <- get
+        b <- get
+        return $ GTLVar v h b
+
 mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
 mapGTLVars f (GTLRel rel lhs rhs) = GTLRel rel (mapVars f lhs) (mapVars f rhs)
 mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b

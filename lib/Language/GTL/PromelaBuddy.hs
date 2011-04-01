@@ -20,15 +20,25 @@ import Data.Map as Map
 import Data.Set as Set
 import Control.Monad.Identity
 import Control.Monad.State
-import Prelude hiding (foldl,concat)
+import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
+
+import System.IO.Error (isDoesNotExistError)
+import Language.GTL.ErrorRefiner
+import Data.BDD
+import Control.Exception.Extensible
+import System.Process
+import System.FilePath
+import System.Directory
+import Language.Promela.Pretty (prettyPromela)
+import System.Environment
 
 data TransModel = TransModel
                   { varsInit :: Map String String
                   , varsIn :: Map String Integer
                   , varsOut :: Map String (Map (Maybe (String,String)) (Set Integer))
-                  , stateMachine :: Buchi ([Integer],[Integer]) --[GTLAtom]
+                  , stateMachine :: Buchi ([Integer],[Integer],[GTLAtom String])
                   , checkFunctions :: [String]
                   } deriving Show
 
@@ -37,6 +47,52 @@ data TransProgram = TransProgram
                     , transClaims :: [Buchi [Integer]]
                     , claimChecks :: [String]
                     } deriving Show
+
+deleteTmp :: FilePath -> IO ()
+deleteTmp fp = catchJust (\e -> if isDoesNotExistError e
+                                then Just ()
+                                else Nothing) (removeFile fp) (const $ return ())
+
+
+verifyModel :: Bool -> String -> [Sc.Declaration] -> [GTL.Declaration] -> IO ()
+verifyModel keep name scade decls = do
+  let prog = buildTransProgram scade decls
+      pr = translateContracts' prog
+  writeFile (name <.> "pr") (show $ prettyPromela pr)
+  rawSystem "spin" ["-a",name <.> "pr"]
+  let verifier = name++"-verifier"
+  gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
+  cflags <- catch (fmap words $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
+  rawSystem gcc (["pan.c","-o",verifier,"-lcudd","-lcudd_arith","-lcudd_util","-lst","-lmtr","-lepd","-lm"]++cflags)
+  unless keep $ do
+    deleteTmp "pan.c"
+    deleteTmp "pan.h"
+    deleteTmp "pan.m"
+    deleteTmp "pan.t"
+    deleteTmp "pan.b"
+  outp <- readProcess ("./"++verifier) ["-a","-e"] ""
+  unless keep $ deleteTmp verifier
+  let trace_files = filterTraces outp
+  runBDDM $ do
+    traces <- mapM (\trace -> lift $ do
+                       res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
+                       unless keep $ deleteTmp trace
+                       return res
+                   ) trace_files
+    case traces of
+      [] -> lift $ putStrLn "No errors found."
+      _  -> lift $ do
+        putStrLn $ show (length traces) ++ " errors found"
+        writeTraces (name <.> "gtltrace") traces
+        putStrLn $ "Written to "++(name <.> "gtltrace")
+  unless keep $ deleteTmp (name <.> "pr")
+  return ()
+
+traceToAtoms :: TransProgram -> [(String,Integer)] -> [[GTLAtom (String,String)]]
+traceToAtoms prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
+                                                 entr = (stateMachine tmdl)!st
+                                                 (_,_,atoms) = vars entr
+                                             in fmap (mapGTLVars (\n -> (mdl,n))) atoms) trace
 
 translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Pr.Module]
 translateContracts scade decls = translateContracts' (buildTransProgram scade decls)
@@ -79,8 +135,8 @@ translateContracts' prog
                       claimChecks prog ++
                       [ unlines $ ["void reset_"++name++"(State* now) {"] ++
                         ["  "++vname lvl++" = "++(if lvl==0
-                                                  then "DD_ONE(manager);"
-                                                  else vname (lvl-1))
+                                                  then "DD_ONE(manager)"
+                                                  else vname (lvl-1))++";"
                         | (from,tos) <- Map.toList (varsOut mdl), (to,lvls) <- Map.toList tos, 
                           let hist = case to of
                                 Nothing -> Set.findMax lvls
@@ -128,17 +184,17 @@ translateModel name mdl
   = let states = fmap (\(st,entr)
                        -> Pr.StmtLabel ("st"++show st) $
                           prAtomic [ Pr.StmtPrintf ("ENTER "++show st++"\n") [],
-                                     Pr.StmtCCode $ unlines $ ["reset_"++name++"(&now);" ] ++ [ "assign_"++name++show n++"(&now);" | n <- snd $ vars entr ],
-                                     prIf [ (if not $ Prelude.null $ fst $ vars nentr
+                                     Pr.StmtCCode $ unlines $ ["reset_"++name++"(&now);" ] ++ [ "assign_"++name++show n++"(&now);" | n <- (\(_,y,_) -> y) $ vars entr ],
+                                     prIf [ (if not $ Prelude.null $ (\(x,_,_) -> x) $ vars nentr
                                              then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                                    [ "cond_"++name++show n++"(&now)" | n <- fst $ vars nentr ] ]
+                                                    [ "cond_"++name++show n++"(&now)" | n <- (\(x,_,_) -> x) $ vars nentr ] ]
                                              else []) ++ [Pr.StmtGoto $ "st"++show succ ]
                                           | succ <- Set.toList $ successors entr, let nentr = (stateMachine mdl)!succ ]
                                    ]
                       ) (Map.toList $ stateMachine mdl)
-        inits = prIf [ [prAtomic $ (if not $ Prelude.null $ fst $ vars entr
+        inits = prIf [ [prAtomic $ (if not $ Prelude.null $ (\(x,_,_) -> x) $ vars entr
                                     then [ Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
-                                           [ "cond_"++name++show n++"(&now)" | n <- fst $ vars entr ] ]
+                                           [ "cond_"++name++show n++"(&now)" | n <- (\(x,_,_) -> x) $ vars entr ] ]
                                     else []) ++ [Pr.StmtGoto $ "st"++show st ] ]
                      | (st,entr) <- Map.toList $ stateMachine mdl, isStart entr ]
     in fmap toStep $ inits:states
@@ -387,7 +443,7 @@ buildTransProgram scade decls
                                                                                                         else (chks,n:ass,nmp))
                                                                                                 ) ([],[],mp) ats
                                                                           put nmp
-                                                                          return (c,a)
+                                                                          return (c,a,ats)
                                                                       ) (modelContract m)) Map.empty
                                               in entr { stateMachine = sm
                                                       , checkFunctions = fmap (\(_,_,f) -> f) (Map.elems fm)

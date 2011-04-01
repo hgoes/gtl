@@ -23,12 +23,10 @@ import Data.Bits
 
 translateGTL :: Maybe FilePath -> [Declaration] -> [Sc.Declaration] -> IO String
 translateGTL traces gtlcode scadecode
-  = runBDDM $ do
+  = do
     rtr <- case traces of
       Nothing -> return []
-      Just tr -> do
-        rtr <- readBDDTraces tr
-        return rtr
+      Just tr -> readBDDTraces tr
     let tps = typeMap gtlcode scadecode
         conns = connectionMap gtlcode tps
         rformula = case concat [ verifyFormulas decl | Verify decl <- gtlcode ] of
@@ -50,54 +48,36 @@ varName q v lvl = if lvl==0
                   then q++"_state."++v
                   else "history_"++q++"_"++v++"_"++show lvl
 
-neverClaim :: BDDTrace s -> Expr (String,String) Bool -> Pr.Module
+neverClaim :: BDDTrace -> Expr (String,String) Bool -> Pr.Module
 neverClaim trace f
-  = let traceAut = traceToBuchi trace
+  = let traceAut = traceToBuchi (\q v l -> "now."++varName q v l) trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
         steps = [ Pr.StmtLabel ("st"++showSt i)
                   (let cexprr = case snd (vars st) of
                          Nothing -> []
-                         Just (mdl,vs) -> [ generateBDDCheck ("now."++varName mdl v lvl) (bitSize (undefined::Int)) tree
-                                          | ((v,lvl),tree) <- Map.toList vs]
+                         Just e -> [e]
                        inner = case cexprl ++ cexprr of
                          [] -> jump
                          cexprs -> Pr.prSequence
-                                   [Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) cexprs)
+                                   [Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cexprs
                                    ,jump]
                        jump = Pr.prIf
                               [ [Pr.StmtGoto $ "st"++showSt j]
                               | j <- Set.toList (successors st)]
                               
-                       cexprl = [ "("++(case ratom of
-                                           GTLRel rel lhs rhs -> clit lhs ++ (case rel of
-                                                                                 BinLT -> "<"
-                                                                                 BinLTEq -> "<="
-                                                                                 BinGT -> ">"
-                                                                                 BinGTEq -> ">="
-                                                                                 BinEq -> "=="
-                                                                                 BinNEq -> "!=") ++ clit rhs
-                                           _ -> error "Not yet implemented AUINV")++")"
+                       cexprl = [ atomToC (\q v l -> "now."++varName q v l) ratom
                                 | (atom,en) <- Map.toList $ fst $ vars st,
                                   let ratom = if en then atom else gtlAtomNot atom ]
-                       clit :: Show a => Expr (String,String) a -> String
-                       clit (ExprConst x) = show x
-                       clit (ExprVar (mdl,var) lvl) = "now."++varName mdl var lvl
-                       clit (ExprBinInt op lhs rhs) = "("++clit lhs++(case op of
-                                                                         OpPlus -> "+"
-                                                                         OpMinus -> "-"
-                                                                         OpMult -> "*"
-                                                                         OpDiv -> "/")++clit rhs++")"
-                       clit e = error $ "All variables in never claim must be qualified ["++show e++"]"
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner
                       else inner)
                 | (i,st) <- states ]
     in Pr.prNever $ [init]++steps
 
-generateNeverClaim :: BDDTrace s -> Pr.Module
-generateNeverClaim trace = Pr.Never (traceToPromela (\mdl (var,lvl) -> "now."++mdl++"_state."++var) trace)
+generateNeverClaim :: BDDTrace -> Pr.Module
+generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var lvl -> "now."++mdl++"_state."++var) trace)
 
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (String,String) Integer -> [Pr.Module]
 generatePromelaCode tp conns history

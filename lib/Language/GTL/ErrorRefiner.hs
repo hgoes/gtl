@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 module Language.GTL.ErrorRefiner where
 
 import System.Process
@@ -20,8 +21,12 @@ import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
+import qualified Language.GTL.Syntax as GTL
+import Language.GTL.Translation
 
-type BDDTrace s = [(String,Map (String,Integer) (Tree s Int))]
+--type BDDTrace s = [(String,Map (String,Integer) (Tree s Int))]
+
+type BDDTrace = [[GTLAtom (String,String)]]
 
 generateBDDCheck :: String -> Int -> Tree s Int -> String
 generateBDDCheck name w
@@ -42,66 +47,62 @@ filterTraces outp = mapMaybe (\ln -> case words ln of
                                  ["pan:","wrote",fn] -> Just fn
                                  _ -> Nothing) (lines outp)
 
-writeTraces :: FilePath -> [BDDTrace s] -> IO ()
-writeTraces fp traces = LBS.writeFile fp $ compress $ runPut (do
-                                                                 put $ length traces
-                                                                 mapM_ putBDDTrace traces)
+writeTraces :: FilePath -> [BDDTrace] -> IO ()
+writeTraces fp traces = LBS.writeFile fp $ compress $ runPut $ put traces
 
-runBDDMGet :: Monad m => BDDM s Int Get a -> LBS.ByteString -> BDDM s Int m a
-runBDDMGet act str = do
-  getm <- debase act
-  return $ runGet getm str
-  
-
-readBDDTraces :: FilePath -> BDDM s Int IO [BDDTrace s]
+readBDDTraces :: FilePath -> IO [BDDTrace]
 readBDDTraces fp = do
-  str <- lift $ LBS.readFile fp
-  runBDDMGet (do
-                 len <- lift get
-                 replicateM len getBDDTrace) (decompress str)
-  
+  str <- LBS.readFile fp
+  return $ runGet get (decompress str)
 
-putBDDTrace :: BDDTrace s -> Put
-putBDDTrace tr = do
-  put $ length tr
-  mapM_ (\(mdl,mp) -> do
-            put mdl
-            put (Map.size mp)
-            mapM (\(var,tree) -> do
-                     put var
-                     serializeTree tree
-                 ) (Map.toAscList mp)) tr
+atomToC :: (String -> String -> Integer -> String) -> GTLAtom (String,String) -> String
+atomToC f (GTLRel rel lhs rhs) = (exprToC f lhs) ++ (relToC rel) ++ (exprToC f rhs)
+atomToC f (GTLElem (q,n) vals b) = (if b then "(" else "!(") ++ 
+                                   (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "("++(f q n 0) ++ "=="++show v ++ ")") vals)) ++
+                                   ")"
+atomToC f (GTLVar (q,n) h b) = (if b then "" else "!") ++ (f q n h)
 
-getBDDTrace :: BDDM s Int Get (BDDTrace s)
-getBDDTrace = do
-  len <- lift get
-  replicateM len $ do
-    mdl <- lift get
-    sz <- lift get
-    lmp <- replicateM sz $ do
-      var <- lift get
-      tree <- deserializeTree 
-      return (var,tree)
-    return (mdl,Map.fromAscList lmp)
+relToC :: GTL.Relation -> String
+relToC GTL.BinLT = "<"
+relToC GTL.BinLTEq = "<="
+relToC GTL.BinGT = ">"
+relToC GTL.BinGTEq = ">="
+relToC GTL.BinEq = "=="
+relToC GTL.BinNEq = "!="
 
-traceToPromela :: (String -> (String,Integer) -> String) -> BDDTrace s -> [Pr.Step]
+exprToC :: (String -> String -> Integer -> String) -> GTL.Expr (String,String) Int -> String
+exprToC f (GTL.ExprVar (q,n) h) = f q n h
+exprToC f (GTL.ExprConst c) = show c
+exprToC f (GTL.ExprBinInt op lhs rhs) = "("++(exprToC f lhs)++(intOpToC op)++(exprToC f rhs)++")"
+
+intOpToC :: GTL.IntOp -> String
+intOpToC GTL.OpPlus = "+"
+intOpToC GTL.OpMinus = "-"
+intOpToC GTL.OpMult = "*"
+intOpTOC GTL.OpDiv = "/"
+           
+traceToPromela :: (String -> String -> Integer -> String) -> BDDTrace -> [Pr.Step]
 traceToPromela f trace
-  = fmap (\(mdl,vars) -> let expr = foldl1 (\x y -> x++"&&"++y) [ generateBDDCheck (f mdl var) (bitSize (undefined::Int)) tree
-                                                                | (var,tree) <- Map.toList vars]
-                         in Pr.StepStmt (Pr.StmtCExpr Nothing expr) Nothing
+  = fmap (\ats -> toStep $ case ats of
+             [] -> Pr.StmtSkip
+             _ -> Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats))
          ) trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
 
-traceToBuchi :: BDDTrace s -> Buchi (Maybe (String,Map (String,Integer) (Tree s Int)))
-traceToBuchi trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n==0
-                                                                  , vars = Just st
-                                                                  , finalSets = Set.empty
-                                                                  , successors = Set.singleton (n+1)
-                                                                  })) [0..] trace
-                         len = genericLength trace
-                         end = (len,BuchiState { isStart = len==0
-                                               , vars = Nothing
-                                               , finalSets = Set.singleton (-1)
-                                               , successors = Set.singleton len
-                                               })
-                     in Map.fromList (end:states)
+traceElemToC :: (String -> String -> Integer -> String) -> [GTLAtom (String,String)] -> String
+traceElemToC f [] = "1"
+traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats)
+
+traceToBuchi :: (String -> String -> Integer -> String) -> BDDTrace -> Buchi (Maybe String)
+traceToBuchi f trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n==0
+                                                                    , vars = Just $ traceElemToC f st
+                                                                    , finalSets = Set.empty
+                                                                    , successors = Set.singleton (n+1)
+                                                                    })) [0..] trace
+                           len = genericLength trace
+                           end = (len,BuchiState { isStart = len==0
+                                                 , vars = Nothing
+                                                 , finalSets = Set.singleton (-1)
+                                                 , successors = Set.singleton len
+                                                 })
+                       in Map.fromList (end:states)
