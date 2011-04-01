@@ -244,14 +244,11 @@ instance (Ord a,Ord v) => Ord (Expr v a) where
   compare (ExprNext e1) (ExprNext e2) = compare e1 e2
   compare (ExprNext _) _ = LT
 
-instance (Show a) => Show (Expr (Maybe String,String) a) where
-  show (ExprVar (q,name) lvl) = let suff = case lvl of
-                                      0 -> ""
-                                      _ -> "#"++show lvl
-                                    pref = case q of
-                                      Nothing -> name
-                                      Just rq -> rq ++ "." ++ name
-                                in pref++suff
+instance (Show a,Show v) => Show (Expr v a) where
+  show (ExprVar q lvl) = let suff = case lvl of
+                               0 -> ""
+                               _ -> "#"++show lvl
+                         in show q++suff
   show (ExprConst i) = show i
   show (ExprBinInt op lhs rhs) = "(" ++ show lhs ++ ")" ++
                                  (case op of
@@ -275,10 +272,10 @@ instance (Show a) => Show (Expr (Maybe String,String) a) where
                                    BinEq -> "="
                                    BinNEq -> "!=") ++
                                " (" ++ show rhs ++ ")"
-  show (ExprElem (q,name) ints pos) = show (ExprVar (q,name) 0::Expr (Maybe String,String) Int) ++
-                                      (if pos then " in "
-                                       else " not in ") ++
-                                      show ints
+  show (ExprElem q ints pos) = show (ExprVar q 0::Expr v Int) ++
+                               (if pos then " in "
+                                else " not in ") ++
+                               show ints
   show (ExprNot e) = "not ("++show e++")"
   show (ExprAlways e) = "always ("++show e++")"
   show (ExprNext e) = "next ("++show e++")"

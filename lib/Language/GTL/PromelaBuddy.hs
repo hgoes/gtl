@@ -170,17 +170,17 @@ translateNever buchi
                      ]
     in fmap toStep $ StmtSkip:inits:states
 
-parseGTLAtom :: Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> GTLAtom -> ((Integer,Bool),Map GTLAtom (Integer,Bool,String))
+parseGTLAtom :: Map (GTLAtom (Maybe String,String)) (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> GTLAtom (Maybe String,String) -> ((Integer,Bool),Map (GTLAtom (Maybe String,String)) (Integer,Bool,String))
 parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> let (idx,isinp,res) = case at of
                      GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
-                     GTLVar q n lvl v -> parseGTLRelation mp arg BinEq (ExprVar (q,n) lvl) (ExprConst v)
+                     GTLVar n lvl v -> parseGTLRelation mp arg BinEq (ExprVar n lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
         
 
-parseGTLRelation :: BuddyConst a => Map GTLAtom (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> (Integer,Bool,String)
+parseGTLRelation :: BuddyConst a => Map (GTLAtom (Maybe String,String)) (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
   = let lvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars lhs, Map.member v outps ]
         rvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars rhs, Map.member v outps ]
