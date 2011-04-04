@@ -18,7 +18,7 @@ import Language.GTL.PromelaCIntegration
 import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
 import Language.GTL.ScadeToPromela as ScPr
-import Language.GTL.PromelaBuddy as PrBd
+import Language.GTL.PromelaDynamicBDD as PrBd
 
 data TranslationMode
      = NativeC

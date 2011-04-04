@@ -7,7 +7,7 @@
                        -- G.F. Händel
 -}
 {-# LANGUAGE GADTs #-}
-module Language.GTL.PromelaBuddy where
+module Language.GTL.PromelaDynamicBDD where
 
 import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
