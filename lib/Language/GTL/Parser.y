@@ -1,5 +1,5 @@
 {
-module Language.GTL.Parser where
+module Language.GTL.Parser (gtl) where
 
 import Language.GTL.Token
 import Language.GTL.Syntax

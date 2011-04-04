@@ -1,5 +1,15 @@
 {-# LANGUAGE GADTs #-}
-module Language.GTL.Translation where
+{-| Translates GTL expressions into LTL formula.
+ -}
+module Language.GTL.Translation(
+  GTLAtom(..),
+  mapGTLVars,
+  gtlAtomNot,
+  gtlToBuchi,
+  gtlsToBuchi,
+  getAtomVars,
+  gtlToLTL
+  ) where
 
 import Language.GTL.Syntax as GTL
 import Language.GTL.LTL as LTL
@@ -8,6 +18,8 @@ import Data.Word
 
 import Data.Set as Set
 
+-- | A representation of GTL expressions that can't be further translated into LTL
+--   and thus have to be used as atoms.
 data GTLAtom v = GTLRel GTL.Relation (GTL.Expr v Int) (GTL.Expr v Int)
                | GTLElem v [Integer] Bool
                | GTLVar v Integer Bool
@@ -36,19 +48,25 @@ instance Binary v => Binary (GTLAtom v) where
         b <- get
         return $ GTLVar v h b
 
+-- | Applies a function to every variable in the atom.
 mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
 mapGTLVars f (GTLRel rel lhs rhs) = GTLRel rel (mapVars f lhs) (mapVars f rhs)
 mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b
 mapGTLVars f (GTLVar v i b) = GTLVar (f v) i b
 
+-- | Negate a GTL atom.
 gtlAtomNot :: GTLAtom v -> GTLAtom v
 gtlAtomNot (GTLRel rel l r) = GTLRel (relNot rel) l r
 gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
 gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
 
+-- | Like `gtlToBuchi' but takes more than one formula.
 gtlsToBuchi :: (Monad m,Ord v,Show v) => ([GTLAtom v] -> m a) -> [GTL.Expr v Bool] -> m (Buchi a)
 gtlsToBuchi f = gtlToBuchi f . foldl1 (ExprBinBool GTL.And)
 
+-- | Translates a GTL expression into a buchi automaton.
+--   Needs a user supplied function that converts a list of atoms that have to be
+--   true into the variable type of the buchi automaton.
 gtlToBuchi :: (Monad m,Ord v,Show v) => ([GTLAtom v] -> m a) -> GTL.Expr v Bool -> m (Buchi a)
 gtlToBuchi f = ltlToBuchiM (f . fmap (\(at,p) -> if p
                                                  then at
@@ -56,11 +74,13 @@ gtlToBuchi f = ltlToBuchiM (f . fmap (\(at,p) -> if p
                            ) .
              gtlToLTL
 
+-- | Extract all variables with their history level from an atom.
 getAtomVars :: GTLAtom v -> [(v,Integer)]
 getAtomVars (GTLElem n _ _) = [(n,0)]
 getAtomVars (GTLRel _ lhs rhs) = getVars lhs ++ getVars rhs
 getAtomVars (GTLVar n h _) = [(n,h)]
 
+-- | Translate a GTL expression into a LTL formula.
 gtlToLTL :: Expr v Bool -> LTL (GTLAtom v)
 gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
 gtlToLTL (GTL.ExprBinBool op l r) = case op of

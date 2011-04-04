@@ -1,5 +1,5 @@
 {
-module Language.GTL.Lexer where
+module Language.GTL.Lexer (alexScanTokens) where
 
 import Language.GTL.Token
 }

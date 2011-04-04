@@ -1,4 +1,19 @@
-module Language.GTL.LTL where
+{-| Implements Linear Time Logic and its translation into Buchi-Automaton.
+ -}
+module Language.GTL.LTL(
+  -- * Formulas
+  LTL(..),
+  BinOp(..),
+  UnOp(..),
+  -- * Buchi translation
+  GBuchi,
+  Buchi(..),
+  BuchiState(..),
+  ltlToBuchi,
+  ltlToBuchiM,
+  translateGBA,
+  buchiProduct
+  ) where
 
 import Data.Set as Set
 import Data.Map as Map
@@ -6,18 +21,21 @@ import Data.Foldable
 import Prelude hiding (foldl)
 import Control.Monad.Identity
 
+-- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
            | Bin BinOp (LTL a) (LTL a)
            | Un UnOp (LTL a)
            | Ground Bool
            deriving (Eq,Ord)
 
+-- | Minimal set of binary operators for LTL.
 data BinOp = And
            | Or
            | Until
            | UntilOp
            deriving (Eq,Ord)
 
+-- | Unary operators for LTL.
 data UnOp = Not
           | Next
           deriving (Eq,Ord)
@@ -84,19 +102,21 @@ pushNegation (Bin op l r) = Bin (case op of
 pushNegation (Un Not x) = distributeNegation x
 pushNegation (Un Next x) = Un Next (pushNegation x)
 
+-- | Extracts all until constructs from a LTL formula.
+--   Each until gets a unique `Integer' identifier.
 untils :: Ord a => LTL a -> Map (LTL a,LTL a) Integer
 untils = fst . untils' 0
-
-untils' :: Ord a => Integer -> LTL a -> (Map (LTL a,LTL a) Integer,Integer)
-untils' n (Atom _) = (Map.empty,n)
-untils' n (Ground _) = (Map.empty,n)
-untils' n (Bin Until l r) = let (mpl,nl) = untils' n l
-                                (mpr,nr) = untils' nl r
-                            in (Map.insert (l,r) nr (Map.union mpl mpr),nr+1)
-untils' n (Bin op l r) = let (mpl,nl) = untils' n l
-                             (mpr,nr) = untils' nl r
-                         in (Map.union mpl mpr,nr+1)
-untils' n (Un op x) = untils' n x
+  where
+    untils' :: Ord a => Integer -> LTL a -> (Map (LTL a,LTL a) Integer,Integer)
+    untils' n (Atom _) = (Map.empty,n)
+    untils' n (Ground _) = (Map.empty,n)
+    untils' n (Bin Until l r) = let (mpl,nl) = untils' n l
+                                    (mpr,nr) = untils' nl r
+                                in (Map.insert (l,r) nr (Map.union mpl mpr),nr+1)
+    untils' n (Bin op l r) = let (mpl,nl) = untils' n l
+                                 (mpr,nr) = untils' nl r
+                             in (Map.union mpl mpr,nr+1)
+    untils' n (Un op x) = untils' n x
 
 ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
 ltlAtoms f (Atom x) = Set.fromList (f x)
@@ -114,17 +134,18 @@ data Node a = Node
               , incoming :: Set Integer
               } deriving Show
 
+-- | A simple generalized buchi automaton.
 type Buchi a = GBuchi Integer a (Set Integer)
 
-type SBuchi a = GBuchi (Integer,Int) a Bool
-
+-- | A buchi automaton parametrized over the state identifier /st/, the variable type /a/ and the final set type /f/
 type GBuchi st a f = Map st (BuchiState st a f)
 
+-- | A state representation of a buchi automaton.
 data BuchiState st a f = BuchiState
-                         { isStart :: Bool
-                         , vars :: a
-                         , finalSets :: f
-                         , successors :: Set st
+                         { isStart :: Bool -- ^ Is the state an initial state?
+                         , vars :: a -- ^ The variables that must be true in this state.
+                         , finalSets :: f -- ^ In which final sets is this state a member?
+                         , successors :: Set st -- ^ All following states
                          } deriving Show
 
 type Untils a = Map (LTL a,LTL a) Integer
@@ -133,12 +154,14 @@ type UntilsRHS a = Set (LTL a)
 untilsToUntilsRHS :: Ord a => Untils a -> UntilsRHS a
 untilsToUntilsRHS mp = Set.map snd $ Map.keysSet mp
 
+-- | Same as `ltlToBuchi' but also allows the user to construct the variable type and runs in a monad.
 ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
 ltlToBuchiM p f = let f' = distributeNegation f
                       unt = untils f'
                       untr = untilsToUntilsRHS unt
                   in buildGraph p unt (buildNodeSet untr f')
 
+-- | Converts a LTL formula to a generalized buchi automaton.
 ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
 ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
 
@@ -268,6 +291,7 @@ expand untils n node nset = case new node of
                                     (nset',n') = expand untils (n+2) node1 nset
                                in expand untils n' node2 nset'
 
+-- | Transforms a generalized buchi automaton into a regular one.
 translateGBA :: (Ord st,Ord f) => GBuchi st a (Set f) -> GBuchi (st,Int) a Bool
 translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elems buchi ]
                          fsize = Set.size finals
@@ -297,6 +321,7 @@ translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elem
                                              | (st,decl) <- Map.toAscList buchi ]
                         else foldl (\mp (st,decl) -> expand 0 (head finals_list) st decl mp) Map.empty [ st | st <- Map.toList buchi, isStart $ snd st ]
 
+-- | Calculates the product automaton of two given buchi automatons.
 buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2) => GBuchi st1 a (Set f1) -> GBuchi st2 b (Set f2) -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
 buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
                      [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
@@ -316,7 +341,3 @@ buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2)
     trace mp i1 i2
       | Map.member (i1,i2) mp = mp
       | otherwise = putIn mp i1 i2 (b1!i1) (b2!i2)
-
-f1 = Bin Until (Atom "x") (Ground False)
-f2 = Un Not (Bin Until (Ground True) (Atom "x"))
-f3 = Bin Until (Ground True) (Atom "x")
