@@ -1,4 +1,8 @@
 {-# LANGUAGE GADTs #-}
+{-| Translate a GTL contract into a SCADE testnode.
+ -  The buchi automaton representing the contract is translated into a
+ -  SCADE state automaton.
+ -}
 module Language.GTL.ScadeContract where
 
 import Data.Map as Map
@@ -14,7 +18,10 @@ import Language.Scade.Syntax as Sc
 import Language.GTL.ScadeAnalyzer
 import Language.GTL.Translation
 
-translateContracts :: [Sc.Declaration] -> [GTL.Declaration] -> [Sc.Declaration]
+-- | Convert all contracts of a given GTL model into SCADE testnodes.
+translateContracts :: [Sc.Declaration] -- ^ The SCADE source code
+                      -> [GTL.Declaration] -- ^ The content of the GTL model
+                      -> [Sc.Declaration]
 translateContracts scade gtl
   = let tp = typeMap gtl scade
     in concat [ [buchiToScade (modelArgs m!!0) ins outs (runIdentity $ gtlsToBuchi (return . Set.fromList) (modelContract m)),
@@ -26,7 +33,11 @@ translateContracts scade gtl
                                        _ -> False) scade
               ]
 
-buildTest :: String -> [Sc.VarDecl] -> [Sc.VarDecl] -> Sc.Declaration
+-- | Constructs a SCADE node that connects the testnode with the actual implementation SCADE node.
+buildTest :: String -- ^ Name of the SCADE node
+             -> [Sc.VarDecl] -- ^ Input variables of the node
+             -> [Sc.VarDecl] -- ^ Output variables of the node
+             -> Sc.Declaration
 buildTest opname ins outs = UserOpDecl
   { userOpKind = Sc.Node
   , userOpImported = False
@@ -53,8 +64,11 @@ buildTest opname ins outs = UserOpDecl
                             }
   }
 
-buchiToScade :: String -> Map String TypeExpr -> Map String TypeExpr
-                -> Buchi (Set (GTLAtom String))
+-- | Convert a buchi automaton to SCADE.
+buchiToScade :: String -- ^ Name of the resulting SCADE node
+                -> Map String TypeExpr -- ^ Input variables
+                -> Map String TypeExpr -- ^ Output variables
+                -> Buchi (Set (GTLAtom String)) -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
   = UserOpDecl
@@ -80,6 +94,7 @@ buchiToScade name ins outs buchi
                               }
     }
 
+-- | The starting state for a contract automaton.
 startState :: Buchi (Set (GTLAtom String)) -> Sc.State
 startState buchi = Sc.State
   { stateInitial = True
@@ -96,9 +111,12 @@ startState buchi = Sc.State
   , stateSynchro = Nothing
   }
 
+-- | Constructs a transition into the `failState'.
 failTransition :: Sc.Transition
 failTransition = Transition (ConstBoolExpr True) Nothing (TargetFork Restart "fail")
 
+-- | The state which is entered when a contract is violated.
+--   There is no transition out of this state.
 failState :: Sc.State
 failState = Sc.State
   { stateInitial = False
@@ -113,6 +131,7 @@ failState = Sc.State
   , stateSynchro = Nothing
   }
 
+-- | Translates a buchi automaton into a list of SCADE automaton states.
 buchiToStates :: Buchi (Set (GTLAtom String)) -> [Sc.State]
 buchiToStates buchi = startState buchi :
                       failState :
@@ -132,14 +151,13 @@ buchiToStates buchi = startState buchi :
                        }
                      | (num,st) <- Map.toList buchi ]
 
+-- | Given a state this function creates a transition into the state.
 stateToTransition :: Integer -> BuchiState st (Set (GTLAtom String)) f -> Sc.Transition
 stateToTransition name st
   = Transition
     (relsToExpr $ Set.toList (vars st))
     Nothing
     (TargetFork Restart ("st"++show name))
-    
-                       
 
 litToExpr :: Integral a => GTL.Expr String a -> Sc.Expr
 litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
