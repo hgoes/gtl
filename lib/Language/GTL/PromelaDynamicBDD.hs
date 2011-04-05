@@ -7,6 +7,9 @@
                        -- G.F. Händel
 -}
 {-# LANGUAGE GADTs #-}
+{-| Implements a verification mechanism that abstracts components by using their
+    contract to build a state machine that acts on BDD.
+ -}
 module Language.GTL.PromelaDynamicBDD where
 
 import Language.GTL.Translation
@@ -95,7 +98,10 @@ verifyModel keep name scade decls = do
         putStrLn $ "Written to "++(name <.> "gtltrace")
   unless keep $ deleteTmp (name <.> "pr")
 
-traceToAtoms :: TransProgram -> [(String,Integer)] -> [[GTLAtom (String,String)]]
+-- | Given a list of transitions, give a list of atoms that have to hold for each transition.
+traceToAtoms :: TransProgram -- ^ The program to work on
+                -> [(String,Integer)] -- ^ The transitions, given in the form (model,transition-number)
+                -> Trace
 traceToAtoms prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
                                                  entr = (stateMachine tmdl)!st
                                                  (_,_,atoms) = vars entr
@@ -237,7 +243,20 @@ translateNever buchi
                      ]
     in fmap toStep $ StmtSkip:inits:states
 
-parseGTLAtom :: Map (GTLAtom (Maybe String,String)) (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> GTLAtom (Maybe String,String) -> ((Integer,Bool),Map (GTLAtom (Maybe String,String)) (Integer,Bool,String))
+-- | A cache that maps atoms to C-functions that represent them.
+--   The C-functions are encoded by a unique number, whether they are a test- or
+--   assignment-function and their source code representation.
+type AtomCache = Map (GTLAtom (Maybe String,String)) (Integer,Bool,String)
+
+-- | A map from component names to output variable informations.
+type OutputMapping = Map String (Map (Maybe (String,String)) (Set Integer))
+
+-- | Parse a GTL atom to a C-function.
+--   Returns the unique number of the function and whether its a test- or assignment-function.
+parseGTLAtom :: AtomCache -- ^ A cache of already parsed atoms
+                -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
+                -> GTLAtom (Maybe String,String) -- ^ The atom to parse
+                -> ((Integer,Bool),AtomCache)
 parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
@@ -246,8 +265,15 @@ parseGTLAtom mp arg at
                      GTLVar n lvl v -> parseGTLRelation mp arg BinEq (ExprVar n lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
         
-
-parseGTLRelation :: BuddyConst a => Map (GTLAtom (Maybe String,String)) (Integer,Bool,String) -> Maybe (String,Map String (Map (Maybe (String,String)) (Set Integer))) -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> (Integer,Bool,String)
+-- | Parse a GTL relation into a C-Function.
+--   Returns a unique number for the resulting function, whether its a test- or assignment function and
+--   its source-code representation.
+parseGTLRelation :: BDDConst a => AtomCache -- ^ A cache of parsed atoms
+                    -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
+                    -> Relation -- ^ The relation type to parse
+                    -> GTL.Expr (Maybe String,String) a -- ^ Left hand side of the relation
+                    -> GTL.Expr (Maybe String,String) a -- ^ Right hand side of the relation
+                    -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
   = let lvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars lhs, Map.member v outps ]
         rvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars rhs, Map.member v outps ]
@@ -264,21 +290,28 @@ parseGTLRelation mp arg rel lhs rhs
         (res,isinp) = (case lvars of
                           [] -> case rhs of
                             ExprVar (Nothing,n) lvl -> if Map.member n outps
-                                                       then (createBuddyAssign idx rname n (outps!n) (relTurn rel) lhs,False)
+                                                       then (createBDDAssign idx rname n (outps!n) (relTurn rel) lhs,False)
                                                        else error "No output variable in relation"
                             _ -> case rvars of
-                              [] -> (createBuddyCompare idx name rel lhs rhs,True)
+                              [] -> (createBDDCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
                           _ -> case lhs of
-                            ExprVar (Nothing,n) lvl -> (createBuddyAssign idx rname n (outps!n) rel rhs,False)
+                            ExprVar (Nothing,n) lvl -> (createBDDAssign idx rname n (outps!n) rel rhs,False)
                             _ -> case lvars of
-                              [] -> (createBuddyCompare idx name rel lhs rhs,True)
+                              [] -> (createBDDCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
                       ) :: (String,Bool)
     in (idx,isinp,res)
 
-createBuddyAssign :: BuddyConst a => Integer -> String -> String -> Map (Maybe (String,String)) (Set Integer) -> Relation -> GTL.Expr (Maybe String,String) a -> String
-createBuddyAssign count q n outs rel expr
+-- | Create a BDD assignment
+createBDDAssign :: BDDConst a => Integer -- ^ How many temporary variables have been used so far?
+                     -> String -- ^ The current component name
+                     -> String -- ^ The name of the target variable
+                     -> Map (Maybe (String,String)) (Set Integer) -- ^ A mapping of output variables
+                     -> Relation -- ^ The relation used to assign the BDD
+                     -> GTL.Expr (Maybe String,String) a -- ^ The expression to assign the BDD with
+                     -> String
+createBDDAssign count q n outs rel expr
   = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var 
                | (var,lvls) <- Map.toList outs
                , lvl <- Set.toList lvls]
@@ -313,7 +346,7 @@ createBuddyAssign count q n outs rel expr
                        "assert(max_found);",
                        "Cudd_RecursiveDeref(manager,extr);"
                       ],"Cudd_bddLessThanEqual(manager,max,0)")
-        (cmd,de,_,e) = createBuddyExpr 0 (Just q) expr
+        (cmd,de,_,e) = createBDDExpr 0 (Just q) expr
     in unlines ([ "void assign_"++q++show count++"(State* now) {"] ++
                 fmap ("  "++) (cmd++cmd2) ++
                 ["  "++head trgs++" = "++te++";"]++
@@ -323,10 +356,16 @@ createBuddyAssign count q n outs rel expr
                 fmap ("  "++) de ++
                 ["}"])
 
-createBuddyCompare :: BuddyConst a => Integer -> Maybe String -> Relation -> GTL.Expr (Maybe String,String) a -> GTL.Expr (Maybe String,String) a -> String
-createBuddyCompare count q rel expr1 expr2
-  = let (cmd1,de1,v,e1) = createBuddyExpr 0 q expr1
-        (cmd2,de2,_,e2) = createBuddyExpr v q expr2
+-- | Create a comparison operation between two BDD.
+createBDDCompare :: BDDConst a => Integer -- ^ How many temporary variables have been used?
+                      -> Maybe String -- ^ If the comparision is part of a contract, give the name of the component, otherwise `Nothing'
+                      -> Relation -- ^ The relation used to compare the BDDs
+                      -> GTL.Expr (Maybe String,String) a -- ^ Expression representing BDD 1
+                      -> GTL.Expr (Maybe String,String) a -- ^ Expression representing BDD 2
+                      -> String
+createBDDCompare count q rel expr1 expr2
+  = let (cmd1,de1,v,e1) = createBDDExpr 0 q expr1
+        (cmd2,de2,_,e2) = createBDDExpr v q expr2
     in unlines $ ["int cond_"++(maybe "_never" id q)++show count++"(State* now) {"]++
        fmap ("  "++) (cmd1++cmd2)++
        ["  DdNode* lhs = "++e1++";"
@@ -360,27 +399,36 @@ createBuddyCompare count q rel expr1 expr2
        ["  return res;",
         "}"]
 
-class BuddyConst t where
-  buddyConst :: t -> String
+-- | A class of types that have a representation as a BDD.
+class BDDConst t where
+  -- | Convert a value to the BDD C-representation.
+  bddConst :: t -> String
 
-instance BuddyConst Int where
-  buddyConst n = "Cudd_bddSingleton(manager,"++show n++",0)"
+instance BDDConst Int where
+  bddConst n = "Cudd_bddSingleton(manager,"++show n++",0)"
 
-instance BuddyConst Bool where
-  buddyConst v = let var = "Cudd_bddIthVar(manager,0)"
-                 in if v then var
-                    else "Cudd_Not("++var++")"
+instance BDDConst Bool where
+  bddConst v = let var = "Cudd_bddIthVar(manager,0)"
+               in if v then var
+                  else "Cudd_Not("++var++")"
 
-createBuddyExpr :: BuddyConst a => Integer -> Maybe String -> GTL.Expr (Maybe String,String) a -> ([String],[String],Integer,String)
-createBuddyExpr v mdl (ExprConst i) = ([],[],v,buddyConst i)
-createBuddyExpr v mdl (ExprVar (q,n) lvl) = case mdl of
+-- | Convert a GTL expression into a C-expression.
+--   Returns a list of statements that have to be executed before the expression,
+--   one that has to be executed afterwards, a number of temporary variables used
+--   and the resulting C-expression.
+createBDDExpr :: BDDConst a => Integer -- ^ The current number of temporary variables
+                 -> Maybe String -- ^ The current component
+                 -> GTL.Expr (Maybe String,String) a -- ^ The GTL expression
+                 -> ([String],[String],Integer,String)
+createBDDExpr v mdl (ExprConst i) = ([],[],v,bddConst i)
+createBDDExpr v mdl (ExprVar (q,n) lvl) = case mdl of
   Nothing -> case q of
     Just rq -> ([],[],v,"now->"++varName True rq n lvl)
     Nothing -> error "verify claims must not contain qualified variables"
   Just rmdl -> ([],[],v,"now->"++varName False rmdl n lvl)
-createBuddyExpr v mdl (ExprBinInt op lhs rhs)
-  = let (cmd1,de1,v1,e1) = createBuddyExpr v mdl lhs
-        (cmd2,de2,v2,e2) = createBuddyExpr v1 mdl rhs
+createBDDExpr v mdl (ExprBinInt op lhs rhs)
+  = let (cmd1,de1,v1,e1) = createBDDExpr v mdl lhs
+        (cmd2,de2,v2,e2) = createBDDExpr v1 mdl rhs
     in (cmd1++cmd2++["DdNode* tmp"++show v2++" = "++e1++";",
                      "Cudd_Ref(tmp"++show v2++");",
                      "DdNode* tmp"++show (v2+1)++" = "++e2++";",
@@ -395,9 +443,10 @@ createBuddyExpr v mdl (ExprBinInt op lhs rhs)
             OpDiv -> "Cudd_bddDivide"
         )++"(manager,tmp"++show v2++",tmp"++show (v2+1)++",0)")
 
---solveForLHS :: Maybe String -> String -> Expr Int -> Expr Int -> x
-
-buildTransProgram :: [Sc.Declaration] -> [GTL.Declaration] -> TransProgram
+-- | Generate a program from a given SCADE- and GTL-file.
+buildTransProgram :: [Sc.Declaration] -- ^ The SCADE file
+                     -> [GTL.Declaration] -- ^ The GTL file
+                     -> TransProgram
 buildTransProgram scade decls
   = let models = [ m | Model m <- decls ]
         conns = [ c | Connect c <- decls ]
