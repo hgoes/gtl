@@ -1,5 +1,7 @@
 {
-module Language.GTL.Lexer (alexScanTokens) where
+{-| The GTL Lexer  
+ -}
+module Language.GTL.Lexer (lexGTL) where
 
 import Language.GTL.Token
 }
@@ -56,6 +58,10 @@ tokens:-
   $digit10+                      { \s -> ConstInt (read s) }
 
 {
+-- | Convert GTL code lazily into a list of tokens.
+lexGTL :: String -> [Token]
+lexGTL = alexScanTokens
+  
 key :: KeyWord -> String -> Token
 key w _ = Key w
 
@@ -64,5 +70,5 @@ un o _ = Unary o
 
 bin :: BinOp -> String -> Token
 bin o _ = Binary o
-  
+
 }

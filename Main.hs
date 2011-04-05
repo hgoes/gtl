@@ -101,7 +101,7 @@ main = do
   (opts,gtl_file,sc_files) <- getOptions
   gtl_str <- readFile gtl_file
   sc_str <- loadScades sc_files
-  let gtl_decls = GTL.gtl $ GTL.alexScanTokens gtl_str
+  let gtl_decls = GTL.gtl $ GTL.lexGTL gtl_str
       sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   case mode opts of
     NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn

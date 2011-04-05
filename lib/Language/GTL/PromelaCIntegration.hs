@@ -1,8 +1,6 @@
 {-# LANGUAGE GADTs #-}
 module Language.GTL.PromelaCIntegration where
 
-import Language.GTL.Parser (gtl)
-import Language.GTL.Lexer (alexScanTokens)
 import Language.GTL.Syntax as GTL
 import Language.GTL.ScadeAnalyzer
 import Language.GTL.ErrorRefiner
