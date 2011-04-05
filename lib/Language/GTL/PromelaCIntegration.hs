@@ -48,7 +48,7 @@ varName q v lvl = if lvl==0
                   then q++"_state."++v
                   else "history_"++q++"_"++v++"_"++show lvl
 
-neverClaim :: BDDTrace -> Expr (String,String) Bool -> Pr.Module
+neverClaim :: Trace -> Expr (String,String) Bool -> Pr.Module
 neverClaim trace f
   = let traceAut = traceToBuchi (\q v l -> "now."++varName q v l) trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
@@ -76,7 +76,7 @@ neverClaim trace f
                 | (i,st) <- states ]
     in Pr.prNever $ [init]++steps
 
-generateNeverClaim :: BDDTrace -> Pr.Module
+generateNeverClaim :: Trace -> Pr.Module
 generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var lvl -> "now."++mdl++"_state."++var) trace)
 
 generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (String,String) Integer -> [Pr.Module]
