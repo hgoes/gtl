@@ -1,4 +1,7 @@
 {-# LANGUAGE GADTs #-}
+{-| Verifies a GTL specification by converting the components to C-code and
+    simulating all possible runs.
+ -}
 module Language.GTL.PromelaCIntegration where
 
 import Language.GTL.Syntax as GTL
@@ -19,7 +22,13 @@ import Data.Maybe (mapMaybe)
 import Data.BDD
 import Data.Bits
 
-translateGTL :: Maybe FilePath -> [Declaration] -> [Sc.Declaration] -> IO String
+-- | Compile a GTL declaration into a promela module simulating the specified model.
+--   Optionally takes a trace that is used to restrict the execution.
+--   Outputs promela code.
+translateGTL :: Maybe FilePath -- ^ An optional path to a trace file
+                -> [Declaration] -- ^ The GTL code
+                -> [Sc.Declaration] -- ^ The SCADE code for the components
+                -> IO String
 translateGTL traces gtlcode scadecode
   = do
     rtr <- case traces of
@@ -41,12 +50,20 @@ translateGTL traces gtlcode scadecode
                          )-}
     return $ show $ prettyPromela $ (generatePromelaCode tps conns (maximumHistory [rformula]))++claims
 
-varName :: String -> String -> Integer -> String
+-- | Convert a GTL name into a C-name.
+varName :: String -- ^ The component name
+           -> String -- ^ The variable name
+           -> Integer -- ^ The history level of the variable
+           -> String
 varName q v lvl = if lvl==0
                   then q++"_state."++v
                   else "history_"++q++"_"++v++"_"++show lvl
 
-neverClaim :: Trace -> Expr (String,String) Bool -> Pr.Module
+-- | Convert a trace and a verify expression into a promela never claim.
+--   If you don't want to include a trace, give an empty one `[]'.
+neverClaim :: Trace -- ^ The trace
+              -> Expr (String,String) Bool -- ^ The verify expression
+              -> Pr.Module
 neverClaim trace f
   = let traceAut = traceToBuchi (\q v l -> "now."++varName q v l) trace
         states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
@@ -74,10 +91,11 @@ neverClaim trace f
                 | (i,st) <- states ]
     in Pr.prNever $ [init]++steps
 
-generateNeverClaim :: Trace -> Pr.Module
-generateNeverClaim trace = Pr.Never (traceToPromela (\mdl var lvl -> "now."++mdl++"_state."++var) trace)
-
-generatePromelaCode :: TypeMap -> [((String,String),(String,String))] -> Map (String,String) Integer -> [Pr.Module]
+-- | Create promela processes for each component in a GTL specification.
+generatePromelaCode :: TypeMap -- ^ Contains type informations extracted from the SCADE specification
+                       -> [((String,String),(String,String))] -- ^ A list of connections between variables
+                       -> Map (String,String) Integer -- ^ A mapping that gives the maximum history level for each variable involved
+                       -> [Pr.Module]
 generatePromelaCode tp conns history
   = let procs = fmap (\(name,(int_name,inp,outp)) ->
                        let assignments = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
@@ -135,9 +153,11 @@ generatePromelaCode tp conns history
                ]
     in inp_decls ++ states ++ procs ++ init
 
-
-
-connectionMap :: [Declaration] -> TypeMap -> [((String,String),(String,String))]
+-- | Get a list of connections between variables for a given GTL specification.
+--   Also type-checks the connections.
+connectionMap :: [Declaration] -- ^ GTL specification
+                 -> TypeMap -- ^ Type informations
+                 -> [((String,String),(String,String))]
 connectionMap def tp = mapMaybe (\decl -> case decl of
                                     Model _ -> Nothing
                                     Verify _ -> Nothing
