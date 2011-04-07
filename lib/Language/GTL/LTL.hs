@@ -322,7 +322,10 @@ translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elem
                         else foldl (\mp (st,decl) -> expand 0 (head finals_list) st decl mp) Map.empty [ st | st <- Map.toList buchi, isStart $ snd st ]
 
 -- | Calculates the product automaton of two given buchi automatons.
-buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2) => GBuchi st1 a (Set f1) -> GBuchi st2 b (Set f2) -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
+buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2)
+                => GBuchi st1 a (Set f1) -- ^ First buchi automaton
+                -> GBuchi st2 b (Set f2) -- ^ Second buchi automaton
+                -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
 buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
                      [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
   where

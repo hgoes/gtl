@@ -1,4 +1,6 @@
 {
+{-| Implements a parser for the GTL specification language.
+ -}
 module Language.GTL.Parser (gtl) where
 
 import Language.GTL.Token
