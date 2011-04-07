@@ -326,11 +326,19 @@ data Relation = BinLT -- ^ <
               | BinGTEq -- ^ \>=
               | BinEq -- ^ =
               | BinNEq -- ^ !=
-              deriving (Show,Eq,Ord,Enum)
+              deriving (Eq,Ord,Enum)
 
 instance Binary Relation where
   put x = put (fromIntegral (fromEnum x) :: Word8)
   get = fmap (toEnum . fromIntegral :: Word8 -> Relation) get
+
+instance Show Relation where
+  show BinLT = "<"
+  show BinLTEq = "<="
+  show BinGT = ">"
+  show BinGTEq = ">="
+  show BinEq = "="
+  show BinNEq = "!="
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.

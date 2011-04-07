@@ -23,7 +23,12 @@ import Data.Set as Set
 data GTLAtom v = GTLRel GTL.Relation (GTL.Expr v Int) (GTL.Expr v Int)
                | GTLElem v [Integer] Bool
                | GTLVar v Integer Bool
-               deriving (Show,Eq,Ord)
+               deriving (Eq,Ord)
+
+instance Show v => Show (GTLAtom v) where
+  show (GTLRel rel lhs rhs) = show lhs ++ " " ++ show rel ++ " " ++ show rhs
+  show (GTLElem var vals t) = show var ++ (if t then "" else " not")++" in "++show vals
+  show (GTLVar var hist t) = show var ++ (if hist==0 then "" else "["++show hist++"]")
 
 instance Binary v => Binary (GTLAtom v) where
   put (GTLRel rel lhs rhs) = put (0::Word8) >> put rel >> put lhs >> put rhs

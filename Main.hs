@@ -19,12 +19,14 @@ import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
 import Language.GTL.ScadeToPromela as ScPr
 import Language.GTL.PromelaDynamicBDD as PrBd
+import Language.GTL.PrettyPrinter as PrPr
 
 data TranslationMode
      = NativeC
      | ScadeContract
      | ScadeToPromela
      | PromelaBuddy
+     | Tikz
      deriving (Show,Eq)
 
 data Options = Options
@@ -43,7 +45,11 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
+modes = [("native-c",NativeC)
+        ,("scade-contract",ScadeContract)
+        ,("scade-promela",ScadeToPromela)
+        ,("promela-buddy",PromelaBuddy)
+        ,("tikz",Tikz)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -110,5 +116,7 @@ main = do
       print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
     ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
     PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
-      --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
+    Tikz -> do
+      str <- PrPr.gtlToTikz gtl_decls sc_decls
+      putStrLn str
   return ()
