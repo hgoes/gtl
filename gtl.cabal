@@ -23,6 +23,8 @@ Library
     Language.GTL.ScadeToPromela
     Language.GTL.ErrorRefiner
     Language.GTL.PromelaDynamicBDD
+    Language.GTL.Backend
+    Language.GTL.Backend.Scade
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath
