@@ -29,47 +29,51 @@ getDotBoundingBox gr
       (x:xs) -> x
 
 buchiToDot :: GBuchi Integer (Map (GTLAtom String) Bool) f -> DotGraph String
-buchiToDot buchi = DotGraph { strictGraph = False
-                            , directedGraph = True
-                            , graphID = Nothing
-                            , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
-                                                                                   ,Splines SplineEdges
-                                                                                   ]]
-                                                         , subGraphs = []
-                                                         , nodeStmts = [ DotNode (nd i) [Shape Ellipse
-                                                                                        ,Label $ StrLabel $ replicate (sum [estimateWidth (if tr
-                                                                                                                                           then at
-                                                                                                                                           else gtlAtomNot at)
-                                                                                                                           | (at,tr) <- Map.toList (vars st)]) ' '
-                                                                                        ,Comment $ concat $ intersperse " " [ atomToLatex (if tr
-                                                                                                                                           then at
-                                                                                                                                           else gtlAtomNot at)
-                                                                                                                            | (at,tr) <- Map.toList (vars st)]
-                                                                                        ,Height 0,Width 0,Margin (DVal 0)
-                                                                                        ]
-                                                                       | (i,st) <- Map.toList buchi
-                                                                       ] ++
-                                                                       [ DotNode "start" [Shape PointShape
-                                                                                         ]
-                                                                       ]
-                                                         ,edgeStmts = [ DotEdge { edgeFromNodeID = nd f
-                                                                                , edgeToNodeID = nd t
-                                                                                , directedEdge = True
-                                                                                , edgeAttributes = []
-                                                                                }
-                                                                      | (f,st) <- Map.toList buchi
-                                                                      , t <- Set.toList (successors st)
-                                                                      ] ++
-                                                                      [ DotEdge { edgeFromNodeID = "start"
-                                                                                , edgeToNodeID = nd t
-                                                                                , directedEdge = True
-                                                                                , edgeAttributes = []
-                                                                                }
-                                                                      | (t,st) <- Map.toList buchi
-                                                                      , isStart st
-                                                                      ]
-                                                         }
-                            }
+buchiToDot buchi
+  = DotGraph { strictGraph = False
+             , directedGraph = True
+             , graphID = Nothing
+             , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
+                                                                    ,Splines SplineEdges
+                                                                    ]]
+                                          , subGraphs = []
+                                          , nodeStmts = [ DotNode (nd i) [Shape Ellipse
+                                                                         ,Label $ StrLabel $
+                                                                          unlines [replicate (estimateWidth (if tr
+                                                                                                             then at
+                                                                                                             else gtlAtomNot at)) ' '
+                                                                                  | (at,tr) <- Map.toList (vars st)]
+                                                                         ,Comment $ "\\begin{array}{c}" ++ 
+                                                                          (concat $ intersperse "\\\\" [ atomToLatex (if tr
+                                                                                                                      then at
+                                                                                                                      else gtlAtomNot at)
+                                                                                                       | (at,tr) <- Map.toList (vars st)]) ++
+                                                                          "\\end{array}"
+                                                                         ,Height 0,Width 0,Margin (DVal 0)
+                                                                         ]
+                                                        | (i,st) <- Map.toList buchi
+                                                        ] ++
+                                                        [ DotNode "start" [Shape PointShape
+                                                                          ]
+                                                        ]
+                                          ,edgeStmts = [ DotEdge { edgeFromNodeID = nd f
+                                                                 , edgeToNodeID = nd t
+                                                                 , directedEdge = True
+                                                                 , edgeAttributes = []
+                                                                 }
+                                                       | (f,st) <- Map.toList buchi
+                                                       , t <- Set.toList (successors st)
+                                                       ] ++
+                                                       [ DotEdge { edgeFromNodeID = "start"
+                                                                 , edgeToNodeID = nd t
+                                                                 , directedEdge = True
+                                                                 , edgeAttributes = []
+                                                                 }
+                                                       | (t,st) <- Map.toList buchi
+                                                       , isStart st
+                                                       ]
+                                          }
+             }
   where nd x = "nd"++show x
 
 gtlToTikz gtl scade = declsToTikz gtl (typeMap gtl scade)
