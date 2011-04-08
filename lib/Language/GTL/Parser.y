@@ -29,6 +29,8 @@ import qualified Data.Map as Map
   "or"              { Binary GOpOr }
   "in"              { Binary GOpIn }
   "init"            { Key KeyInit }
+  "input"           { Key KeyInput }
+  "output"          { Key KeyOutput }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
@@ -76,17 +78,15 @@ declaration : model_decl    { Model $1 }
             | connect_decl  { Connect $1 }
             | verify_decl   { Verify $1 }
 
-model_decl : "model" "[" id "]" id model_args model_contract { ModelDecl
+model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                { modelName = $5
                                                                , modelType = $3
                                                                , modelArgs = $6
-                                                               , modelContract = mapMaybe (\el -> case el of
-                                                                                              Left c -> Just c
-                                                                                              Right _ -> Nothing) $7
-                                                               , modelInits = mapMaybe (\el -> case el of
-                                                                                           Left _ -> Nothing
-                                                                                           Right c -> Just c) $7
-                                                               }
+                                                               , modelContract = []
+                                                               , modelInits = []
+                                                               , modelInputs = Map.empty
+                                                               , modelOutputs = Map.empty
+                                                               })
                                                              }
 
 model_args : "(" model_args1 ")" { $2 }
@@ -99,13 +99,29 @@ model_args2 : "," string model_args2 { $2:$3 }
             |                        { [] }
 
 model_contract : "{" formulas_or_inits "}" { $2 }
-               | ";"                       { [] }
+               | ";"                       { id }
 
-formulas_or_inits : mb_contract formula ";" formulas_or_inits   { (Left $ mapVars (\(q,n) -> case q of
-                                                                                      Nothing -> n
-                                                                                      Just _ -> error "qualified varibles not allowed in contract") $2):$4 }
-                  | init_decl ";" formulas_or_inits             { (Right $1):$3 }
-                  |                                             { [] }
+formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let ndecl = $4 decl
+                                                                           in ndecl { modelContract = (mapVars (\(q,n) -> case q of
+                                                                                                                   Nothing -> n
+                                                                                                                   Just _ -> error "qualified varibles not allowed in contract"
+                                                                                                               ) $2):(modelContract ndecl)
+                                                                                    } }
+                  | init_decl ";" formulas_or_inits             { \decl -> let ndecl = $3 decl
+                                                                           in ndecl { modelInits = $1:(modelInits ndecl)
+                                                                                    } }
+                  | "input" id id ";" formulas_or_inits         { \decl -> case parseGTLType $2 of
+                                                                     Nothing -> error $ "unknown type: "++show $2
+                                                                     Just tp -> let ndecl = $5 decl
+                                                                                in ndecl { modelInputs = Map.insert $3 tp (modelInputs ndecl)
+                                                                                         } }
+                  | "output" id id ";" formulas_or_inits         { \decl -> case parseGTLType $2 of
+                                                                      Nothing -> error $ "unknown type: "++show $2
+                                                                      Just tp -> let ndecl = $5 decl
+                                                                                 in ndecl { modelOutputs = Map.insert $3 tp (modelInputs ndecl)
+                                                                                          } }
+
+                  |                                             { id }
 
 mb_contract : "contract" { }
             |            { }

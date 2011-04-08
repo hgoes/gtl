@@ -17,7 +17,9 @@ data KeyWord = KeyAll
              | KeyConnect
              | KeyContract
              | KeyModel
+             | KeyOutput
              | KeyInit
+             | KeyInput
              | KeyVerify
              | KeyExists
              deriving Show

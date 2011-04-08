@@ -22,6 +22,8 @@ data ModelDecl = ModelDecl
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelContract :: [Expr String Bool] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
+                 , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
+                 , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
                  } deriving Show
 
 -- | Declares a connection between two variables
@@ -60,6 +62,17 @@ data Expr v a where
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
   deriving Typeable
+
+-- | Represents data types that can be used for interfaces
+data GTLType
+     = GTLInt
+     | GTLBool
+     deriving (Show,Eq,Ord)
+
+parseGTLType :: String -> Maybe GTLType
+parseGTLType "int" = Just GTLInt
+parseGTLType "bool" = Just GTLBool
+parseGTLType _ = Nothing
 
 -- | Lift `gcast' in a monad and fail with an error if the cast fails
 castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)
