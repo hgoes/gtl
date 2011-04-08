@@ -144,9 +144,9 @@ dotToTikz :: (Show a,Ord a) => Maybe (Map a (String,Map String Sc.TypeExpr,Map S
 dotToTikz mtp gr
   = unlines
     ([case shape of
-         Ellipse -> "\\draw "++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
+         Ellipse -> "\\draw [color=blue!50,very thick,fill=blue!20]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
                     "\\draw "++pointToTikz pos++" node {$"++lbl++"$};"
-         Record -> unlines ([ "\\draw "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
+         Record -> unlines ([ "\\draw[color=red!50,fill=red!20,thick] "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
                               " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
                               " -- "++pointToTikz p1++";"
                             | Rect p1 p2 <- rects
@@ -204,7 +204,7 @@ dotToTikz mtp gr
            (repr,rw,rh) = reprs!(nodeID nd)
            Rect m1 m2 = head (drop (Map.size inp) rects)
      ] ++
-     [ "\\draw [-] "++pointToTikz spl1++" .. controls "
+     [ "\\draw [-,thick] "++pointToTikz spl1++" .. controls "
        ++pointToTikz spl2++" and "++pointToTikz spl3
        ++" .. "++pointToTikz spl4++";"
      | ed <- edgeStmts (graphStatements gr)
@@ -215,7 +215,7 @@ dotToTikz mtp gr
                                 Nothing -> error "Edge has no position"
      , (spl1,spl2,spl3,spl4) <- splinePoints pts
      ]++
-     [ "\\draw [->] "++pointToTikz (last pts)++" -- "++pointToTikz rep++";"
+     [ "\\draw [-latex,thick] "++pointToTikz (last pts)++" -- "++pointToTikz rep++";"
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
