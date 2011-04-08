@@ -11,12 +11,12 @@ import Data.Map as Map
 data Scade = Scade deriving (Show)
 
 instance GTLBackend Scade where
-  type GTLBackendData Scade = (String,[Sc.Declaration])
+  data GTLBackendData Scade = ScadeData String [Sc.Declaration]
   backendName Scade = "scade"
   initBackend Scade [file,name] = do
     str <- readFile file
-    return (name,scade $ alexScanTokens str)
-  typeCheckInterface Scade (name,decls) ins outs = do
+    return $ ScadeData name (scade $ alexScanTokens str)
+  typeCheckInterface Scade (ScadeData name decls) ins outs = do
     let (sc_ins,sc_outs) = scadeInterface name decls
     mp_ins <- scadeTypeMap sc_ins
     mp_outs <- scadeTypeMap sc_outs

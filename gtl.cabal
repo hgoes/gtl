@@ -25,6 +25,7 @@ Library
     Language.GTL.PromelaDynamicBDD
     Language.GTL.Backend
     Language.GTL.Backend.Scade
+    Language.GTL.Backend.All
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

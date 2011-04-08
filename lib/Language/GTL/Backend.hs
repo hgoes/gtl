@@ -7,7 +7,7 @@ import Data.Traversable
 import Prelude hiding (mapM)
 
 class GTLBackend b where
-  type GTLBackendData b
+  data GTLBackendData b
   backendName :: b -> String
   initBackend :: b -> [String] -> IO (GTLBackendData b)
   typeCheckInterface :: b -> GTLBackendData b -> Map String GTLType -> Map String GTLType -> Either String (Map String GTLType,Map String GTLType)
