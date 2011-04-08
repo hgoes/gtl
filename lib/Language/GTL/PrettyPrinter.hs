@@ -5,6 +5,7 @@ import Language.GTL.Syntax
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
 import Language.GTL.ScadeAnalyzer
+import qualified Language.Scade.Syntax as Sc
 import Data.GraphViz hiding (Model)
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
@@ -73,8 +74,8 @@ declsToTikz decls tps = do
                                                                                                                        | name <- Map.keys inp
                                                                                                                        ]])++
                                                                                [FieldLabel (unlines $
-                                                                                            replicate (round $ h / 10)
-                                                                                            (replicate (round $ w / 8) 'a'))
+                                                                                            replicate (round $ h / 20)
+                                                                                            (replicate (round $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (if Map.null outp
                                                                                 then []
@@ -99,7 +100,7 @@ declsToTikz decls tps = do
                     }
   outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt gr)
   let dot = parseIt' outp :: DotGraph String
-  return $ dotToTikz dot
+  return $ dotToTikz (Just (tps,mp)) dot
 
 modelToTikz :: ModelDecl -> IO (String,Double,Double)
 modelToTikz m = do
@@ -113,23 +114,34 @@ buchiToTikz buchi = do
   outp <- readProcess "neato" ["-Tdot","/dev/stdin"] (printIt $ graphToDot buchiGraphParams (buchiToGraph buchi))
   let dot = parseIt' outp :: DotGraph Node
       Rect _ (Point px py _ _) = getDotBoundingBox dot
-      res = dotToTikz dot
+      res = dotToTikz Nothing dot
   return (res,px,py)
   
 pointToTikz :: Point -> String
 pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
 
-dotToTikz :: Show a => DotGraph a -> String
-dotToTikz gr
+dotToTikz :: (Show a,Ord a) => Maybe (Map a (String,Map String Sc.TypeExpr,Map String Sc.TypeExpr),Map a (String,Double,Double)) -> DotGraph a -> String
+dotToTikz mtp gr
   = unlines
     ([case shape of
          Ellipse -> "\\draw "++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
                     "\\draw "++pointToTikz pos++" node {$"++lbl++"$};"
-         Record -> unlines [ "\\draw "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
-                             " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
-                             " -- "++pointToTikz p1++";"
-                           | Rect p1 p2 <- rects
-                           ]
+         Record -> unlines ([ "\\draw "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
+                              " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
+                              " -- "++pointToTikz p1++";"
+                            | Rect p1 p2 <- rects
+                            ]++
+                            [ "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++name++"};"
+                            | (Rect p1 p2,name) <- zip rects (Map.keys inp)
+                            ]++
+                            [ "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++name++"};"
+                            | (Rect p1 p2,name) <- zip (drop ((Map.size inp)+1) rects) (Map.keys outp)
+                            ]++
+                            [ "\\begin{scope}[shift={("++show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++show ((yCoord m1 + yCoord m2 - rh)/2)++"bp)}]\n"
+                              ++repr++
+                              "\\end{scope}"
+                            ]
+                           )
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
                                     Pos _ -> True
@@ -155,7 +167,7 @@ dotToTikz gr
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
                      Just (Shape x) -> x
-                     _ -> error "No shape given"
+                     _ -> Ellipse --error "No shape given"
            rlbl = case List.find (\attr -> case attr of
                                   Label _ -> True
                                   _ -> False) (nodeAttributes nd) of
@@ -166,6 +178,10 @@ dotToTikz gr
                                   _ -> False) (nodeAttributes nd) of
                     Just (Rects x) -> x
                     _ -> error "No rects given"
+           Just (rtp,reprs) = mtp
+           (_,inp,outp) = rtp!(nodeID nd)
+           (repr,rw,rh) = reprs!(nodeID nd)
+           Rect m1 m2 = head (drop (Map.size inp) rects)
      ] ++
      [ "\\draw [-] "++pointToTikz spl1++" .. controls "
        ++pointToTikz spl2++" and "++pointToTikz spl3
