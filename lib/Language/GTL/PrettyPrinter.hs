@@ -28,30 +28,49 @@ getDotBoundingBox gr
       [] -> error "No bounding box defined"
       (x:xs) -> x
 
-buchiGraphParams :: GraphvizParams (Map (GTLAtom String) Bool) () () (Map (GTLAtom String) Bool)
-buchiGraphParams = Params
-  { isDirected = True
-  , globalAttributes = [GraphAttrs [Overlap RemoveOverlaps]]
-  , clusterBy = N
-  , clusterID = const Nothing
-  , fmtCluster = const []
-  , fmtNode = \(i,mp) -> [Height 0,Width 0,Margin (DVal 0)
-                         ,Label $ StrLabel $ replicate (sum [estimateWidth at
-                                                            | (at,tr) <- Map.toList mp]) ' '
-                         ,Comment $ concat $ intersperse " " [ atomToLatex at
-                                                             | (at,tr) <- Map.toList mp]]
-  , fmtEdge = \(i,s,()) -> []
-  }
-
-buchiToGraph :: GBuchi Integer a f -> Gr a ()
-buchiToGraph buchi = mkGraph 
-                     [ (fromInteger i,vars st)
-                     | (i,st) <- Map.toList buchi
-                     ]
-                     [ (fromInteger i,fromInteger s,())
-                     | (i,st) <- Map.toList buchi
-                     , s <- Set.toList (successors st)
-                     ]
+buchiToDot :: GBuchi Integer (Map (GTLAtom String) Bool) f -> DotGraph String
+buchiToDot buchi = DotGraph { strictGraph = False
+                            , directedGraph = True
+                            , graphID = Nothing
+                            , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
+                                                                                   ,Splines SplineEdges
+                                                                                   ]]
+                                                         , subGraphs = []
+                                                         , nodeStmts = [ DotNode (nd i) [Shape Ellipse
+                                                                                        ,Label $ StrLabel $ replicate (sum [estimateWidth (if tr
+                                                                                                                                           then at
+                                                                                                                                           else gtlAtomNot at)
+                                                                                                                           | (at,tr) <- Map.toList (vars st)]) ' '
+                                                                                        ,Comment $ concat $ intersperse " " [ atomToLatex (if tr
+                                                                                                                                           then at
+                                                                                                                                           else gtlAtomNot at)
+                                                                                                                            | (at,tr) <- Map.toList (vars st)]
+                                                                                        ,Height 0,Width 0,Margin (DVal 0)
+                                                                                        ]
+                                                                       | (i,st) <- Map.toList buchi
+                                                                       ] ++
+                                                                       [ DotNode "start" [Shape PointShape
+                                                                                         ]
+                                                                       ]
+                                                         ,edgeStmts = [ DotEdge { edgeFromNodeID = nd f
+                                                                                , edgeToNodeID = nd t
+                                                                                , directedEdge = True
+                                                                                , edgeAttributes = []
+                                                                                }
+                                                                      | (f,st) <- Map.toList buchi
+                                                                      , t <- Set.toList (successors st)
+                                                                      ] ++
+                                                                      [ DotEdge { edgeFromNodeID = "start"
+                                                                                , edgeToNodeID = nd t
+                                                                                , directedEdge = True
+                                                                                , edgeAttributes = []
+                                                                                }
+                                                                      | (t,st) <- Map.toList buchi
+                                                                      , isStart st
+                                                                      ]
+                                                         }
+                            }
+  where nd x = "nd"++show x
 
 gtlToTikz gtl scade = declsToTikz gtl (typeMap gtl scade)
 
@@ -65,7 +84,8 @@ declsToTikz decls tps = do
   let gr = DotGraph { strictGraph = False
                     , directedGraph = True
                     , graphID = Nothing
-                    , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps]]
+                    , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
+                                                                           ,Splines SplineEdges]]
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape Record
                                                                               ,Label $ RecordLabel $ (if Map.null inp
@@ -111,8 +131,8 @@ modelToTikz m = do
 
 buchiToTikz :: GBuchi Integer (Map (GTLAtom String) Bool) f -> IO (String,Double,Double)
 buchiToTikz buchi = do
-  outp <- readProcess "neato" ["-Tdot","/dev/stdin"] (printIt $ graphToDot buchiGraphParams (buchiToGraph buchi))
-  let dot = parseIt' outp :: DotGraph Node
+  outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt $ buchiToDot buchi)
+  let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
   return (res,px,py)
@@ -142,6 +162,7 @@ dotToTikz mtp gr
                               "\\end{scope}"
                             ]
                            )
+         PointShape -> "\\draw [fill]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);"
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
                                     Pos _ -> True
