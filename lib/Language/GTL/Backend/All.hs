@@ -5,9 +5,10 @@ import Language.GTL.Syntax
 import Language.GTL.Backend
 import Language.GTL.Backend.Scade
 import Data.Map as Map
+import Data.Typeable
 
 data AllBackend = AllBackend
-                  { allTypecheck :: Map String GTLType -> Map String GTLType -> Either String (Map String GTLType,Map String GTLType)
+                  { allTypecheck :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
                   }
 
 initAllBackend :: String -> [String] -> IO (Maybe AllBackend)

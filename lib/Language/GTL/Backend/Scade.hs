@@ -7,6 +7,7 @@ import Language.GTL.Backend
 import qualified Language.Scade.Syntax as Sc
 import Language.GTL.Syntax
 import Data.Map as Map
+import Data.Typeable
 
 data Scade = Scade deriving (Show)
 
@@ -24,12 +25,12 @@ instance GTLBackend Scade where
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
 
-scadeTypeToGTL :: Sc.TypeExpr -> Maybe GTLType
-scadeTypeToGTL Sc.TypeInt = Just GTLInt
-scadeTypeToGTL Sc.TypeBool = Just GTLBool
+scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
+scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))
+scadeTypeToGTL Sc.TypeBool = Just (typeOf (undefined::Bool))
 scadeTypeToGTL _ = Nothing
 
-scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String GTLType)
+scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
 scadeTypeMap tps = do
   res <- mapM (\(name,expr) -> case scadeTypeToGTL expr of
                   Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"

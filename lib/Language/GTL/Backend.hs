@@ -5,14 +5,15 @@ import Language.GTL.Syntax
 import Data.Map as Map
 import Data.Traversable
 import Prelude hiding (mapM)
+import Data.Typeable
 
 class GTLBackend b where
   data GTLBackendData b
   backendName :: b -> String
   initBackend :: b -> [String] -> IO (GTLBackendData b)
-  typeCheckInterface :: b -> GTLBackendData b -> Map String GTLType -> Map String GTLType -> Either String (Map String GTLType,Map String GTLType)
+  typeCheckInterface :: b -> GTLBackendData b -> Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
 
-mergeTypes :: Map String GTLType -> Map String GTLType -> Either String (Map String GTLType)
+mergeTypes :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep)
 mergeTypes m1 m2 
   = mapM id $
     Map.unionWithKey (\name (Right tp1) (Right tp2) -> if tp1 == tp2
