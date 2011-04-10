@@ -102,10 +102,7 @@ model_contract : "{" formulas_or_inits "}" { $2 }
                | ";"                       { id }
 
 formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let ndecl = $4 decl
-                                                                           in ndecl { modelContract = (mapVars (\(q,n) -> case q of
-                                                                                                                   Nothing -> n
-                                                                                                                   Just _ -> error "qualified varibles not allowed in contract"
-                                                                                                               ) $2):(modelContract ndecl)
+                                                                           in ndecl { modelContract = $2:(modelContract ndecl)
                                                                                     } }
                   | init_decl ";" formulas_or_inits             { \decl -> let ndecl = $3 decl
                                                                            in ndecl { modelInits = $1:(modelInits ndecl)
@@ -129,10 +126,7 @@ mb_contract : "contract" { }
 formulas : formula ";" formulas { $1:$3 }
          |                      { [] }
 
-formula : expr { case typeCheckBool Map.empty $1 of
-                    Left err -> error err
-                    Right e -> e
-               }
+formula : expr { $1 }
 
 expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "or" expr               { GBin GOpOr $1 $3 }
@@ -170,9 +164,7 @@ comma_ints : "," int comma_ints { $2:$3 }
 
 connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
 
-verify_decl : "verify" "{" formulas "}" { VerifyDecl $ fmap (mapVars (\(q,n) -> case q of 
-                                                                         Just rq -> (rq,n)
-                                                                         Nothing -> error "No unqualified variables allowed in verify block")) $3 }
+verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
 init_decl : "init" id "all" { ($2,InitAll) }
           | "init" id int   { ($2,InitOne $3) }

@@ -17,6 +17,7 @@ import Language.GTL.Syntax as GTL
 import Language.Scade.Syntax as Sc
 import Language.GTL.ScadeAnalyzer
 import Language.GTL.Translation
+import Language.GTL.Model
 
 -- | Convert all contracts of a given GTL model into SCADE testnodes.
 translateContracts :: [Sc.Declaration] -- ^ The SCADE source code

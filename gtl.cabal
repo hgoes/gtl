@@ -15,10 +15,11 @@ Library
     Language.GTL.Lexer
     Language.GTL.Syntax
     Language.GTL.Parser
+    Language.GTL.Model
     Language.GTL.Translation
     Language.GTL.ScadeAnalyzer
-    Language.GTL.PromelaCIntegration
-    Language.GTL.ScadeContract
+    --Language.GTL.PromelaCIntegration
+    --Language.GTL.ScadeContract
     Language.GTL.LTL
     Language.GTL.ScadeToPromela
     Language.GTL.ErrorRefiner

@@ -14,9 +14,10 @@ import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
 
-import Language.GTL.PromelaCIntegration
-import Language.GTL.ScadeContract as ScTr
+--import Language.GTL.PromelaCIntegration
+--import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
+import Language.GTL.Model
 import Language.GTL.ScadeToPromela as ScPr
 import Language.GTL.PromelaDynamicBDD as PrBd
 
@@ -101,14 +102,17 @@ main = do
   (opts,gtl_file,sc_files) <- getOptions
   gtl_str <- readFile gtl_file
   sc_str <- loadScades sc_files
-  let gtl_decls = GTL.gtl $ GTL.lexGTL gtl_str
-      sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
+  let sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
+  mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
+  rgtl <- case mgtl of
+    Left err -> error err
+    Right x -> return x
   case mode opts of
-    NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn
-    ScadeContract -> do
+    --NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn
+    {-ScadeContract -> do
       putStrLn sc_str
-      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls
+      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls-}
     ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
-    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls gtl_decls
+    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls rgtl
       --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
   return ()

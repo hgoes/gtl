@@ -20,7 +20,7 @@ data ModelDecl = ModelDecl
                  { modelName :: String -- ^ The name of the model in the GTL formalism.
                  , modelType :: String -- ^ The synchronous formalism the model is written in (for example /scade/)
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
-                 , modelContract :: [Expr String Bool] -- ^ A list of contracts that this model fulfills.
+                 , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
                  , modelInputs :: Map String TypeRep -- ^ Declared inputs of the model with their corresponding type
                  , modelOutputs :: Map String TypeRep -- ^ Declared outputs of a model
@@ -36,7 +36,7 @@ data ConnectDecl = ConnectDecl
 
 -- | A list of formulas to verify.
 data VerifyDecl = VerifyDecl
-                  { verifyFormulas :: [Expr (String,String) Bool] -- ^ The formulas to be verified.
+                  { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
                   } deriving Show
 
 -- | An untyped expression type.
@@ -44,6 +44,7 @@ data VerifyDecl = VerifyDecl
 data GExpr = GBin BinOp GExpr GExpr
            | GUn UnOp GExpr
            | GConst Int
+           | GConstBool Bool
            | GVar (Maybe String) String
            | GSet [Integer]
            | GExists String (Maybe String) String GExpr
@@ -155,6 +156,12 @@ typeCheckBool bind expr = typeCheck' Map.empty (\q n -> Right (q,n)) bind expr u
 typeCheckInt :: ExistsBinding (Maybe String,String) -> GExpr -> Either String (Expr (Maybe String,String) Int)
 typeCheckInt bind expr = typeCheck' Map.empty (\q n -> Right (q,n)) bind expr undefined
 
+typeCheck :: (Ord a,Show a,GTLType t,Show t)
+             => Map a TypeRep
+             -> (Maybe String -> String -> Either String a)
+             -> GExpr
+             -> Either String (Expr a t)
+typeCheck tp f expr = typeCheck' tp f Map.empty expr undefined
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type `Bool'.
@@ -182,6 +189,9 @@ typeCheck' tp f bind (GVar q n) u = do
               else Left $ "Type error for variable "++show rvar++": Expected to be "++show (typeOf u)++", but is "++show t
 typeCheck' _ _ _ (GConst c) u = case cast c of 
   Nothing -> Left $ "Expression "++show c++" has type int, expected "++show (typeOf u)
+  Just r -> return $ ExprConst r
+typeCheck' _ _ _ (GConstBool c) u = case cast c of
+  Nothing -> Left $ "Expression "++show c++" has type bool, expected "++show (typeOf u)
   Just r -> return $ ExprConst r
 typeCheck' _ _ _ (GSet c) u = case cast c of
   Nothing -> Left $ "Expression "++show c++" has type {int}, expected "++show (typeOf u)
@@ -448,8 +458,8 @@ getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
 
 -- | Extracts the maximum level of history for each variable in the expression.
-maximumHistory :: Ord v => [Expr v a] -> Map v Integer
-maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
+maximumHistory :: Ord v => Expr v a -> Map v Integer
+maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 -- | Change the type of the variables in an expression.
 mapVars :: (v -> w) -> Expr v a -> Expr w a
