@@ -282,13 +282,7 @@ instance (Show a,Show v) => Show (Expr v a) where
                                       Implies -> "implies") ++
                                   " ("++show rhs++")"
   show (ExprRel rel lhs rhs) = "(" ++ show lhs ++ ") " ++
-                               (case rel of
-                                   BinLT -> "<"
-                                   BinLTEq -> "<="
-                                   BinGT -> ">"
-                                   BinGTEq -> ">="
-                                   BinEq -> "="
-                                   BinNEq -> "!=") ++
+                               show rel ++
                                " (" ++ show rhs ++ ")"
   show (ExprElem q ints pos) = show (ExprVar q 0::Expr v Int) ++
                                (if pos then " in "
@@ -326,11 +320,20 @@ data Relation = BinLT -- ^ <
               | BinGTEq -- ^ \>=
               | BinEq -- ^ =
               | BinNEq -- ^ !=
-              deriving (Show,Eq,Ord,Enum)
+              deriving (Eq,Ord,Enum)
 
 instance Binary Relation where
   put x = put (fromIntegral (fromEnum x) :: Word8)
   get = fmap (toEnum . fromIntegral :: Word8 -> Relation) get
+
+instance Show Relation where
+  show r = case r of
+            BinLT -> "<"
+            BinLTEq -> "<="
+            BinGT -> ">"
+            BinGTEq -> ">="
+            BinEq -> "="
+            BinNEq -> "!="
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.
