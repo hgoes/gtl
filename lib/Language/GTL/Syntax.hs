@@ -362,6 +362,7 @@ relTurn rel = case rel of
 pushNot :: Expr v Bool -> Expr v Bool
 pushNot (ExprNot x) = pushNot' x
   where
+    pushNot' :: Expr v Bool -> Expr v Bool
     pushNot' (ExprRel rel x y)
       = ExprRel (case rel of
                     BinLT -> BinGTEq
