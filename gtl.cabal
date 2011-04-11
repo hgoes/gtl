@@ -19,7 +19,6 @@ Library
     Language.GTL.Translation
     Language.GTL.PromelaCIntegration
     Language.GTL.LTL
-    Language.GTL.ScadeToPromela
     Language.GTL.ErrorRefiner
     Language.GTL.PromelaDynamicBDD
     Language.GTL.Backend

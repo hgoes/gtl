@@ -18,13 +18,11 @@ import Language.GTL.PromelaCIntegration
 import Language.GTL.LocalVerification
 import Language.GTL.Translation
 import Language.GTL.Model
-import Language.GTL.ScadeToPromela as ScPr
 import Language.GTL.PromelaDynamicBDD as PrBd
 
 data TranslationMode
      = NativeC
      | Local
-     | ScadeToPromela
      | PromelaBuddy
      deriving (Show,Eq)
 
@@ -44,7 +42,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -86,23 +84,21 @@ loadScades :: [FilePath] -> IO String
 loadScades = fmap concat . mapM loadScade
 
 header :: String
-header = "Usage: gtl [OPTION...] gtl-file scadefiles"
+header = "Usage: gtl [OPTION...] gtl-file"
 
-getOptions :: IO (Options,String,[String])
+getOptions :: IO (Options,String)
 getOptions = do
   args <- getArgs
   case getOpt Permute options args of
-    (o,n1:ns,[]) -> return (foldl (flip id) defaultOptions o,n1,ns)
+    (o,[n1],[]) -> return (foldl (flip id) defaultOptions o,n1)
     (o,_,[]) -> if showHelp $ foldl (flip id) defaultOptions o
                 then putStr (usageInfo header options) >> exitSuccess
                 else ioError (userError "At least one argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 main = do
-  (opts,gtl_file,sc_files) <- getOptions
+  (opts,gtl_file) <- getOptions
   gtl_str <- readFile gtl_file
-  sc_str <- loadScades sc_files
-  let sc_decls = Sc.scade $ Sc.alexScanTokens sc_str
   mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
   rgtl <- case mgtl of
     Left err -> error err
@@ -110,7 +106,6 @@ main = do
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
-    ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
     PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) rgtl
       --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
   return ()
