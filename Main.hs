@@ -14,7 +14,7 @@ import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
 
---import Language.GTL.PromelaCIntegration
+import Language.GTL.PromelaCIntegration
 --import Language.GTL.ScadeContract as ScTr
 import Language.GTL.Translation
 import Language.GTL.Model
@@ -108,7 +108,7 @@ main = do
     Left err -> error err
     Right x -> return x
   case mode opts of
-    --NativeC -> translateGTL (traceFile opts) gtl_decls sc_decls >>= putStrLn
+    NativeC -> translateGTL (traceFile opts) rgtl sc_decls >>= putStrLn
     {-ScadeContract -> do
       putStrLn sc_str
       print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls-}

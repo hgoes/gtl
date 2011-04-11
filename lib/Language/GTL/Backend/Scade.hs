@@ -24,6 +24,26 @@ instance GTLBackend Scade where
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
+  cInterface Scade (ScadeData name decls) = let (inp,outp) = scadeInterface name decls
+                                            in CInterface { cIFaceIncludes = [name++".h"]
+                                                          , cIFaceStateType = ["outC_"++name]
+                                                          , cIFaceInputType = if Prelude.null inp
+                                                                              then []
+                                                                              else ["inC_"++name]
+                                                          , cIFaceStateInit = \[st] -> name++"_reset(&("++st++"))"
+                                                          , cIFaceIterate = \[st] inp -> case inp of
+                                                               [] -> name++"(&("++st++"))"
+                                                               [rinp] -> name++"(&("++rinp++"),&("++st++"))"
+                                                          , cIFaceGetInputVar = \[inp] var -> inp++"."++var
+                                                          , cIFaceGetOutputVar = \[st] var -> st++"."++var
+                                                          , cIFaceTranslateType = scadeTranslateTypeC
+                                                          }
+
+scadeTranslateTypeC :: TypeRep -> String
+scadeTranslateTypeC rep
+  | rep == typeOf (undefined::Int) = "kcg_int"
+  | rep == typeOf (undefined::Bool) = "kcg_bool"
+  | otherwise = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
 scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))

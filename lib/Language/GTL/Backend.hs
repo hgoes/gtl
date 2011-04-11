@@ -6,12 +6,25 @@ import Data.Map as Map
 import Data.Traversable
 import Prelude hiding (mapM)
 import Data.Typeable
+import Data.Dynamic
 
 class GTLBackend b where
   data GTLBackendData b
   backendName :: b -> String
   initBackend :: b -> [String] -> IO (GTLBackendData b)
   typeCheckInterface :: b -> GTLBackendData b -> Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
+  cInterface :: b -> GTLBackendData b -> CInterface
+
+data CInterface = CInterface
+                  { cIFaceIncludes :: [String]
+                  , cIFaceStateType :: [String]
+                  , cIFaceInputType :: [String]
+                  , cIFaceStateInit :: [String] -> String
+                  , cIFaceIterate :: [String] -> [String] -> String
+                  , cIFaceGetOutputVar :: [String] -> String -> String
+                  , cIFaceGetInputVar :: [String] -> String -> String
+                  , cIFaceTranslateType :: TypeRep -> String
+                  }
 
 mergeTypes :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep)
 mergeTypes m1 m2 

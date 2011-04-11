@@ -9,6 +9,7 @@ import Data.Typeable
 
 data AllBackend = AllBackend
                   { allTypecheck :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
+                  , allCInterface :: CInterface
                   }
 
 initAllBackend :: String -> [String] -> IO (Maybe AllBackend)
@@ -17,5 +18,6 @@ initAllBackend name args
     dat <- initBackend Scade args
     return $ Just $ AllBackend 
       { allTypecheck = typeCheckInterface Scade dat
+      , allCInterface = cInterface Scade dat
       }
   | otherwise = return Nothing
