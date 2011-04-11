@@ -29,6 +29,8 @@ tokens:-
   exists                         { key KeyExists }
   not                              { un GOpNot }
   or                             { bin GOpOr }
+  output                         { key KeyOutput }
+  input				 { key KeyInput }
   in                             { bin GOpIn }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }

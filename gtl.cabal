@@ -15,15 +15,17 @@ Library
     Language.GTL.Lexer
     Language.GTL.Syntax
     Language.GTL.Parser
+    Language.GTL.Model
     Language.GTL.Translation
-    Language.GTL.ScadeAnalyzer
     Language.GTL.PromelaCIntegration
-    Language.GTL.ScadeContract
     Language.GTL.LTL
-    Language.GTL.ScadeToPromela
     Language.GTL.ErrorRefiner
     Language.GTL.PromelaDynamicBDD
     Language.GTL.PrettyPrinter
+    Language.GTL.Backend
+    Language.GTL.Backend.Scade
+    Language.GTL.Backend.All
+    Language.GTL.LocalVerification
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

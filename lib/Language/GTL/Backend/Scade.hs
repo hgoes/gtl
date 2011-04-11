@@ -1,37 +1,88 @@
-{-# LANGUAGE GADTs #-}
-{-| Translate a GTL contract into a SCADE testnode.
- -  The buchi automaton representing the contract is translated into a
- -  SCADE state automaton.
- -}
-module Language.GTL.ScadeContract where
+{-# LANGUAGE TypeFamilies,GADTs #-}
+module Language.GTL.Backend.Scade where
 
+import Language.Scade.Lexer (alexScanTokens)
+import Language.Scade.Parser (scade)
+import Language.GTL.Backend
+import Language.GTL.Translation
+import Language.Scade.Syntax as Sc
+import Language.Scade.Pretty
+import Language.GTL.Syntax as GTL
+import Language.GTL.LTL as LTL
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List hiding (foldl,foldl1,find,concat)
-import Data.Foldable
-import Prelude hiding (foldl,foldl1,concat)
+import Data.List as List
+import Data.Typeable
 import Control.Monad.Identity
 
-import Language.GTL.LTL as LTL
-import Language.GTL.Syntax as GTL
-import Language.Scade.Syntax as Sc
-import Language.GTL.ScadeAnalyzer
-import Language.GTL.Translation
+data Scade = Scade deriving (Show)
 
--- | Convert all contracts of a given GTL model into SCADE testnodes.
-translateContracts :: [Sc.Declaration] -- ^ The SCADE source code
-                      -> [GTL.Declaration] -- ^ The content of the GTL model
-                      -> [Sc.Declaration]
-translateContracts scade gtl
-  = let tp = typeMap gtl scade
-    in concat [ [buchiToScade (modelArgs m!!0) ins outs (runIdentity $ gtlsToBuchi (return . Set.fromList) (modelContract m)),
-                 buildTest (modelArgs m!!0) (userOpParams op) (userOpReturns op)
-                ]
-              | Model m <- gtl, let (_,ins,outs) = tp!(modelName m),
-                let Just op = find (\op -> case op of 
-                                       UserOpDecl {} -> userOpName op == modelArgs m!!0
-                                       _ -> False) scade
-              ]
+instance GTLBackend Scade where
+  data GTLBackendModel Scade = ScadeData String [Sc.Declaration]
+  backendName Scade = "scade"
+  initBackend Scade [file,name] = do
+    str <- readFile file
+    return $ ScadeData name (scade $ alexScanTokens str)
+  typeCheckInterface Scade (ScadeData name decls) ins outs = do
+    let (sc_ins,sc_outs) = scadeInterface name decls
+    mp_ins <- scadeTypeMap sc_ins
+    mp_outs <- scadeTypeMap sc_outs
+    rins <- mergeTypes ins mp_ins
+    routs <- mergeTypes outs mp_outs
+    return (rins,routs)
+  cInterface Scade (ScadeData name decls) = let (inp,outp) = scadeInterface name decls
+                                            in CInterface { cIFaceIncludes = [name++".h"]
+                                                          , cIFaceStateType = ["outC_"++name]
+                                                          , cIFaceInputType = if Prelude.null inp
+                                                                              then []
+                                                                              else ["inC_"++name]
+                                                          , cIFaceStateInit = \[st] -> name++"_reset(&("++st++"))"
+                                                          , cIFaceIterate = \[st] inp -> case inp of
+                                                               [] -> name++"(&("++st++"))"
+                                                               [rinp] -> name++"(&("++rinp++"),&("++st++"))"
+                                                          , cIFaceGetInputVar = \[inp] var -> inp++"."++var
+                                                          , cIFaceGetOutputVar = \[st] var -> st++"."++var
+                                                          , cIFaceTranslateType = scadeTranslateTypeC
+                                                          }
+  backendVerify Scade (ScadeData name decls) expr 
+    = let (inp,outp) = scadeInterface name decls
+          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
+      in do
+        print $ prettyScade [scade]
+        return $ Nothing
+
+scadeTranslateTypeC :: TypeRep -> String
+scadeTranslateTypeC rep
+  | rep == typeOf (undefined::Int) = "kcg_int"
+  | rep == typeOf (undefined::Bool) = "kcg_bool"
+  | otherwise = error $ "Couldn't translate "++show rep++" to C-type"
+
+scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
+scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))
+scadeTypeToGTL Sc.TypeBool = Just (typeOf (undefined::Bool))
+scadeTypeToGTL _ = Nothing
+
+scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
+scadeTypeMap tps = do
+  res <- mapM (\(name,expr) -> case scadeTypeToGTL expr of
+                  Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
+                  Just tp -> Right (name,tp)) tps
+  return $ Map.fromList res
+
+-- | Extract type information from a SCADE model.
+--   Returns two list of variable-type pairs, one for the input variables, one for the outputs.
+scadeInterface :: String -- ^ The name of the Scade model to analyze
+                  -> [Sc.Declaration] -- ^ The parsed source code
+                  -> ([(String,Sc.TypeExpr)],[(String,Sc.TypeExpr)])
+scadeInterface name (op@(Sc.UserOpDecl {}):xs)
+  | Sc.userOpName op == name = (varNames' (Sc.userOpParams op),varNames' (Sc.userOpReturns op))
+  | otherwise = scadeInterface name xs
+    where
+      varNames' :: [Sc.VarDecl] -> [(String,Sc.TypeExpr)]
+      varNames' (x:xs) = (fmap (\var -> (Sc.name var,Sc.varType x)) (Sc.varNames x)) ++ varNames' xs
+      varNames' [] = []
+scadeInterface name (_:xs) = scadeInterface name xs
+scadeInterface name [] = error $ "Couldn't find model "++show name
 
 -- | Constructs a SCADE node that connects the testnode with the actual implementation SCADE node.
 buildTest :: String -- ^ Name of the SCADE node

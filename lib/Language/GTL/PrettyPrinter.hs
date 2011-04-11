@@ -1,11 +1,10 @@
 {-# LANGUAGE GADTs #-}
 module Language.GTL.PrettyPrinter where
 
+import Language.GTL.Model
 import Language.GTL.Syntax
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
-import Language.GTL.ScadeAnalyzer
-import qualified Language.Scade.Syntax as Sc
 import Data.GraphViz hiding (Model)
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
@@ -16,6 +15,9 @@ import Data.List as List
 import Data.Graph.Inductive.Graph
 import Data.Graph.Inductive.Tree
 import System.Process
+import Data.Typeable
+import Data.Traversable
+import Prelude hiding (mapM)
 
 getDotBoundingBox :: DotGraph a -> Rect
 getDotBoundingBox gr
@@ -76,15 +78,12 @@ buchiToDot buchi
              }
   where nd x = "nd"++show x
 
-gtlToTikz gtl scade = declsToTikz gtl (typeMap gtl scade)
-
-declsToTikz :: [Declaration] -> TypeMap -> IO String
-declsToTikz decls tps = do
-  let models = [ m | Model m <- decls ]
-      connections = [ c | Connect c <- decls ]
-  mp <- fmap Map.fromList $ mapM (\m -> do
-                                     (repr,w,h) <- modelToTikz m
-                                     return (modelName m,(repr,w,h))) models
+gtlToTikz :: GTLSpec -> IO String
+gtlToTikz spec = do
+  mp <- mapM (\m -> do
+                 (repr,w,h) <- modelToTikz m
+                 return (gtlModelInput m,gtlModelOutput m,repr,w,h)
+             ) (gtlSpecModels spec)
   let gr = DotGraph { strictGraph = False
                     , directedGraph = True
                     , graphID = Nothing
@@ -108,28 +107,26 @@ declsToTikz decls tps = do
                                                                                                  ]
                                                                                      ])
                                                                               ]
-                                                               | (name,(repr,w,h)) <- Map.toList mp
-                                                               , let (_,inp,outp) = tps!name
+                                                               | (name,(inp,outp,repr,w,h)) <- Map.toList mp
                                                                ]
-                                                 , edgeStmts = [DotEdge { edgeFromNodeID = connectFromModel conn
-                                                                        , edgeToNodeID = connectToModel conn
+                                                 , edgeStmts = [DotEdge { edgeFromNodeID = f
+                                                                        , edgeToNodeID = t
                                                                         , directedEdge = True
-                                                                        , edgeAttributes = [TailPort (LabelledPort (PN $ connectFromVariable conn) (Just East))
-                                                                                           ,HeadPort (LabelledPort (PN $ connectToVariable conn) (Just West))
+                                                                        , edgeAttributes = [TailPort (LabelledPort (PN fv) (Just East))
+                                                                                           ,HeadPort (LabelledPort (PN tv) (Just West))
                                                                                            ]
                                                                         }
-                                                               | conn <- connections
+                                                               | (f,fv,t,tv) <- gtlSpecConnections spec
                                                                ]
                                                  }
                     }
   outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt gr)
   let dot = parseIt' outp :: DotGraph String
-  return $ dotToTikz (Just (tps,mp)) dot
+  return $ dotToTikz (Just mp) dot
 
-modelToTikz :: ModelDecl -> IO (String,Double,Double)
+modelToTikz :: GTLModel -> IO (String,Double,Double)
 modelToTikz m = do
-  let rcontr = foldl1 (ExprBinBool And) (modelContract m)
-      ltl = gtlToLTL rcontr
+  let ltl = gtlToLTL (gtlModelContract m)
       buchi = ltlToBuchi ltl
   buchiToTikz buchi
 
@@ -144,7 +141,7 @@ buchiToTikz buchi = do
 pointToTikz :: Point -> String
 pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
 
-dotToTikz :: (Show a,Ord a) => Maybe (Map a (String,Map String Sc.TypeExpr,Map String Sc.TypeExpr),Map a (String,Double,Double)) -> DotGraph a -> String
+dotToTikz :: (Show a,Ord a) => Maybe (Map a (Map String TypeRep,Map String TypeRep,String,Double,Double)) -> DotGraph a -> String
 dotToTikz mtp gr
   = unlines
     ([case shape of
@@ -203,9 +200,8 @@ dotToTikz mtp gr
                                   _ -> False) (nodeAttributes nd) of
                     Just (Rects x) -> x
                     _ -> error "No rects given"
-           Just (rtp,reprs) = mtp
-           (_,inp,outp) = rtp!(nodeID nd)
-           (repr,rw,rh) = reprs!(nodeID nd)
+           Just reprs = mtp
+           (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
            Rect m1 m2 = head (drop (Map.size inp) rects)
      ] ++
      [ "\\draw [-,thick] "++pointToTikz spl1++" .. controls "

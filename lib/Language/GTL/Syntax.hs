@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables,FlexibleInstances #-}
+{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables,FlexibleInstances,TypeFamilies #-}
 -- | Data types representing a parsed GTL file.
 module Language.GTL.Syntax where
 
@@ -20,8 +20,10 @@ data ModelDecl = ModelDecl
                  { modelName :: String -- ^ The name of the model in the GTL formalism.
                  , modelType :: String -- ^ The synchronous formalism the model is written in (for example /scade/)
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
-                 , modelContract :: [Expr String Bool] -- ^ A list of contracts that this model fulfills.
+                 , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
+                 , modelInputs :: Map String TypeRep -- ^ Declared inputs of the model with their corresponding type
+                 , modelOutputs :: Map String TypeRep -- ^ Declared outputs of a model
                  } deriving Show
 
 -- | Declares a connection between two variables
@@ -34,7 +36,7 @@ data ConnectDecl = ConnectDecl
 
 -- | A list of formulas to verify.
 data VerifyDecl = VerifyDecl
-                  { verifyFormulas :: [Expr (String,String) Bool] -- ^ The formulas to be verified.
+                  { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
                   } deriving Show
 
 -- | An untyped expression type.
@@ -42,6 +44,7 @@ data VerifyDecl = VerifyDecl
 data GExpr = GBin BinOp GExpr GExpr
            | GUn UnOp GExpr
            | GConst Int
+           | GConstBool Bool
            | GVar (Maybe String) String
            | GSet [Integer]
            | GExists String (Maybe String) String GExpr
@@ -60,6 +63,11 @@ data Expr v a where
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
   deriving Typeable
+
+parseGTLType :: String -> Maybe TypeRep
+parseGTLType "int" = Just (typeOf (undefined::Int))
+parseGTLType "bool" = Just (typeOf (undefined::Bool))
+parseGTLType _ = Nothing
 
 -- | Lift `gcast' in a monad and fail with an error if the cast fails
 castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)
@@ -140,53 +148,111 @@ toElemOp GOpNotIn = Just False
 toElemOp _ = Nothing
 
 -- | Binds variables to other variables from the past.
-type ExistsBinding = Map String (Maybe String,String,Integer)
+type ExistsBinding a = Map String (a,Integer)
+
+typeCheckBool :: ExistsBinding (Maybe String,String) -> GExpr -> Either String (Expr (Maybe String,String) Bool)
+typeCheckBool bind expr = typeCheck' Map.empty (\q n -> Right (q,n)) bind expr undefined
+
+typeCheckInt :: ExistsBinding (Maybe String,String) -> GExpr -> Either String (Expr (Maybe String,String) Int)
+typeCheckInt bind expr = typeCheck' Map.empty (\q n -> Right (q,n)) bind expr undefined
+
+typeCheck :: (Ord a,Show a,GTLType t,Show t)
+             => Map a TypeRep
+             -> (Maybe String -> String -> Either String a)
+             -> GExpr
+             -> Either String (Expr a t)
+typeCheck tp f expr = typeCheck' tp f Map.empty expr undefined
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type `Bool'.
-typeCheckBool :: ExistsBinding -- ^ A map of bound variables
+typeCheck' :: (Ord a,Show a,GTLType t,Show t)
+                 => Map a TypeRep -- ^ Type mapping
+                 -> (Maybe String -> String -> Either String a)
+                 -> ExistsBinding a -- ^ A map of bound variables
                  -> GExpr -- ^ The expression to convert
-                 -> Either String (Expr (Maybe String,String) Bool)
-typeCheckBool bind (GVar q n) = case q of
-  Just _ -> Right (ExprVar (q,n) 0)
-  Nothing -> case Map.lookup n bind of
-    Nothing -> Right (ExprVar (q,n) 0)
-    Just (q',n',lvl) -> Right (ExprVar (q',n') lvl)
-typeCheckBool _ (GConst c) = Left $ "Expression "++show c++" has type int, expected bool"
-typeCheckBool _ (GSet c) = Left $ "Expression "++show c++" has type {int}, expected bool"
-typeCheckBool bind (GBin op l r) = case toBoolOp op of
-  Just bop -> do
-    res_l <- typeCheckBool bind l
-    res_r <- typeCheckBool bind r
-    return $ ExprBinBool bop res_l res_r
-  Nothing -> case toRelOp op of
-    Just rop -> do
-      res_l <- typeCheckInt bind l
-      res_r <- typeCheckInt bind r
-      return $ ExprRel rop res_l res_r
-    Nothing -> case toElemOp op of
-      Just eop -> case l of
-        GVar q n -> case r of
-          GSet vs -> Right (ExprElem (q,n) vs eop)
-          _ -> Left "Wrong right hand side for in operator"
-        _ -> Left "Wrong left hand side for in operator"
-      Nothing -> error $ "Invalid operator: "++show op
-typeCheckBool bind (GUn op expr) = case op of
-  GOpNot -> do
-    res <- typeCheckBool bind expr
-    return $ ExprNot res
-  GOpAlways -> do
-    res <- typeCheckBool Map.empty expr  -- Maybe find a nicer solution, an error perhaps?
-    return $ ExprAlways res
-  GOpNext -> do
-    res <- typeCheckBool (fmap (\(q,n,lvl) -> (q,n,lvl+1)) bind) expr
-    return $ ExprNext res
-  GOpFinally Nothing -> error "Unbounded finally not allowed"
-  GOpFinally (Just n) -> do
-    res <- mapM (\i -> typeCheckBool (fmap (\(q,n,lvl) -> (q,n,lvl+i)) bind) expr) [0..n]
-    return $ foldl1 (\x y -> ExprBinBool Or x (ExprNext y)) res
-typeCheckBool bind (GExists v q n expr) = typeCheckBool (Map.insert v (q,n,0) bind) expr
+                 -> t -- ^ undefined
+                 -> Either String (Expr a t)
+typeCheck' tp f bind (GVar q n) u = do
+  let nl = do
+        v <- f q n
+        return (v,0)
+  (rv,lvl) <- case q of
+    Nothing -> case Map.lookup n bind of 
+      Just (v,lvl) -> return (v,lvl)
+      Nothing -> nl
+    _ -> nl
+  let rvar = ExprVar rv lvl
+  case Map.lookup rv tp of
+    Nothing -> Left $ "Unknown variable "++show rvar
+    Just t -> if typeOf u == t
+              then Right rvar
+              else Left $ "Type error for variable "++show rvar++": Expected to be "++show (typeOf u)++", but is "++show t
+typeCheck' _ _ _ (GConst c) u = case cast c of 
+  Nothing -> Left $ "Expression "++show c++" has type int, expected "++show (typeOf u)
+  Just r -> return $ ExprConst r
+typeCheck' _ _ _ (GConstBool c) u = case cast c of
+  Nothing -> Left $ "Expression "++show c++" has type bool, expected "++show (typeOf u)
+  Just r -> return $ ExprConst r
+typeCheck' _ _ _ (GSet c) u = case cast c of
+  Nothing -> Left $ "Expression "++show c++" has type {int}, expected "++show (typeOf u)
+  Just r -> return $ ExprConst r
+typeCheck' tp f bind (GBin op l r) u = typeCheckBin tp f bind u op l r
+typeCheck' tp f bind (GUn op expr) u = typeCheckUn tp f bind u op expr
+typeCheck' tp f bind (GExists v q n expr) u = do
+  r <- f q n
+  typeCheck' tp f (Map.insert v (r,0) bind) expr u
 
+class Typeable t => GTLType t where
+  typeCheckBin :: (Ord a,Show a,GTLType t)
+                 => Map a TypeRep
+                 -> (Maybe String -> String -> Either String a)
+                 -> ExistsBinding a
+                 -> t
+                 -> BinOp -> GExpr -> GExpr -> Either String (Expr a t)
+  typeCheckUn :: (Ord a,Show a,GTLType t)
+                 => Map a TypeRep
+                 -> (Maybe String -> String -> Either String a)
+                 -> ExistsBinding a
+                 -> t
+                 -> UnOp -> GExpr -> Either String (Expr a t)
+
+instance GTLType Bool where
+  typeCheckBin tp f bind u op lhs rhs = case toBoolOp op of
+    Nothing -> case toRelOp op of
+      Nothing -> Left $ show op ++ " is not a boolean operator"
+      Just rel -> do
+        rl <- typeCheck' tp f bind lhs undefined
+        rr <- typeCheck' tp f bind rhs undefined
+        return $ ExprRel rel rl rr
+    Just rop -> do
+      rl <- typeCheck' tp f bind lhs undefined
+      rr <- typeCheck' tp f bind rhs undefined
+      return $ ExprBinBool rop rl rr
+  typeCheckUn tp f bind u op expr = do
+    case op of
+      GOpAlways -> do
+        rexpr <- typeCheck' tp f bind expr undefined
+        return $ ExprAlways rexpr
+      GOpNext -> do
+        rexpr <- typeCheck' tp f (fmap (\(v,lvl) -> (v,lvl+1)) bind) expr undefined
+        return $ ExprNext rexpr
+      GOpNot -> do
+        rexpr <- typeCheck' tp f bind expr undefined
+        return $ ExprNot rexpr
+      GOpFinally Nothing -> Left "Unbounded finally not allowed"
+      GOpFinally (Just n) -> do
+        res <- mapM (\i -> typeCheck' tp f (fmap (\(v,lvl) -> (v,lvl+i)) bind) expr undefined) [0..n]
+        return $ foldl1 (\x y -> ExprBinBool Or x (ExprNext y)) res
+
+instance GTLType Int where
+  typeCheckBin tp f bind u op lhs rhs = case toIntOp op of
+    Nothing -> Left $ show op ++ " is not an integer operator"
+    Just rop -> do
+      rl <- typeCheck' tp f bind lhs undefined
+      rr <- typeCheck' tp f bind rhs undefined
+      return $ ExprBinInt rop rl rr
+  typeCheckUn tp f bind u op expr = Left $ show op ++ " is not an integer operator"    
+  
 -- | Cast a binary operator into an arithmetic operator. Returns `Nothing' if the cast fails.
 toIntOp :: BinOp -> Maybe IntOp
 toIntOp GOpPlus = Just OpPlus
@@ -195,6 +261,7 @@ toIntOp GOpMult = Just OpMult
 toIntOp GOpDiv = Just OpDiv
 toIntOp _ = Nothing
 
+{-
 -- | Same as `typeCheckBool' but returns an expression of type `Int'.
 typeCheckInt :: ExistsBinding -> GExpr -> Either String (Expr (Maybe String,String) Int)
 typeCheckInt bind (GVar q n) = case q of
@@ -210,7 +277,7 @@ typeCheckInt bind (GBin op l r) = case toIntOp op of
     return $ ExprBinInt iop res_l res_r
   Nothing -> Left $ "Operator "++show op++" has wrong type, expected: int"
 typeCheckInt _ (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
-typeCheckInt _ (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
+typeCheckInt _ (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int" -}
       
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
@@ -370,6 +437,7 @@ relTurn rel = case rel of
 pushNot :: Expr v Bool -> Expr v Bool
 pushNot (ExprNot x) = pushNot' x
   where
+    pushNot' :: Expr v Bool -> Expr v Bool
     pushNot' (ExprRel rel x y)
       = ExprRel (case rel of
                     BinLT -> BinGTEq
@@ -404,8 +472,8 @@ getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
 
 -- | Extracts the maximum level of history for each variable in the expression.
-maximumHistory :: Ord v => [Expr v a] -> Map v Integer
-maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
+maximumHistory :: Ord v => Expr v a -> Map v Integer
+maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 -- | Change the type of the variables in an expression.
 mapVars :: (v -> w) -> Expr v a -> Expr w a
