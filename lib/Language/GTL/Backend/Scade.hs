@@ -18,7 +18,7 @@ import Control.Monad.Identity
 data Scade = Scade deriving (Show)
 
 instance GTLBackend Scade where
-  data GTLBackendData Scade = ScadeData String [Sc.Declaration]
+  data GTLBackendModel Scade = ScadeData String [Sc.Declaration]
   backendName Scade = "scade"
   initBackend Scade [file,name] = do
     str <- readFile file

@@ -12,25 +12,25 @@ import Data.Dynamic
 
 -- | A GTLBackend is a synchronized formalism that can be used to specify models and perform verification.
 class GTLBackend b where
-  -- | The backend data is data that is loaded once and contains enough information to perform verification tasks
-  data GTLBackendData b
+  -- | The backend model is data that is loaded once and contains enough information to perform verification tasks on a synchronous model
+  data GTLBackendModel b
   -- | The name of the backend. Used to determine which backend to load.
   backendName :: b -> String
   -- | Initialize a backend with a list of parameters
-  initBackend :: b -> [String] -> IO (GTLBackendData b)
+  initBackend :: b -> [String] -> IO (GTLBackendModel b)
   -- | Perform type checking on the synchronized model
   typeCheckInterface :: b -- ^ The backend
-                        -> GTLBackendData b -- ^ The backend data
+                        -> GTLBackendModel b -- ^ The backend data
                         -> Map String TypeRep -- ^ A type mapping for the inputs
                         -> Map String TypeRep -- ^ A type mapping for the outputs
                         -> Either String (Map String TypeRep,Map String TypeRep)
   -- | Get the C-interface of a GTL model
   cInterface :: b -- ^ The backend
-                -> GTLBackendData b -- ^ The backend data
+                -> GTLBackendModel b -- ^ The backend data
                 -> CInterface
   -- | Perform a backend-specific model checking algorithm.
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
-  backendVerify :: b -> GTLBackendData b -> Expr String Bool -> IO (Maybe Bool)
+  backendVerify :: b -> GTLBackendModel b -> Expr String Bool -> IO (Maybe Bool)
 
 -- | A C-interface is information that is needed to integrate a C-state machine.
 data CInterface = CInterface
