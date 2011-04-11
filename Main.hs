@@ -15,7 +15,7 @@ import Language.Promela.Pretty
 import Language.Scade.Pretty
 
 import Language.GTL.PromelaCIntegration
---import Language.GTL.ScadeContract as ScTr
+import Language.GTL.LocalVerification
 import Language.GTL.Translation
 import Language.GTL.Model
 import Language.GTL.ScadeToPromela as ScPr
@@ -23,7 +23,7 @@ import Language.GTL.PromelaDynamicBDD as PrBd
 
 data TranslationMode
      = NativeC
-     | ScadeContract
+     | Local
      | ScadeToPromela
      | PromelaBuddy
      deriving (Show,Eq)
@@ -44,7 +44,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("scade-contract",ScadeContract),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
+modes = [("native-c",NativeC),("local",Local),("scade-promela",ScadeToPromela),("promela-buddy",PromelaBuddy)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -109,9 +109,7 @@ main = do
     Right x -> return x
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl sc_decls >>= putStrLn
-    {-ScadeContract -> do
-      putStrLn sc_str
-      print $ prettyScade $ ScTr.translateContracts sc_decls gtl_decls-}
+    Local -> verifyLocal rgtl
     ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
     PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls rgtl
       --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls

@@ -19,7 +19,6 @@ Library
     Language.GTL.Translation
     Language.GTL.ScadeAnalyzer
     Language.GTL.PromelaCIntegration
-    --Language.GTL.ScadeContract
     Language.GTL.LTL
     Language.GTL.ScadeToPromela
     Language.GTL.ErrorRefiner
@@ -27,6 +26,7 @@ Library
     Language.GTL.Backend
     Language.GTL.Backend.Scade
     Language.GTL.Backend.All
+    Language.GTL.LocalVerification
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

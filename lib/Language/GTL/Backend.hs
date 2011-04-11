@@ -14,6 +14,7 @@ class GTLBackend b where
   initBackend :: b -> [String] -> IO (GTLBackendData b)
   typeCheckInterface :: b -> GTLBackendData b -> Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
   cInterface :: b -> GTLBackendData b -> CInterface
+  backendVerify :: b -> GTLBackendData b -> Expr String Bool -> IO (Maybe Bool)
 
 data CInterface = CInterface
                   { cIFaceIncludes :: [String]
