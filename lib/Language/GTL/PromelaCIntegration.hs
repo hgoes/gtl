@@ -29,9 +29,8 @@ import Data.Bits
 --   Outputs promela code.
 translateGTL :: Maybe FilePath -- ^ An optional path to a trace file
                 -> GTLSpec -- ^ The GTL code
-                -> [Sc.Declaration] -- ^ The SCADE code for the components
                 -> IO String
-translateGTL traces gtlcode scadecode
+translateGTL traces gtlcode
   = do
     rtr <- case traces of
       Nothing -> return []

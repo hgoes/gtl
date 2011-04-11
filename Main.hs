@@ -108,9 +108,9 @@ main = do
     Left err -> error err
     Right x -> return x
   case mode opts of
-    NativeC -> translateGTL (traceFile opts) rgtl sc_decls >>= putStrLn
+    NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
     ScadeToPromela -> print $ prettyPromela $ ScPr.scadeToPromela sc_decls
-    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) sc_decls rgtl
+    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) rgtl
       --print $ prettyPromela $ PrBd.translateContracts sc_decls gtl_decls
   return ()
