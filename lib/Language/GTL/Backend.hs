@@ -1,4 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
+{-| Provides an abstraction over many different synchronized formalisms.
+ -}
 module Language.GTL.Backend where
 
 import Language.GTL.Syntax
@@ -8,25 +10,49 @@ import Prelude hiding (mapM)
 import Data.Typeable
 import Data.Dynamic
 
+-- | A GTLBackend is a synchronized formalism that can be used to specify models and perform verification.
 class GTLBackend b where
+  -- | The backend data is data that is loaded once and contains enough information to perform verification tasks
   data GTLBackendData b
+  -- | The name of the backend. Used to determine which backend to load.
   backendName :: b -> String
+  -- | Initialize a backend with a list of parameters
   initBackend :: b -> [String] -> IO (GTLBackendData b)
-  typeCheckInterface :: b -> GTLBackendData b -> Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
-  cInterface :: b -> GTLBackendData b -> CInterface
+  -- | Perform type checking on the synchronized model
+  typeCheckInterface :: b -- ^ The backend
+                        -> GTLBackendData b -- ^ The backend data
+                        -> Map String TypeRep -- ^ A type mapping for the inputs
+                        -> Map String TypeRep -- ^ A type mapping for the outputs
+                        -> Either String (Map String TypeRep,Map String TypeRep)
+  -- | Get the C-interface of a GTL model
+  cInterface :: b -- ^ The backend
+                -> GTLBackendData b -- ^ The backend data
+                -> CInterface
+  -- | Perform a backend-specific model checking algorithm.
+  --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
   backendVerify :: b -> GTLBackendData b -> Expr String Bool -> IO (Maybe Bool)
 
+-- | A C-interface is information that is needed to integrate a C-state machine.
 data CInterface = CInterface
-                  { cIFaceIncludes :: [String]
-                  , cIFaceStateType :: [String]
-                  , cIFaceInputType :: [String]
-                  , cIFaceStateInit :: [String] -> String
-                  , cIFaceIterate :: [String] -> [String] -> String
-                  , cIFaceGetOutputVar :: [String] -> String -> String
-                  , cIFaceGetInputVar :: [String] -> String -> String
-                  , cIFaceTranslateType :: TypeRep -> String
+                  { -- | A list of C-headers to be included
+                    cIFaceIncludes :: [String],
+                    -- | A list of C-types that together form the signature of the state of the state machine
+                    cIFaceStateType :: [String],
+                    -- | The type signature of the input variables. Input variables aren't considered state.
+                    cIFaceInputType :: [String],
+                    -- | Generate a call to initialize the state machine
+                    cIFaceStateInit :: [String] -> String,
+                    -- | Perform one iteration of the state machine
+                    cIFaceIterate :: [String] -> [String] -> String,
+                    -- | Extract an output variable from the machine state
+                    cIFaceGetOutputVar :: [String] -> String -> String,
+                    -- | Extract an input variable from the state machine
+                    cIFaceGetInputVar :: [String] -> String -> String,
+                    -- | Translate a haskell type to C
+                    cIFaceTranslateType :: TypeRep -> String
                   }
 
+-- | Merge two type-mappings into one, report conflicting types
 mergeTypes :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep)
 mergeTypes m1 m2 
   = mapM id $
