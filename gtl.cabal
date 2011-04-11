@@ -17,7 +17,6 @@ Library
     Language.GTL.Parser
     Language.GTL.Model
     Language.GTL.Translation
-    Language.GTL.ScadeAnalyzer
     Language.GTL.PromelaCIntegration
     Language.GTL.LTL
     Language.GTL.ScadeToPromela

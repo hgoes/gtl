@@ -8,7 +8,6 @@ import Language.GTL.Syntax as GTL
 import Language.GTL.Model
 import Language.GTL.Backend
 import Language.GTL.Backend.All
-import Language.GTL.ScadeAnalyzer
 import Language.GTL.ErrorRefiner
 import Language.GTL.Translation
 import Language.GTL.LTL

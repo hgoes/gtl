@@ -16,7 +16,6 @@ import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
-import Language.GTL.ScadeAnalyzer
 import Language.GTL.Syntax as GTL
 import Language.GTL.Model
 
