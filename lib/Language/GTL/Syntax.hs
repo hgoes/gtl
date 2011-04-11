@@ -229,11 +229,16 @@ instance GTLType Bool where
       rr <- typeCheck' tp f bind rhs undefined
       return $ ExprBinBool rop rl rr
   typeCheckUn tp f bind u op expr = do
-    rexpr <- typeCheck' tp f bind expr undefined
     case op of
-      GOpAlways -> return $ ExprAlways rexpr
-      GOpNext -> return $ ExprNext rexpr
-      GOpNot -> return $ ExprNot rexpr
+      GOpAlways -> do
+        rexpr <- typeCheck' tp f bind expr undefined
+        return $ ExprAlways rexpr
+      GOpNext -> do
+        rexpr <- typeCheck' tp f (fmap (\(v,lvl) -> (v,lvl+1)) bind) expr undefined
+        return $ ExprNext rexpr
+      GOpNot -> do
+        rexpr <- typeCheck' tp f bind expr undefined
+        return $ ExprNot rexpr
       GOpFinally Nothing -> Left "Unbounded finally not allowed"
       GOpFinally (Just n) -> do
         res <- mapM (\i -> typeCheck' tp f (fmap (\(v,lvl) -> (v,lvl+i)) bind) expr undefined) [0..n]
