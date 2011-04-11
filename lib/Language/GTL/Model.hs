@@ -4,6 +4,7 @@ import Language.GTL.Token (BinOp(GOpAnd))
 import Language.GTL.Syntax
 import Language.GTL.Backend.All
 import Data.Typeable
+import Data.Dynamic
 import Control.Monad
 import Data.Map as Map
 
@@ -12,6 +13,7 @@ data GTLModel = GTLModel
                 , gtlModelBackend :: AllBackend
                 , gtlModelInput :: Map String TypeRep
                 , gtlModelOutput :: Map String TypeRep
+                , gtlModelDefaults :: Map String (Maybe Dynamic)
                 }
 
 data GTLSpec = GTLSpec
@@ -27,16 +29,25 @@ gtlParseModel mdl = do
     Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
     Just back -> return $ do
       (inp,outp) <- allTypecheck back (modelInputs mdl) (modelOutputs mdl)
-      expr <- typeCheck (Map.union inp outp)
+      let allType = Map.union inp outp
+      expr <- typeCheck allType
               (\q n -> case q of
                   Nothing -> Right n
                   _ -> Left "Contract may not contain qualified variables") (case modelContract mdl of
                                                                                 [] -> GConstBool True
                                                                                 c -> foldl1 (GBin GOpAnd) c)
+      lst <- mapM (\(var,init) -> case init of
+                      InitAll -> return (var,Nothing)
+                      InitOne c -> case Map.lookup var allType of
+                        Nothing -> Left $ "Unknown variable: "++show var
+                        Just tp -> if tp == typeOf (undefined::Int)
+                                   then return (var,Just $ toDyn c)
+                                   else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
       return (modelName mdl,GTLModel { gtlModelContract = expr
                                      , gtlModelBackend = back
                                      , gtlModelInput = inp
                                      , gtlModelOutput = outp
+                                     , gtlModelDefaults = Map.fromList lst
                                      })
 
 gtlParseSpec :: [Declaration] -> IO (Either String GTLSpec)
