@@ -5,7 +5,7 @@
 module Language.GTL.PrettyPrinter where
 
 import Language.GTL.Model
-import Language.GTL.Syntax
+import Language.GTL.Expression
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
 import Data.GraphViz hiding (Model)

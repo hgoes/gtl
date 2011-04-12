@@ -3,7 +3,7 @@
  -}
 module Language.GTL.Backend where
 
-import Language.GTL.Syntax
+import Language.GTL.Expression
 import Data.Map as Map
 import Data.Traversable
 import Prelude hiding (mapM)

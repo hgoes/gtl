@@ -4,7 +4,7 @@
  -}
 module Language.GTL.PromelaCIntegration where
 
-import Language.GTL.Syntax as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.Model
 import Language.GTL.Backend
 import Language.GTL.Backend.All

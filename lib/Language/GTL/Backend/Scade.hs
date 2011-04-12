@@ -7,7 +7,7 @@ import Language.GTL.Backend
 import Language.GTL.Translation
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
-import Language.GTL.Syntax as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.LTL as LTL
 import Data.Map as Map
 import Data.Set as Set

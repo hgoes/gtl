@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies,RankNTypes,ImpredicativeTypes #-}
 module Language.GTL.Backend.All where
 
-import Language.GTL.Syntax
+import Language.GTL.Expression
 import Language.GTL.Backend
 import Language.GTL.Backend.Scade
 import Data.Map as Map

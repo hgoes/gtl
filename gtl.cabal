@@ -26,6 +26,7 @@ Library
     Language.GTL.Backend.Scade
     Language.GTL.Backend.All
     Language.GTL.LocalVerification
+    Language.GTL.Expression
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

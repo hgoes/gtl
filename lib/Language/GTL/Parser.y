@@ -107,16 +107,12 @@ formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let n
                   | init_decl ";" formulas_or_inits             { \decl -> let ndecl = $3 decl
                                                                            in ndecl { modelInits = $1:(modelInits ndecl)
                                                                                     } }
-                  | "input" id id ";" formulas_or_inits         { \decl -> case parseGTLType $2 of
-                                                                     Nothing -> error $ "unknown type: "++show $2
-                                                                     Just tp -> let ndecl = $5 decl
-                                                                                in ndecl { modelInputs = Map.insert $3 tp (modelInputs ndecl)
-                                                                                         } }
-                  | "output" id id ";" formulas_or_inits         { \decl -> case parseGTLType $2 of
-                                                                      Nothing -> error $ "unknown type: "++show $2
-                                                                      Just tp -> let ndecl = $5 decl
-                                                                                 in ndecl { modelOutputs = Map.insert $3 tp (modelInputs ndecl)
-                                                                                          } }
+                  | "input" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
+                                                                           in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                                    } }
+                  | "output" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
+                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                                     } }
 
                   |                                             { id }
 

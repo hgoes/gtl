@@ -15,7 +15,7 @@ module Language.GTL.PromelaDynamicBDD where
 import Language.GTL.Translation
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
-import Language.GTL.Syntax as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.Model
 
 import Data.Map as Map

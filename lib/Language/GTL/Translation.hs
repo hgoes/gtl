@@ -11,7 +11,7 @@ module Language.GTL.Translation(
   gtlToLTL
   ) where
 
-import Language.GTL.Syntax as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.LTL as LTL
 import Data.Binary
 import Data.Word
