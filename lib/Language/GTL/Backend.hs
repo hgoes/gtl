@@ -10,6 +10,8 @@ import Prelude hiding (mapM)
 import Data.Typeable
 import Data.Dynamic
 
+type ModelInterface = (Map String TypeRep,Map String TypeRep)
+
 -- | A GTLBackend is a synchronized formalism that can be used to specify models and perform verification.
 class GTLBackend b where
   -- | The backend model is data that is loaded once and contains enough information to perform verification tasks on a synchronous model
@@ -21,9 +23,8 @@ class GTLBackend b where
   -- | Perform type checking on the synchronized model
   typeCheckInterface :: b -- ^ The backend
                         -> GTLBackendModel b -- ^ The backend data
-                        -> Map String TypeRep -- ^ A type mapping for the inputs
-                        -> Map String TypeRep -- ^ A type mapping for the outputs
-                        -> Either String (Map String TypeRep,Map String TypeRep)
+                        -> ModelInterface -- ^ A type mapping for the in- and outputs
+                        -> Either String ModelInterface
   -- | Get the C-interface of a GTL model
   cInterface :: b -- ^ The backend
                 -> GTLBackendModel b -- ^ The backend data

@@ -8,7 +8,7 @@ import Data.Map as Map
 import Data.Typeable
 
 data AllBackend = AllBackend
-                  { allTypecheck :: Map String TypeRep -> Map String TypeRep -> Either String (Map String TypeRep,Map String TypeRep)
+                  { allTypecheck :: ModelInterface -> Either String ModelInterface
                   , allCInterface :: CInterface
                   , allVerifyLocal :: Expr String Bool -> IO (Maybe Bool)
                   }

@@ -23,7 +23,7 @@ instance GTLBackend Scade where
   initBackend Scade [file,name] = do
     str <- readFile file
     return $ ScadeData name (scade $ alexScanTokens str)
-  typeCheckInterface Scade (ScadeData name decls) ins outs = do
+  typeCheckInterface Scade (ScadeData name decls) (ins,outs) = do
     let (sc_ins,sc_outs) = scadeInterface name decls
     mp_ins <- scadeTypeMap sc_ins
     mp_outs <- scadeTypeMap sc_outs

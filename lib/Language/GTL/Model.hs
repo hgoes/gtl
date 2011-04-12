@@ -28,7 +28,7 @@ gtlParseModel mdl = do
   case mback of
     Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
     Just back -> return $ do
-      (inp,outp) <- allTypecheck back (modelInputs mdl) (modelOutputs mdl)
+      (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
       let allType = Map.union inp outp
       expr <- typeCheck allType
               (\q n -> case q of
