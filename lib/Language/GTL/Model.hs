@@ -1,7 +1,7 @@
 module Language.GTL.Model where
 
-import Language.GTL.Token (BinOp(GOpAnd))
-import Language.GTL.Syntax
+import Language.GTL.Parser.Token (BinOp(GOpAnd))
+import Language.GTL.Parser.Syntax
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Data.Typeable

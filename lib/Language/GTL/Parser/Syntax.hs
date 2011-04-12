@@ -1,7 +1,7 @@
 -- | Data types representing a parsed GTL file.
-module Language.GTL.Syntax where
+module Language.GTL.Parser.Syntax where
 
-import Language.GTL.Token (UnOp(..),BinOp(..))
+import Language.GTL.Parser.Token (UnOp(..),BinOp(..))
 import Control.Monad.Error
 import Data.Map as Map
 import Data.Word

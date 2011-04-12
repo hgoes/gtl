@@ -3,8 +3,8 @@
  -}
 module Language.GTL.Parser (gtl) where
 
-import Language.GTL.Token
-import Language.GTL.Syntax
+import Language.GTL.Parser.Token
+import Language.GTL.Parser.Syntax
 
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map

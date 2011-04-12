@@ -1,8 +1,8 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable #-}
 module Language.GTL.Expression where
 
-import Language.GTL.Syntax
-import Language.GTL.Token
+import Language.GTL.Parser.Syntax
+import Language.GTL.Parser.Token
 
 import Data.Binary
 import Data.Typeable

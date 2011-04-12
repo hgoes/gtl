@@ -11,10 +11,10 @@ Library
   Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl
   Hs-Source-Dirs: lib
   Exposed-Modules:
-    Language.GTL.Token
-    Language.GTL.Lexer
-    Language.GTL.Syntax
     Language.GTL.Parser
+    Language.GTL.Parser.Lexer
+    Language.GTL.Parser.Syntax
+    Language.GTL.Parser.Token
     Language.GTL.Model
     Language.GTL.Translation
     Language.GTL.PromelaCIntegration

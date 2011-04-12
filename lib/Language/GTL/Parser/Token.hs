@@ -1,4 +1,4 @@
-module Language.GTL.Token where
+module Language.GTL.Parser.Token where
 
 data Token = Identifier String
            | Key KeyWord

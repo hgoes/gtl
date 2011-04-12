@@ -1,9 +1,9 @@
 {
 {-| The GTL Lexer  
  -}
-module Language.GTL.Lexer (lexGTL) where
+module Language.GTL.Parser.Lexer (lexGTL) where
 
-import Language.GTL.Token
+import Language.GTL.Parser.Token
 }
 
 %wrapper "basic"
