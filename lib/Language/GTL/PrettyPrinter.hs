@@ -1,4 +1,7 @@
 {-# LANGUAGE GADTs #-}
+{-| This module provides functions to render GTL specifications to Tikz Latex drawing commands.
+    It can thus be used to get a pretty image for a GTL file.
+ -}
 module Language.GTL.PrettyPrinter where
 
 import Language.GTL.Model
@@ -19,6 +22,7 @@ import Data.Typeable
 import Data.Traversable
 import Prelude hiding (mapM)
 
+-- | Get the bounding box of a preprocessed graph.
 getDotBoundingBox :: DotGraph a -> Rect
 getDotBoundingBox gr
   = case concat (fmap (\attr -> case attr of
@@ -30,6 +34,7 @@ getDotBoundingBox gr
       [] -> error "No bounding box defined"
       (x:xs) -> x
 
+-- | Convert a Buchi automaton into a Dot graph.
 buchiToDot :: GBuchi Integer (Map (GTLAtom String) Bool) f -> DotGraph String
 buchiToDot buchi
   = DotGraph { strictGraph = False
@@ -78,6 +83,8 @@ buchiToDot buchi
              }
   where nd x = "nd"++show x
 
+-- | Convert a GTL specification to Tikz drawing commands.
+--   This needs to be IO because it calls graphviz programs to preprocess the picture.
 gtlToTikz :: GTLSpec -> IO String
 gtlToTikz spec = do
   mp <- mapM (\m -> do
@@ -124,24 +131,27 @@ gtlToTikz spec = do
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
+-- | Convert a single model into Tikz drawing commands.
+--   Also returns the width and height of the bounding box for the rendered picture.
 modelToTikz :: GTLModel -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL (gtlModelContract m)
       buchi = ltlToBuchi ltl
-  buchiToTikz buchi
-
-buchiToTikz :: GBuchi Integer (Map (GTLAtom String) Bool) f -> IO (String,Double,Double)
-buchiToTikz buchi = do
   outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt $ buchiToDot buchi)
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
   return (res,px,py)
-  
+
+-- | Helper function to render a graphviz point in Tikz.
 pointToTikz :: Point -> String
 pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
 
-dotToTikz :: (Show a,Ord a) => Maybe (Map a (Map String TypeRep,Map String TypeRep,String,Double,Double)) -> DotGraph a -> String
+-- | Convert a graphviz graph to Tikz drawing commands.
+dotToTikz :: (Show a,Ord a)
+             => Maybe (Map a (Map String TypeRep,Map String TypeRep,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
+             -> DotGraph a
+             -> String
 dotToTikz mtp gr
   = unlines
     ([case shape of
@@ -227,12 +237,14 @@ dotToTikz mtp gr
        Just p -> [p]
      ])
     
+-- | Convert a list of points into a spline by grouping them.
 splinePoints :: [a] -> [(a,a,a,a)]
 splinePoints (x:xs) = splinePoints' x xs
   where
     splinePoints' _ [] = []
     splinePoints' p (x:y:z:xs) = (p,x,y,z):splinePoints' z xs
 
+-- | Render a GTL atom to LaTeX.
 atomToLatex :: GTLAtom String -> String 
 atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
                                                           BinLT -> "<"
@@ -253,6 +265,7 @@ atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
 atomToLatex (GTLElem v vals t) = "\\mathit{"++v++"}"++(if t then "" else "\\not")++"\\in"++show vals
 atomToLatex (GTLVar v h t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
 
+-- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
 estimateWidth :: GTLAtom String -> Int
 estimateWidth (GTLRel _ lhs rhs) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
   where
