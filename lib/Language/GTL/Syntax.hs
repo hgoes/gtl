@@ -9,6 +9,60 @@ import Data.Binary
 import Data.Word
 import Data.Typeable
 
+-- | Datatype
+-- At the moment GTL formulas can only use Bool | Integer as datatypes.
+data GTLType = BoolT | IntegerT -- | ArrayT GTLType
+      deriving (Show, Enum)
+
+-- | Types which can be used as variable names
+class VariableType a where
+  typeId :: a -> String
+
+instance VariableType String where
+  typeId _ = "String"
+
+instance VariableType (String, String) where
+  typeId _ = "(String, String)"
+
+-- | GTL variables associated with their
+-- name, time reference and type.
+data Variable v = Variable
+                  { name :: v
+                  , time :: Integer
+                  , gltType :: GTLType
+                  } deriving Show
+
+-- | Representation of typed constants
+data Constant a = Constant
+                  { value :: String   -- maybe change to sum type
+                  , gtlType :: GTLType
+                  }
+                  deriving Show
+
+-- We split the expression typing in 'static' and 'dynamic' typing.
+-- This is because we have expressions which types are fixed (e.g. bool)
+-- and terms which get a type that is determined by the user in the formula.
+-- And then there are things which have dynamically typed 'parameters' and
+-- a fixed 'return' type (e.g. relations).
+
+-- | Dynamically typed
+data VariableType v => Term v
+  = Var GTLType Variable v
+  | Const GTLType Constant
+  | BinExpr GTLType BinOp (Term v) (Term v)
+
+-- | In between
+data VariableType v =>  v
+  = RelExpr Relation (Term v) (Term v)
+  | ElemExpr Variable [Constant] Bool
+
+-- | Statically typed
+data VariableType v => LogicExpr v
+  = Not (LogicExpr v)
+  | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
+  | Always (LogicExpr v)
+  | Next (LogicExpr v)
+
 -- | A GTL file is a list of declarations.
 data Declaration = Model ModelDecl -- ^ Declares a model.
                  | Connect ConnectDecl -- ^ Declares a connection between two models.
