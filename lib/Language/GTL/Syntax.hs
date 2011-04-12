@@ -102,14 +102,21 @@ data GExpr = GBin BinOp GExpr GExpr
            deriving (Show,Eq,Ord)
 
 -- | A type-safe expression type.
---   /v/ is the type of variables (for example `String') and /a/ is the type of the expression.
+--   /v/ is the type of variables description (for example `String' or `(String, String)'
+--  for unqualified or qualified names) and /t/ is the type of the expression.
 data Expr v a where
-  ExprVar :: v -> Integer -> Expr v a -- A variable. Can have any type.
-  ExprConst :: a -> Expr v a -- A constant. Has the type of the constant.
-  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int -- A binary integer operation that takes two integer expressions and returns an integer expression.
-  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool -- A binary boolean operation.
-  ExprRel :: Relation -> Expr v Int -> Expr v Int -> Expr v Bool -- An integer relation.
-  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool -- `ExprElem' /x/ /xs/ `True' means: "/x/ is element of the list /xs/".
+  -- | A variable. Can have any type.
+  ExprVar :: v -> Integer -> Expr v a
+  -- | A constant. Has the type of the constant.
+  ExprConst :: a -> Expr v a
+  -- | A binary integer operation that takes two integer expressions and returns an integer expression.
+  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int
+  -- | A binary boolean operation.
+  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool
+  -- | A relation between expressions of an arbitrary type.
+  ExprRel :: Relation -> Expr v Int -> Expr v Int -> Expr v Bool
+  -- | `ExprElem' /x/ /xs/ `True' means: "/x/ is element of the list /xs/".
+  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool
   ExprNot :: Expr v Bool -> Expr v Bool
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
