@@ -1,3 +1,5 @@
+{-| This module provides a data structure for type-checked GTL specifications.
+ -}
 module Language.GTL.Model where
 
 import Language.GTL.Parser.Token (BinOp(GOpAnd))

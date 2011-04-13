@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable #-}
+{-| Provides the expression data type as well as the type-checking algorithm.
+ -}
 module Language.GTL.Expression where
 
 import Language.GTL.Parser.Syntax
@@ -69,19 +71,27 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
       r <- f q n
       typeCheck' tp f (Map.insert v (r,0) bind) expr u
 
+-- | A GTL type can provide means to parse unary and binary operators of its type.
+--   The default is to fail the parsing.
 class Typeable t => GTLType t where
+  -- | Type checks a binary operator of the given type.
   typeCheckBin :: (Ord a,Show a,GTLType t)
-                 => Map a TypeRep
-                 -> (Maybe String -> String -> Either String a)
-                 -> ExistsBinding a
-                 -> t
-                 -> BinOp -> GExpr -> GExpr -> Either String (Expr a t)
+                 => Map a TypeRep -- ^ The type mapping
+                 -> (Maybe String -> String -> Either String a) -- ^ A function to convert variable names
+                 -> ExistsBinding a -- ^ All existentially bound variables
+                 -> t -- ^ An instance of the type (can be `undefined')
+                 -> BinOp -- ^ The operator to type check
+                 -> GExpr -- ^ The left hand side of the operator
+                 -> GExpr -- ^ The right hand side of the operator
+                 -> Either String (Expr a t)
+  typeCheckBin _ _ _ u op _ _ = Left $ "Operator "++show op++" is not of type "++show (typeOf u)
   typeCheckUn :: (Ord a,Show a,GTLType t)
                  => Map a TypeRep
                  -> (Maybe String -> String -> Either String a)
                  -> ExistsBinding a
                  -> t
                  -> UnOp -> GExpr -> Either String (Expr a t)
+  typeCheckUn _ _ _ u op _ = Left $ "Operator "++show op++" is not of type "++show (typeOf u)
 
 instance GTLType Bool where
   typeCheckBin tp f bind u op lhs rhs = case toBoolOp op of
@@ -353,6 +363,7 @@ instance Show Relation where
   show BinEq = "="
   show BinNEq = "!="
 
+-- | Convert a `String' into a type representation. Only covers types which are allowed in the GTL.
 parseGTLType :: String -> Maybe TypeRep
 parseGTLType "int" = Just (typeOf (undefined::Int))
 parseGTLType "bool" = Just (typeOf (undefined::Bool))
