@@ -451,7 +451,7 @@ buildTransProgram gtl
                                                                   Nothing -> error "Init expressions must be ints atm"
                                                                   Just i -> "Cudd_bddSingleton(manager,"++show (i::Int)++",0)"
                                                             ) (gtlModelDefaults m)
-                                           in TransModel { varsInit = Map.empty
+                                           in TransModel { varsInit = inits
                                                          , varsIn = Map.mapWithKey (\k v -> hist!k) (gtlModelInput m)
                                                          , varsOut = outp_map
                                                          , stateMachine = undefined

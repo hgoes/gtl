@@ -55,7 +55,7 @@ gtlParseModel mdl = do
                       InitOne c -> case Map.lookup var allType of
                         Nothing -> Left $ "Unknown variable: "++show var
                         Just tp -> if tp == typeOf (undefined::Int)
-                                   then return (var,Just $ toDyn c)
+                                   then return (var,Just $ toDyn (fromIntegral c::Int))
                                    else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
       return (modelName mdl,GTLModel { gtlModelContract = expr
                                      , gtlModelBackend = back
