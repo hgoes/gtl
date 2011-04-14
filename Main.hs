@@ -7,7 +7,7 @@ import System.Process
 import Control.Monad (when)
 import System.Exit
 
-import Language.GTL.Lexer as GTL
+import Language.GTL.Parser.Lexer as GTL
 import Language.GTL.Parser as GTL
 import Language.Scade.Lexer as Sc
 import Language.Scade.Parser as Sc
