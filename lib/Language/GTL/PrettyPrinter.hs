@@ -127,7 +127,7 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt gr)
+  outp <- readProcess "sfdp" ["-Tdot"] (printIt gr)
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
@@ -137,7 +137,7 @@ modelToTikz :: GTLModel -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL (gtlModelContract m)
       buchi = ltlToBuchi ltl
-  outp <- readProcess "sfdp" ["-Tdot","/dev/stdin"] (printIt $ buchiToDot buchi)
+  outp <- readProcess "sfdp" ["-Tdot"] (printIt $ buchiToDot buchi)
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
