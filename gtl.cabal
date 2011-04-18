@@ -24,6 +24,7 @@ Library
     Language.GTL.PrettyPrinter
     Language.GTL.Backend
     Language.GTL.Backend.Scade
+    Language.GTL.Backend.None
     Language.GTL.Backend.All
     Language.GTL.LocalVerification
     Language.GTL.Expression
