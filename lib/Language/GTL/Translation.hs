@@ -15,18 +15,60 @@ import Language.GTL.Syntax as GTL
 import Language.GTL.LTL as LTL
 import Data.Binary
 import Data.Word
+import Data.Typeable
 
 import Data.Set as Set
 
 -- | A representation of GTL expressions that can't be further translated into LTL
 --   and thus have to be used as atoms.
-data GTLAtom v = GTLRel GTL.Relation (GTL.Expr v Int) (GTL.Expr v Int)
+data GTLAtom v = forall t. (Eq v, Show t, Eq t, Ord t, Typeable t, Binary t) => GTLRel GTL.Relation (GTL.EqualExpr v t)
                | GTLElem v [Integer] Bool
                | GTLVar v Integer Bool
-               deriving (Show,Eq,Ord)
 
-instance Binary v => Binary (GTLAtom v) where
-  put (GTLRel rel lhs rhs) = put (0::Word8) >> put rel >> put lhs >> put rhs
+instance Eq v => Eq (GTLAtom v) where
+  (==) (GTLRel a1 a2) (GTLRel b1 b2) = (((a1 == b1)) && (castEqual a2 b2))
+  (==) (GTLElem a1 a2 a3) (GTLElem b1 b2 b3)
+           = ((((a1 == b1)) && ((a2 == b2))) && ((a3 == b3)))
+  (==) (GTLVar a1 a2 a3) (GTLVar b1 b2 b3)
+           = ((((a1 == b1)) && ((a2 == b2))) && ((a3 == b3)))
+  (==) _ _ = False
+
+instance Ord v => Ord (GTLAtom v) where
+  compare (GTLRel a1 a2) (GTLRel b1 b2) =
+    case compare a1 b1 of
+      EQ -> castCompare a2 b2
+      r -> r
+  compare (GTLElem a1 a2 a3) (GTLElem b1 b2 b3) =
+    case compare a1 b1 of
+      EQ -> case compare a2 b2 of
+        EQ -> compare a3 b3
+        r -> r
+      r -> r
+  compare (GTLVar a1 a2 a3) (GTLVar b1 b2 b3) =
+    case compare a1 b1 of
+      EQ -> case compare a2 b2 of
+        EQ -> compare a3 b3
+        r -> r
+      r -> r
+  compare _ _ = LT
+
+instance Show v => Show (GTLAtom v) where
+  show (GTLRel rel (GTL.EqualExpr lhs rhs)) = "(" ++ show lhs ++ ") "
+                              ++ show rel
+                              ++ " (" ++ show rhs ++ ")"
+  show (GTLElem q ints pos) = show (GTLVar q 0 True) ++
+                               (if pos then " in "
+                                else " not in ") ++
+                               show ints
+  show (GTLVar q lvl _) = let suff = case lvl of
+                               0 -> ""
+                               _ -> "#"++show lvl
+                        in show q++suff
+
+
+
+instance (Eq v, Binary v) => Binary (GTLAtom v) where
+  put (GTLRel rel (GTL.EqualExpr lhs rhs)) = put (0::Word8) >> put rel >> put lhs >> put rhs
   put (GTLElem v vals b) = put (1::Word8) >> put v >> put vals >> put b
   put (GTLVar v h b) = put (2::Word8) >> put v >> put h >> put b
   get = do
@@ -34,9 +76,9 @@ instance Binary v => Binary (GTLAtom v) where
     case i of
       0 -> do
         rel <- get
-        lhs <- get
-        rhs <- get
-        return $ GTLRel rel lhs rhs
+        lhs :: (GTL.Expr v Int) <- error "Not implemented" -- get TODO
+        rhs :: (GTL.Expr v Int) <- get
+        return $ GTLRel rel (GTL.EqualExpr lhs rhs)
       1 -> do
         v <- get
         vals <- get
@@ -49,14 +91,14 @@ instance Binary v => Binary (GTLAtom v) where
         return $ GTLVar v h b
 
 -- | Applies a function to every variable in the atom.
-mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
-mapGTLVars f (GTLRel rel lhs rhs) = GTLRel rel (mapVars f lhs) (mapVars f rhs)
+mapGTLVars :: (Eq w, Binary w) => (v -> w) -> GTLAtom v -> GTLAtom w
+mapGTLVars f (GTLRel rel (GTL.EqualExpr lhs rhs)) = GTLRel rel (GTL.EqualExpr (mapVars f lhs) (mapVars f rhs))
 mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b
 mapGTLVars f (GTLVar v i b) = GTLVar (f v) i b
 
 -- | Negate a GTL atom.
 gtlAtomNot :: GTLAtom v -> GTLAtom v
-gtlAtomNot (GTLRel rel l r) = GTLRel (relNot rel) l r
+gtlAtomNot (GTLRel rel (GTL.EqualExpr l r)) = GTLRel (relNot rel) (GTL.EqualExpr l r)
 gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
 gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
 
@@ -77,12 +119,12 @@ gtlToBuchi f = ltlToBuchiM (f . fmap (\(at,p) -> if p
 -- | Extract all variables with their history level from an atom.
 getAtomVars :: GTLAtom v -> [(v,Integer)]
 getAtomVars (GTLElem n _ _) = [(n,0)]
-getAtomVars (GTLRel _ lhs rhs) = getVars lhs ++ getVars rhs
+getAtomVars (GTLRel _ (GTL.EqualExpr lhs rhs)) = getVars lhs ++ getVars rhs
 getAtomVars (GTLVar n h _) = [(n,h)]
 
 -- | Translate a GTL expression into a LTL formula.
 gtlToLTL :: Expr v Bool -> LTL (GTLAtom v)
-gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
+gtlToLTL (GTL.ExprRel rel (GTL.EqualExpr l r)) = LTL.Atom (GTLRel rel (GTL.EqualExpr l r))
 gtlToLTL (GTL.ExprBinBool op l r) = case op of
   GTL.And -> LTL.Bin LTL.And (gtlToLTL l) (gtlToLTL r)
   GTL.Or -> LTL.Bin LTL.Or (gtlToLTL l) (gtlToLTL r)

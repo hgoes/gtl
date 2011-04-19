@@ -58,7 +58,7 @@ data VariableType v => Term v
   | BinExpr GTLType BinOp (Term v) (Term v)
 
 -- | In between
-data VariableType v =>  v
+data VariableType v => RelTerm v
   = RelExpr Relation (Term v) (Term v)
   | ElemExpr Variable [Constant] Bool
 
@@ -145,33 +145,56 @@ data GExpr = GBin BinOp GExpr GExpr
 --   /v/ is the type of variables description (for example `String' or `(String, String)'
 --  for unqualified or qualified names) and /t/ is the type of the expression.
 data Expr v a where
-  -- | A variable. Can have any type.
-  ExprVar :: v -> Integer -> Expr v a
-  -- | A constant. Has the type of the constant.
-  ExprConst :: a -> Expr v a
-  -- | A binary integer operation that takes two integer expressions and returns an integer expression.
-  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int
-  -- | A binary boolean operation.
-  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool
-  -- | A relation between expressions of an arbitrary type.
-  ExprRel :: Relation -> Expr v Int -> Expr v Int -> Expr v Bool
-  -- | `ExprElem' /x/ /xs/ `True' means: "/x/ is element of the list /xs/".
-  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool
+  ExprVar :: BaseType a => v -> Integer -> Expr v a -- A variable. Can have any type.
+  ExprConst :: BaseType a => a -> Expr v a -- A constant. Has the type of the constant.
+  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int -- A binary integer operation that takes two integer expressions and returns an integer expression.
+  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool -- A binary boolean operation.
+  ExprRel ::
+    BaseType t => Relation -> EqualExpr v t -> Expr v Bool -- A relation between expressions of an arbitrary type.
+  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool -- `ExprElem' /x/ /xs/ `True' means: "/x/ is element of the list /xs/".
   ExprNot :: Expr v Bool -> Expr v Bool
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
   deriving Typeable
 
+data EqualExpr v b
+  = (Eq v, Binary v, Eq b, Ord b, Show b, Binary b, Typeable b, BaseType b) =>
+    EqualExpr (Expr v b) (Expr v b)
+  deriving Typeable
+--deriving instance Eq v =>  Eq (EqualExpr v b)
+--deriving instance Ord v =>  Ord (EqualExpr v b)
+
+-- castEqual :: (Eq v, Eq a, Typeable a) => (EqualExpr v a) -> (EqualExpr v a) -> Bool
+castEqual (EqualExpr lhs1 rhs1) (EqualExpr lhs2 rhs2) =
+  let testCasted p v = maybe False p (gcast v) -- testCasted :: (Typeable a, Typeable b) => ((Expr v a) -> Bool) -> (Expr v b) -> Bool
+  in  (testCasted ((==) lhs1) lhs2) && (testCasted ((==) rhs1) rhs2)
+
+castCompare (EqualExpr lhs1 rhs1) (EqualExpr lhs2 rhs2) =
+  let testCasted p v = maybe LT p (gcast v)
+  in
+    case (testCasted (compare lhs1) lhs2) of
+      EQ -> (testCasted (compare rhs1) rhs2)
+      r -> r
+
+{-
+instance (Eq v, Binary v, Binary t, Typeable t) => Binary (EqualExpr v t) where
+  put (EqualExpr lhs rhs) = put lhs >> put rhs
+  get = do
+    lhs <- get
+    rhs <- get
+    castSer (EqualExpr lhs rhs)
+-}
+
 -- | Lift `gcast' in a monad and fail with an error if the cast fails
 castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)
 castSer = maybe (error "Internal serialization error") return . gcast
 
-instance (Binary a,Binary v,Typeable a) => Binary (Expr v a) where
+instance (Eq v, Binary a,Binary v,Typeable a, Ord a, Show a, BaseType a) => Binary (Expr v a) where
   put (ExprVar n hist) = put (0::Word8) >> put n >> put hist
   put (ExprConst c) = put (1::Word8) >> put c
   put (ExprBinInt op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
   put (ExprBinBool op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
-  put (ExprRel rel lhs rhs) = put (3::Word8) >> put rel >> put lhs >> put rhs
+  put (ExprRel rel (EqualExpr lhs rhs)) = put (3::Word8) >> put rel >> put lhs >> put rhs
   put (ExprElem n vals b) = put (4::Word8) >> put n >> put vals >> put b
   put (ExprNot e) = put (5::Word8) >> put e
   put (ExprAlways e) = put (6::Word8) >> put e
@@ -192,16 +215,16 @@ instance (Binary a,Binary v,Typeable a) => Binary (Expr v a) where
           lhs <- get
           rhs <- get
           castSer (ExprBinBool op lhs rhs)
-        Just (_::Expr v a) -> do
+        Just (_:: Expr v a) -> do
           op <- get
           lhs <- get
           rhs <- get
           castSer (ExprBinInt op lhs rhs)
       3 -> do
         rel <- get
-        lhs <- get
-        rhs <- get
-        castSer (ExprRel rel lhs rhs)
+        lhs :: (Expr v a) <- error "not implemented" -- get -- TODO: hier muss der Typ genommen werden, der serialisiert wurde. a ist aber Bool!
+        rhs :: (Expr v a) <- get
+        castSer (ExprRel rel (EqualExpr lhs rhs))
       4 -> do
         n <- get
         vals <- get
@@ -264,7 +287,7 @@ typeCheckBool bind (GBin op l r) = case toBoolOp op of
     Just rop -> do
       res_l <- typeCheckInt bind l
       res_r <- typeCheckInt bind r
-      return $ ExprRel rop res_l res_r
+      return $ ExprRel rop (EqualExpr res_l res_r)
     Nothing -> case toElemOp op of
       Just eop -> case l of
         GVar q n -> case r of
@@ -312,13 +335,13 @@ typeCheckInt bind (GBin op l r) = case toIntOp op of
   Nothing -> Left $ "Operator "++show op++" has wrong type, expected: int"
 typeCheckInt _ (GUn op _) = Left $ "Operator "++show op++" has wrong type, expected: int"
 typeCheckInt _ (GSet vs) = Left $ "Expression "++show vs++" has type {int}, expected int"
-      
+
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
   (ExprConst i1) == (ExprConst i2) = i1 == i2
   (ExprBinInt op1 l1 r1) == (ExprBinInt op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
   (ExprBinBool op1 l1 r1) == (ExprBinBool op2 l2 r2) = op1==op2 && l1==l2 && r1==r2
-  (ExprRel rel1 l1 r1) == (ExprRel rel2 l2 r2) = rel1==rel2 && l1==l2 && r1==r2
+  (ExprRel rel1 args1) == (ExprRel rel2 args2) = rel1==rel2 && (castEqual args1 args2)
   (ExprElem n1 s1 p1) == (ExprElem n2 s2 p2) = n1==n2 && s1==s2 && p1==p2
   (ExprNot e1) == (ExprNot e2) = e1==e2
   (ExprAlways e1) == (ExprAlways e2) = e1==e2
@@ -344,13 +367,11 @@ instance (Ord a,Ord v) => Ord (Expr v a) where
       r -> r
     r -> r
   compare (ExprBinBool _ _ _) _ = LT
-  compare (ExprRel rel1 l1 r1) (ExprRel rel2 l2 r2) = case compare rel1 rel2 of
-    EQ -> case compare l1 l2 of
-      EQ -> compare r1 r2
-      r -> r
+  compare (ExprRel rel1 args1) (ExprRel rel2 args2) = case compare rel1 rel2 of
+    EQ -> castCompare args1 args2
     r -> r
-  compare (ExprRel _ _ _) _ = LT
-  compare (ExprElem n1 s1 p1) (ExprElem n2 s2 p2) = case compare (ExprVar n1 0::Expr v Int) (ExprVar n2 0) of
+  compare (ExprRel _ _) _ = LT
+  compare (ExprElem n1 s1 p1) (ExprElem n2 s2 p2) = case compare (ExprVar n1 0:: Expr v Int) (ExprVar n2 0) of
     EQ -> case compare s1 s2 of
       EQ -> compare p1 p2
       r -> r
@@ -382,7 +403,7 @@ instance (Show a,Show v) => Show (Expr v a) where
                                       Or -> "or"
                                       Implies -> "implies") ++
                                   " ("++show rhs++")"
-  show (ExprRel rel lhs rhs) = "(" ++ show lhs ++ ") " ++
+  show (ExprRel rel (EqualExpr lhs rhs)) = "(" ++ show lhs ++ ") " ++
                                show rel ++
                                " (" ++ show rhs ++ ")"
   show (ExprElem q ints pos) = show (ExprVar q 0::Expr v Int) ++
@@ -467,14 +488,14 @@ pushNot :: Expr v Bool -> Expr v Bool
 pushNot (ExprNot x) = pushNot' x
   where
     pushNot' :: Expr v Bool -> Expr v Bool
-    pushNot' (ExprRel rel x y)
+    pushNot' (ExprRel rel args)
       = ExprRel (case rel of
                     BinLT -> BinGTEq
                     BinLTEq -> BinGT
                     BinGT -> BinLTEq
                     BinGTEq -> BinLT
                     BinEq -> BinNEq
-                    BinNEq -> BinEq) x y
+                    BinNEq -> BinEq) args
     pushNot' (ExprNot x) = x
     pushNot' (ExprBinBool op x y) = case op of
       And -> ExprBinBool Or (pushNot' x) (pushNot' y)
@@ -494,7 +515,7 @@ getVars (ExprVar n lvl) = [(n,lvl)]
 getVars (ExprConst _) = []
 getVars (ExprBinInt _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprBinBool _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (ExprRel _ lhs rhs) = getVars lhs ++ getVars rhs
+getVars (ExprRel _ (EqualExpr lhs rhs)) = getVars lhs ++ getVars rhs
 getVars (ExprElem n _ _) = [(n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
@@ -505,12 +526,12 @@ maximumHistory :: Ord v => [Expr v a] -> Map v Integer
 maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (concat $ fmap getVars exprs)
 
 -- | Change the type of the variables in an expression.
-mapVars :: (v -> w) -> Expr v a -> Expr w a
+mapVars :: (Eq w, Binary w) => (v -> w) -> Expr v a -> Expr w a
 mapVars f (ExprVar n lvl) = ExprVar (f n) lvl
 mapVars f (ExprConst c) = ExprConst c
 mapVars f (ExprBinInt op lhs rhs) = ExprBinInt op (mapVars f lhs) (mapVars f rhs)
 mapVars f (ExprBinBool op lhs rhs) = ExprBinBool op (mapVars f lhs) (mapVars f rhs)
-mapVars f (ExprRel rel lhs rhs) = ExprRel rel (mapVars f lhs) (mapVars f rhs)
+mapVars f (ExprRel rel (EqualExpr lhs rhs)) = ExprRel rel (EqualExpr (mapVars f lhs) (mapVars f rhs))
 mapVars f (ExprElem n vals b) = ExprElem (f n) vals b
 mapVars f (ExprNot e) = ExprNot (mapVars f e)
 mapVars f (ExprAlways e) = ExprAlways (mapVars f e)

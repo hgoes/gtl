@@ -178,7 +178,7 @@ litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
                                                OpDiv -> BinDiv) (litToExpr l) (litToExpr r)
 
 relToExpr :: GTLAtom String -> Sc.Expr
-relToExpr (GTLRel rel l r)
+relToExpr (GTLRel rel (EqualExpr l r))
   = BinaryExpr (case rel of
                    BinLT -> BinLesser
                    BinLTEq -> BinLessEq

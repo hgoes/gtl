@@ -264,14 +264,14 @@ parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> let (idx,isinp,res) = case at of
-                     GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
+                     GTLRel rel (GTL.EqualExpr lhs rhs) -> parseGTLRelation mp arg rel lhs rhs
                      GTLVar n lvl v -> parseGTLRelation mp arg BinEq (ExprVar n lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
-        
+
 -- | Parse a GTL relation into a C-Function.
 --   Returns a unique number for the resulting function, whether its a test- or assignment function and
 --   its source-code representation.
-parseGTLRelation :: BDDConst a => AtomCache -- ^ A cache of parsed atoms
+parseGTLRelation :: GTL.BaseType a => AtomCache -- ^ A cache of parsed atoms
                     -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
                     -> Relation -- ^ The relation type to parse
                     -> GTL.Expr (Maybe String,String) a -- ^ Left hand side of the relation
@@ -307,7 +307,7 @@ parseGTLRelation mp arg rel lhs rhs
     in (idx,isinp,res)
 
 -- | Create a BDD assignment
-createBDDAssign :: BDDConst a => Integer -- ^ How many temporary variables have been used so far?
+createBDDAssign :: GTL.BaseType a => Integer -- ^ How many temporary variables have been used so far?
                      -> String -- ^ The current component name
                      -> String -- ^ The name of the target variable
                      -> Map (Maybe (String,String)) (Set Integer) -- ^ A mapping of output variables
@@ -360,7 +360,7 @@ createBDDAssign count q n outs rel expr
                 ["}"])
 
 -- | Create a comparison operation between two BDD.
-createBDDCompare :: BDDConst a => Integer -- ^ How many temporary variables have been used?
+createBDDCompare :: GTL.BaseType a => Integer -- ^ How many temporary variables have been used?
                       -> Maybe String -- ^ If the comparision is part of a contract, give the name of the component, otherwise `Nothing'
                       -> Relation -- ^ The relation used to compare the BDDs
                       -> GTL.Expr (Maybe String,String) a -- ^ Expression representing BDD 1
