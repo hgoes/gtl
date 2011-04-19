@@ -50,7 +50,9 @@ data CInterface = CInterface
                     -- | Extract an input variable from the state machine
                     cIFaceGetInputVar :: [String] -> String -> String,
                     -- | Translate a haskell type to C
-                    cIFaceTranslateType :: TypeRep -> String
+                    cIFaceTranslateType :: TypeRep -> String,
+                    -- | Translate a haskell value to C
+                    cIFaceTranslateValue :: Dynamic -> String
                   }
 
 -- | Merge two type-mappings into one, report conflicting types

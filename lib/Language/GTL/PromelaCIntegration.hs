@@ -69,7 +69,7 @@ neverClaim :: Trace -- ^ The trace
 neverClaim trace f mdls
   = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                            in varName iface q v l) trace
-        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL f) traceAut
+        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL $ ExprNot f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
         steps = [ Pr.StmtLabel ("st"++showSt i)
@@ -153,6 +153,11 @@ generatePromelaCode spec history
                             [ cIFaceStateInit iface (stateVars name iface) ++ ";"
                             | (name,mdl) <- Map.toList (gtlSpecModels spec)
                             , let iface = allCInterface $ gtlModelBackend mdl
+                            ]++
+                            [ cIFaceGetInputVar iface (stateVars name iface) var ++ "=" ++ cIFaceTranslateValue iface val++";"
+                            | (name,mdl) <- Map.toList (gtlSpecModels spec)
+                            , let iface = allCInterface $ gtlModelBackend mdl
+                            , (var,Just val) <- Map.toList (gtlModelDefaults mdl)
                             ]
                            ,Pr.prAtomic
                             [Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing

@@ -13,6 +13,7 @@ import Data.Map as Map
 import Data.Set as Set
 import Data.List as List
 import Data.Typeable
+import Data.Dynamic
 import Control.Monad.Identity
 
 data Scade = Scade deriving (Show)
@@ -43,6 +44,7 @@ instance GTLBackend Scade where
                                                           , cIFaceGetInputVar = \[inp] var -> inp++"."++var
                                                           , cIFaceGetOutputVar = \[st] var -> st++"."++var
                                                           , cIFaceTranslateType = scadeTranslateTypeC
+                                                          , cIFaceTranslateValue = scadeTranslateValueC
                                                           }
   backendVerify Scade (ScadeData name decls) expr 
     = let (inp,outp) = scadeInterface name decls
@@ -56,6 +58,13 @@ scadeTranslateTypeC rep
   | rep == typeOf (undefined::Int) = "kcg_int"
   | rep == typeOf (undefined::Bool) = "kcg_bool"
   | otherwise = error $ "Couldn't translate "++show rep++" to C-type"
+
+scadeTranslateValueC :: Dynamic -> String
+scadeTranslateValueC d = case fromDynamic d of
+  Just v -> show (v::Int)
+  Nothing -> case fromDynamic d of
+    Just v -> if v then "1" else "0"
+    Nothing -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
 scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))

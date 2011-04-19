@@ -81,6 +81,7 @@ verifyModel keep name decls = do
     deleteTmp "pan.t"
     deleteTmp "pan.b"
   outp <- readProcess ("./"++verifier) ["-a","-e"] ""
+  putStrLn outp
   unless keep $ deleteTmp verifier
   let trace_files = filterTraces outp
   runBDDM $ do
