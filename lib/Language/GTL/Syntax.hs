@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables,FlexibleInstances #-}
+{-# LANGUAGE GADTs,DeriveDataTypeable,ScopedTypeVariables,FlexibleInstances,ExistentialQuantification, StandaloneDeriving #-}
 -- | Data types representing a parsed GTL file.
 module Language.GTL.Syntax where
 
@@ -8,6 +8,12 @@ import Data.Map as Map
 import Data.Binary
 import Data.Word
 import Data.Typeable
+import Data.Array
+import Data.Dynamic
+import System.IO.Unsafe
+import Data.Maybe
+
+{-
 
 -- | Datatype
 -- At the moment GTL formulas can only use Bool | Integer as datatypes.
@@ -62,6 +68,40 @@ data VariableType v => LogicExpr v
   | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
   | Always (LogicExpr v)
   | Next (LogicExpr v)
+  | RelTerm
+  | Var Variable v -- should be Bool!
+
+-}
+
+instance Ord TypeRep where
+    compare t1 t2 =
+        compare
+            (unsafePerformIO (typeRepKey t1))
+            (unsafePerformIO (typeRepKey t2))
+
+class (Show a, Typeable a, Binary a) => BaseType a where
+  typeid :: a -> Int -- Dummy
+
+instance BaseType Bool where
+  typeid _ = 0
+
+instance BaseType Int where
+  typeid _ = 1
+
+instance BaseType (Array Integer Integer) where
+  typeid _ = 2
+
+-- | Constructs a value of type b by appliying the constructor
+-- to the value castet from type a into its correct type.
+construct :: BaseType a => a -> (Map TypeRep (Dynamic -> b)) -> Maybe b
+construct x constructors =
+  let c' = Map.lookup (typeOf x) constructors
+  in case c' of
+    Nothing -> Nothing
+    Just c -> Just (c (toDyn x))
+
+unsafeFromDyn :: Typeable a => Dynamic -> a
+unsafeFromDyn = fromJust . fromDynamic
 
 -- | A GTL file is a list of declarations.
 data Declaration = Model ModelDecl -- ^ Declares a model.

@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs, ExistentialQuantification, StandaloneDeriving, ScopedTypeVariables #-}
 {-| Translates GTL expressions into LTL formula.
  -}
 module Language.GTL.Translation(

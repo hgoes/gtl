@@ -26,6 +26,9 @@ import Control.Monad.State
 import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
+import Data.Typeable
+import Data.Dynamic
+import Data.Maybe
 
 import System.IO.Error (isDoesNotExistError)
 import Language.GTL.ErrorRefiner
@@ -412,15 +415,25 @@ instance BDDConst Bool where
                in if v then var
                   else "Cudd_Not("++var++")"
 
+bddBaseConstr :: Map TypeRep (Dynamic -> String)
+bddBaseConstr = Map.fromList [
+    (typeOf (undefined::Bool), (\c -> bddConst (unsafeFromDyn c :: Bool))),
+    (typeOf (undefined::Int), (\c -> bddConst (unsafeFromDyn c :: Int)))
+  ]
+
+constrBddConst :: GTL.BaseType a => a -> String
+constrBddConst x = fromJust (construct x bddBaseConstr) -- FIXME: unsafe
+
+
 -- | Convert a GTL expression into a C-expression.
 --   Returns a list of statements that have to be executed before the expression,
 --   one that has to be executed afterwards, a number of temporary variables used
 --   and the resulting C-expression.
-createBDDExpr :: BDDConst a => Integer -- ^ The current number of temporary variables
+createBDDExpr :: GTL.BaseType a => Integer -- ^ The current number of temporary variables
                  -> Maybe String -- ^ The current component
                  -> GTL.Expr (Maybe String,String) a -- ^ The GTL expression
                  -> ([String],[String],Integer,String)
-createBDDExpr v mdl (ExprConst i) = ([],[],v,bddConst i)
+createBDDExpr v mdl (ExprConst i) = ([],[],v, constrBddConst i) --
 createBDDExpr v mdl (ExprVar (q,n) lvl) = case mdl of
   Nothing -> case q of
     Just rq -> ([],[],v,"now->"++varName True rq n lvl)

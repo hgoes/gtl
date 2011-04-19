@@ -11,6 +11,9 @@ import Data.List as List hiding (foldl,foldl1,find,concat)
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat)
 import Control.Monad.Identity
+import Data.Typeable
+import Data.Dynamic
+import Data.Maybe
 
 import Language.GTL.LTL as LTL
 import Language.GTL.Syntax as GTL
@@ -159,8 +162,14 @@ stateToTransition name st
     Nothing
     (TargetFork Restart ("st"++show name))
 
-litToExpr :: Integral a => GTL.Expr String a -> Sc.Expr
-litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
+baseConstr :: Map TypeRep (Dynamic -> Sc.Expr)
+baseConstr = Map.fromList [
+    (typeOf (undefined::Bool), (\c -> ConstBoolExpr (unsafeFromDyn c))),
+    (typeOf (undefined::Int), (\c -> ConstIntExpr (unsafeFromDyn c)))
+  ]
+
+litToExpr :: GTL.BaseType a => GTL.Expr String a -> Sc.Expr
+litToExpr (ExprConst n) = fromJust (construct n baseConstr) -- FIXME: unsafe
 litToExpr (ExprVar x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
 litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
                                                OpPlus -> BinPlus
