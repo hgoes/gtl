@@ -7,6 +7,8 @@ import System.FilePath
 import System.Process
 import Control.Monad (when)
 import System.Exit
+import Control.Exception
+import Prelude hiding (catch)
 
 import Language.GTL.Parser.Lexer as GTL
 import Language.GTL.Parser as GTL
@@ -35,6 +37,8 @@ data Options = Options
                , keepTmpFiles :: Bool
                , showHelp :: Bool
                , showVersion :: Bool
+               , ccBinary :: String
+               , ccFlags :: [String]
                }
                deriving Show
 
@@ -44,6 +48,8 @@ defaultOptions = Options
   , keepTmpFiles = False
   , showHelp = False
   , showVersion = False
+  , ccBinary = "gcc"
+  , ccFlags = []
   }
 
 modes :: [(String,TranslationMode)]
@@ -95,9 +101,14 @@ header = "Usage: gtl [OPTION...] gtl-file"
 getOptions :: IO (Options,String)
 getOptions = do
   args <- getArgs
+  gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
+  cflags <- catch (fmap words $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
+  let start_opts = defaultOptions { ccBinary = gcc
+                                  , ccFlags = cflags
+                                  }
   case getOpt Permute options args of
-    (o,[n1],[]) -> return (foldl (flip id) defaultOptions o,n1)
-    (o,_,[]) -> return (foldl (flip id) defaultOptions o,error "Exactly one argument required")
+    (o,[n1],[]) -> return (foldl (flip id) start_opts o,n1)
+    (o,_,[]) -> return (foldl (flip id) start_opts o,error "Exactly one argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 versionString :: String
@@ -130,7 +141,7 @@ main = do
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
-    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (dropExtension gtl_file) rgtl
+    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
     Tikz -> do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str
