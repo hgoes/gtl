@@ -95,11 +95,14 @@ getOptions = do
     (o,[n1],[]) -> return (foldl (flip id) defaultOptions o,n1)
     (o,_,[]) -> if showHelp $ foldl (flip id) defaultOptions o
                 then putStr (usageInfo header options) >> exitSuccess
-                else ioError (userError "At least one argument required")
+                else ioError (userError "One argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 main = do
   (opts,gtl_file) <- getOptions
+  when (showHelp opts) $ do
+    putStr (usageInfo header options)
+    exitSuccess
   gtl_str <- readFile gtl_file
   mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
   rgtl <- case mgtl of
