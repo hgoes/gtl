@@ -1,7 +1,7 @@
 Name:           gtl
 Version:        0.1
 Author:         Henning Günther
-Build-Type:     Simple
+Build-Type:     Custom
 Cabal-Version:  >= 1.10
 Description:
   A tool to verify GALS (globally asynchronous, locally synchronous) models using both

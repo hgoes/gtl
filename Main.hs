@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Main where
 
 import System.Console.GetOpt
@@ -33,6 +34,7 @@ data Options = Options
                , traceFile :: Maybe FilePath
                , keepTmpFiles :: Bool
                , showHelp :: Bool
+               , showVersion :: Bool
                }
                deriving Show
 
@@ -41,6 +43,7 @@ defaultOptions = Options
   , traceFile = Nothing
   , keepTmpFiles = False
   , showHelp = False
+  , showVersion = False
   }
 
 modes :: [(String,TranslationMode)]
@@ -72,6 +75,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
           ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
+          ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
           ]
 
 x2s :: FilePath -> IO String
@@ -93,15 +97,30 @@ getOptions = do
   args <- getArgs
   case getOpt Permute options args of
     (o,[n1],[]) -> return (foldl (flip id) defaultOptions o,n1)
-    (o,_,[]) -> if showHelp $ foldl (flip id) defaultOptions o
-                then putStr (usageInfo header options) >> exitSuccess
-                else ioError (userError "One argument required")
+    (o,_,[]) -> return (foldl (flip id) defaultOptions o,error "Exactly one argument required")
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
+
+versionString :: String
+versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
+  where
+#ifdef BUILD_VERSION
+    version = BUILD_VERSION
+#else
+    version = "unknown"
+#endif
+#ifdef BUILD_DATE
+    date = BUILD_DATE
+#else
+    date = "unknown date"
+#endif
 
 main = do
   (opts,gtl_file) <- getOptions
   when (showHelp opts) $ do
     putStr (usageInfo header options)
+    exitSuccess
+  when (showVersion opts) $ do
+    putStrLn versionString
     exitSuccess
   gtl_str <- readFile gtl_file
   mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
