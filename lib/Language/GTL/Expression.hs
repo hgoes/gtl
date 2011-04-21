@@ -5,10 +5,13 @@ module Language.GTL.Expression where
 
 import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
+import Language.GTL.Buchi
 
 import Data.Binary
 import Data.Typeable
 import Data.Map as Map
+import Data.Set as Set
+import Data.Either
 
 -- | A type-safe expression type.
 --   /v/ is the type of variables (for example `String') and /a/ is the type of the expression.
@@ -22,6 +25,7 @@ data Expr v a where
   ExprNot :: Expr v Bool -> Expr v Bool
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
+  ExprAutomaton :: GBuchi String (Expr v Bool) Bool -> Expr v Bool
   deriving Typeable
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
@@ -70,6 +74,49 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
     typeCheck' tp f bind (GExists v q n expr) u = do
       r <- f q n
       typeCheck' tp f (Map.insert v (r,0) bind) expr u
+    typeCheck' tp f bind (GAutomaton states) u = do
+      aut <- typeCheckAutomaton tp f bind states
+      case gcast (ExprAutomaton aut) of
+        Just res -> return res
+        Nothing -> Left $ "Expression has type bool, expected "++show (typeOf u)
+      
+    typeCheckAutomaton :: (Ord a,Show a)
+                          => Map a TypeRep
+                          -> (Maybe String -> String -> Either String a)
+                          -> ExistsBinding a
+                          -> [State]
+                          -> Either String (GBuchi String (Expr a Bool) Bool)
+    typeCheckAutomaton tp f bind states = do
+      rst <- mapM (\st -> do
+                      r <- typeCheckState tp f bind st
+                      return (stateName st,r)) states
+      let buchi = Map.fromList rst
+          undef = buchiUndefinedStates buchi
+      if Set.null undef
+        then return buchi
+        else Left $ "The following states are undefined: "++show undef
+      
+    typeCheckState :: (Ord a,Show a)
+                      => Map a TypeRep
+                      -> (Maybe String -> String -> Either String a)
+                      -> ExistsBinding a
+                      -> State
+                      -> Either String (BuchiState String (Expr a Bool) Bool)
+    typeCheckState tp f bind st = do
+      rcont <- mapM (\cont -> case cont of
+                        Left expr -> do
+                          l <- typeCheck' tp f bind expr undefined
+                          return $ Left l
+                        Right nxt -> return $ Right nxt) (stateContent st)
+      let (exprs,nexts) = partitionEithers rcont
+      return $ BuchiState { isStart = stateInitial st
+                          , vars = case exprs of
+                            [] -> ExprConst True
+                            _ -> foldl1 (ExprBinBool And) exprs
+                          , finalSets = stateFinal st
+                          , successors = Set.fromList nexts
+                          }
+      
 
 -- | A GTL type can provide means to parse unary and binary operators of its type.
 --   The default is to fail the parsing.
@@ -304,6 +351,7 @@ getVars (ExprElem n _ _) = [(n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
+getVars (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVars (vars st)) (Map.toList aut)
 
 -- | Extracts the maximum level of history for each variable in the expression.
 maximumHistory :: Ord v => Expr v a -> Map v Integer

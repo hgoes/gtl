@@ -72,3 +72,8 @@ buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2)
     trace mp i1 i2
       | Map.member (i1,i2) mp = mp
       | otherwise = putIn mp i1 i2 (b1!i1) (b2!i2)
+
+buchiUndefinedStates :: Ord st => GBuchi st a f -> Set st
+buchiUndefinedStates buchi = foldl (\undef st -> foldl (\undef2 var -> if Map.member var buchi
+                                                                       then undef2
+                                                                       else Set.insert var undef2) undef (successors st)) Set.empty buchi

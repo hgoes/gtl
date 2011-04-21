@@ -22,6 +22,9 @@ data KeyWord = KeyAll
              | KeyInput
              | KeyVerify
              | KeyExists
+             | KeyFinal
+             | KeyAutomaton
+             | KeyState
              deriving Show
 
 data BracketType = Parentheses

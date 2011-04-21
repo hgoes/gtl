@@ -17,6 +17,7 @@ tokens:-
   all                            { key KeyAll }
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
+  automaton                      { key KeyAutomaton }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
   implies                        { bin GOpImplies }
@@ -27,11 +28,13 @@ tokens:-
                                                             r -> Just (read r))) }
   next                           { un GOpNext }
   exists                         { key KeyExists }
+  final                          { key KeyFinal }
   not                              { un GOpNot }
   or                             { bin GOpOr }
   output                         { key KeyOutput }
   input				 { key KeyInput }
   in                             { bin GOpIn }
+  state                          { key KeyState }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }
   ")"                            { const $ Bracket Parentheses True }
