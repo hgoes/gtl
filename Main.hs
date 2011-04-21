@@ -113,6 +113,12 @@ getOptions = do
 
 versionString :: String
 versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
+                ++(case tag of
+                      Nothing -> ""
+                      Just rtag -> "\nBuilt from git tag: "++rtag++".")
+                ++(case branch of
+                      Nothing -> ""
+                      Just rbranch -> "\nBuilt from git branch: "++rbranch++".")
   where
 #ifdef BUILD_VERSION
     version = BUILD_VERSION
@@ -123,6 +129,16 @@ versionString = "This is the GALS Translation Language of version "++version++".
     date = BUILD_DATE
 #else
     date = "unknown date"
+#endif
+#ifdef BUILD_TAG
+    tag = Just BUILD_TAG
+#else
+    tag = Nothing
+#endif
+#ifdef BUILD_BRANCH
+    branch = Just BUILD_BRANCH
+#else
+    branch = Nothing
 #endif
 
 main = do
