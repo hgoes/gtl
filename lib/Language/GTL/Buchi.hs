@@ -17,7 +17,7 @@ data BuchiState st a f = BuchiState
                          , vars :: a -- ^ The variables that must be true in this state.
                          , finalSets :: f -- ^ In which final sets is this state a member?
                          , successors :: Set st -- ^ All following states
-                         } deriving Show
+                         } deriving (Show,Eq,Ord)
 
 -- | Transforms a generalized buchi automaton into a regular one.
 translateGBA :: (Ord st,Ord f) => GBuchi st a (Set f) -> GBuchi (st,Int) a Bool
