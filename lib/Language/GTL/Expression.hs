@@ -61,7 +61,7 @@ data Expr v a where
   deriving Typeable
 
 data EqualExpr v b
-  = (Eq v, Binary v, Eq b, Ord b, Show b, Binary b, Typeable b, BaseType b) =>
+  = (Eq v, Eq b, Ord b, Show b, Binary b, Typeable b, BaseType b) =>
     EqualExpr (Expr v b) (Expr v b)
   deriving Typeable
 --deriving instance Eq v =>  Eq (EqualExpr v b)
@@ -90,7 +90,7 @@ instance (Eq v, Binary v, Binary t, Typeable t) => Binary (EqualExpr v t) where
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type `Bool'.
-typeCheck :: (Ord a,Show a,GTLType t,Show t)
+typeCheck :: (Ord a,Show a,GTLType t,Show t, BaseType t)
              => Map a TypeRep -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
@@ -98,7 +98,7 @@ typeCheck :: (Ord a,Show a,GTLType t,Show t)
              -> Either String (Expr a t)
 typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
   where
-    typeCheck' :: (Ord a,Show a,GTLType t,Show t)
+    typeCheck' :: (Ord a,Show a,GTLType t,Show t,BaseType t)
                   => Map a TypeRep
                   -> (Maybe String -> String -> Either String a)
                  -> ExistsBinding a
@@ -110,7 +110,7 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
             v <- f q n
             return (v,0)
       (rv,lvl) <- case q of
-        Nothing -> case Map.lookup n bind of 
+        Nothing -> case Map.lookup n bind of
           Just (v,lvl) -> return (v,lvl)
           Nothing -> nl
         _ -> nl
@@ -120,7 +120,7 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
         Just t -> if typeOf u == t
                   then Right rvar
                   else Left $ "Type error for variable "++show rvar++": Expected to be "++show (typeOf u)++", but is "++show t
-    typeCheck' _ _ _ (GConst c) u = case cast c of 
+    typeCheck' _ _ _ (GConst c) u = case cast c of
       Nothing -> Left $ "Expression "++show c++" has type int, expected "++show (typeOf u)
       Just r -> return $ ExprConst r
     typeCheck' _ _ _ (GConstBool c) u = case cast c of
@@ -162,8 +162,8 @@ instance GTLType Bool where
     Nothing -> case toRelOp op of
       Nothing -> Left $ show op ++ " is not a boolean operator"
       Just rel -> do
-        rl <- typeCheck tp f bind lhs
-        rr <- typeCheck tp f bind rhs
+        rl :: (Expr v Bool) <- error "not implemented" -- <- typeCheck tp f bind lhs FIXME: get type from somewhere
+        rr :: (Expr v Bool) <- typeCheck tp f bind rhs
         return $ ExprRel rel (EqualExpr rl rr)
     Just rop -> do
       rl <- typeCheck tp f bind lhs
@@ -192,7 +192,7 @@ instance GTLType Int where
       rl <- typeCheck tp f bind lhs
       rr <- typeCheck tp f bind rhs
       return $ ExprBinInt rop rl rr
-  typeCheckUn tp f bind u op expr = Left $ show op ++ " is not an integer operator"    
+  typeCheckUn tp f bind u op expr = Left $ show op ++ " is not an integer operator"
 
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
@@ -272,7 +272,7 @@ instance (Show a,Show v) => Show (Expr v a) where
   show (ExprAlways e) = "always ("++show e++")"
   show (ExprNext e) = "next ("++show e++")"
 
-instance (Binary a,Binary v,Typeable a) => Binary (Expr v a) where
+instance (Eq v, Binary a, Binary v, Typeable a, Ord a, BaseType a) => Binary (Expr v a) where
   put (ExprVar n hist) = put (0::Word8) >> put n >> put hist
   put (ExprConst c) = put (1::Word8) >> put c
   put (ExprBinInt op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
@@ -328,14 +328,14 @@ pushNot :: Expr v Bool -> Expr v Bool
 pushNot (ExprNot x) = pushNot' x
   where
     pushNot' :: Expr v Bool -> Expr v Bool
-    pushNot' (ExprRel rel x y)
+    pushNot' (ExprRel rel (EqualExpr x y))
       = ExprRel (case rel of
                     BinLT -> BinGTEq
                     BinLTEq -> BinGT
                     BinGT -> BinLTEq
                     BinGTEq -> BinLT
                     BinEq -> BinNEq
-                    BinNEq -> BinEq) x y
+                    BinNEq -> BinEq) (EqualExpr x y)
     pushNot' (ExprNot x) = x
     pushNot' (ExprBinBool op x y) = case op of
       And -> ExprBinBool Or (pushNot' x) (pushNot' y)
@@ -355,7 +355,7 @@ getVars (ExprVar n lvl) = [(n,lvl)]
 getVars (ExprConst _) = []
 getVars (ExprBinInt _ lhs rhs) = getVars lhs ++ getVars rhs
 getVars (ExprBinBool _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (ExprRel _ lhs rhs) = getVars lhs ++ getVars rhs
+getVars (ExprRel _ (EqualExpr lhs rhs)) = getVars lhs ++ getVars rhs
 getVars (ExprElem n _ _) = [(n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
@@ -366,12 +366,12 @@ maximumHistory :: Ord v => Expr v a -> Map v Integer
 maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 -- | Change the type of the variables in an expression.
-mapVars :: (v -> w) -> Expr v a -> Expr w a
+mapVars :: (Binary w, Eq w) => (v -> w) -> Expr v a -> Expr w a
 mapVars f (ExprVar n lvl) = ExprVar (f n) lvl
 mapVars f (ExprConst c) = ExprConst c
 mapVars f (ExprBinInt op lhs rhs) = ExprBinInt op (mapVars f lhs) (mapVars f rhs)
 mapVars f (ExprBinBool op lhs rhs) = ExprBinBool op (mapVars f lhs) (mapVars f rhs)
-mapVars f (ExprRel rel lhs rhs) = ExprRel rel (mapVars f lhs) (mapVars f rhs)
+mapVars f (ExprRel rel (EqualExpr lhs rhs)) = ExprRel rel (EqualExpr (mapVars f lhs) (mapVars f rhs))
 mapVars f (ExprElem n vals b) = ExprElem (f n) vals b
 mapVars f (ExprNot e) = ExprNot (mapVars f e)
 mapVars f (ExprAlways e) = ExprAlways (mapVars f e)
@@ -455,7 +455,7 @@ toElemOp _ = Nothing
 
 -- | Binds variables to other variables from the past.
 type ExistsBinding a = Map String (a,Integer)
-  
+
 -- | Cast a binary operator into an arithmetic operator. Returns `Nothing' if the cast fails.
 toIntOp :: BinOp -> Maybe IntOp
 toIntOp GOpPlus = Just OpPlus

@@ -50,7 +50,7 @@ buchiToDot buchi
                                                                                                              then at
                                                                                                              else gtlAtomNot at)) ' '
                                                                                   | (at,tr) <- Map.toList (vars st)]
-                                                                         ,Comment $ "\\begin{array}{c}" ++ 
+                                                                         ,Comment $ "\\begin{array}{c}" ++
                                                                           (concat $ intersperse "\\\\" [ atomToLatex (if tr
                                                                                                                       then at
                                                                                                                       else gtlAtomNot at)
@@ -236,7 +236,7 @@ dotToTikz mtp gr
        Nothing -> []
        Just p -> [p]
      ])
-    
+
 -- | Convert a list of points into a spline by grouping them.
 splinePoints :: [a] -> [(a,a,a,a)]
 splinePoints (x:xs) = splinePoints' x xs
@@ -245,8 +245,8 @@ splinePoints (x:xs) = splinePoints' x xs
     splinePoints' p (x:y:z:xs) = (p,x,y,z):splinePoints' z xs
 
 -- | Render a GTL atom to LaTeX.
-atomToLatex :: GTLAtom String -> String 
-atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
+atomToLatex :: GTLAtom String -> String
+atomToLatex (GTLRel rel (EqualExpr lhs rhs)) = (exprToLatex lhs)++(case rel of
                                                           BinLT -> "<"
                                                           BinLTEq -> "\\leq "
                                                           BinGT -> ">"
@@ -254,7 +254,7 @@ atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
                                                           BinEq -> "="
                                                           BinNEq -> "\neq ")++(exprToLatex rhs)
   where
-    exprToLatex :: Expr String Int -> String
+    exprToLatex :: Expr String t -> String
     exprToLatex (ExprVar v h) = v++(if h==0 then "" else "["++show h++"]")
     exprToLatex (ExprConst x) = show x
     exprToLatex (ExprBinInt rel lhs rhs) = (exprToLatex lhs)++(case rel of
@@ -267,9 +267,9 @@ atomToLatex (GTLVar v h t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" 
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
 estimateWidth :: GTLAtom String -> Int
-estimateWidth (GTLRel _ lhs rhs) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
+estimateWidth (GTLRel _ (EqualExpr lhs rhs)) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
   where
-    estimateWidth' :: Expr String Int -> Int
+    estimateWidth' :: Expr String t -> Int
     estimateWidth' (ExprVar v h) = (length v)+(if h==0 then 0 else 2+(length (show h)))
     estimateWidth' (ExprConst x) = length (show x)
     estimateWidth' (ExprBinInt _ lhs rhs) = (estimateWidth' lhs)+(estimateWidth' rhs)

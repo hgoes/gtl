@@ -24,10 +24,9 @@ import Data.Set as Set
 data GTLAtom v = forall t. (Eq v, Show t, Eq t, Ord t, Typeable t, Binary t) => GTLRel GTL.Relation (GTL.EqualExpr v t)
                | GTLElem v [Integer] Bool
                | GTLVar v Integer Bool
-               deriving (Eq,Ord)
 
 instance Show v => Show (GTLAtom v) where
-  show (GTLRel rel lhs rhs) = show lhs ++ " " ++ show rel ++ " " ++ show rhs
+  show (GTLRel rel (GTL.EqualExpr lhs rhs)) = show lhs ++ " " ++ show rel ++ " " ++ show rhs
   show (GTLElem var vals t) = show var ++ (if t then "" else " not")++" in "++show vals
   show (GTLVar var hist t) = show var ++ (if hist==0 then "" else "["++show hist++"]")
 
@@ -57,21 +56,6 @@ instance Ord v => Ord (GTLAtom v) where
         r -> r
       r -> r
   compare _ _ = LT
-
-instance Show v => Show (GTLAtom v) where
-  show (GTLRel rel (GTL.EqualExpr lhs rhs)) = "(" ++ show lhs ++ ") "
-                              ++ show rel
-                              ++ " (" ++ show rhs ++ ")"
-  show (GTLElem q ints pos) = show (GTLVar q 0 True) ++
-                               (if pos then " in "
-                                else " not in ") ++
-                               show ints
-  show (GTLVar q lvl _) = let suff = case lvl of
-                               0 -> ""
-                               _ -> "#"++show lvl
-                        in show q++suff
-
-
 
 instance (Eq v, Binary v) => Binary (GTLAtom v) where
   put (GTLRel rel (GTL.EqualExpr lhs rhs)) = put (0::Word8) >> put rel >> put lhs >> put rhs
