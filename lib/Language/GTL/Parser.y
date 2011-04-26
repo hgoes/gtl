@@ -34,6 +34,7 @@ import qualified Data.Map as Map
   "input"           { Key KeyInput }
   "output"          { Key KeyOutput }
   "state"           { Key KeyState }
+  "until"           { Key KeyUntil }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
@@ -61,6 +62,7 @@ import qualified Data.Map as Map
 
 %left ":"
 %left "always" "next" "finally"
+%left "until"
 %left "or"
 %left "and"
 %left "implies"
@@ -130,6 +132,7 @@ formula : expr { $1 }
 expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "or" expr               { GBin GOpOr $1 $3 }
      | expr "implies" expr          { GBin GOpImplies $1 $3 }
+     | expr "until" expr            { GBin GOpUntil $1 $3 }
      | expr "<" expr                { GBin GOpLessThan $1 $3 }
      | expr "<=" expr               { GBin GOpLessThanEqual $1 $3 }
      | expr ">" expr                { GBin GOpGreaterThan $1 $3 }

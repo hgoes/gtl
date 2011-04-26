@@ -373,6 +373,7 @@ mapVars f (ExprNext e) = ExprNext (mapVars f e)
 data BoolOp = And     -- ^ &#8896;
             | Or      -- ^ &#8897;
             | Implies -- ^ &#8658;
+            | Until
             deriving (Show,Eq,Ord,Enum)
 
 instance Binary BoolOp where
@@ -427,6 +428,7 @@ toBoolOp :: BinOp -> Maybe BoolOp
 toBoolOp GOpAnd = Just And
 toBoolOp GOpOr = Just Or
 toBoolOp GOpImplies = Just Implies
+toBoolOp GOpUntil = Just Until
 toBoolOp _ = Nothing
 
 -- | Cast a binary operator into a relation. Returns `Nothing' if the cast fails.
