@@ -56,7 +56,7 @@ buchiToDot buchi
                                                                                                                       else gtlAtomNot at)
                                                                                                        | (at,tr) <- Map.toList (vars st)]) ++
                                                                           "\\end{array}"
-                                                                         ,Height 0,Width 0,Margin (DVal 0)
+                                                                         ,Height 0.5,Width 0.5,Margin (DVal 0)
                                                                          ]
                                                         | (i,st) <- Map.toList buchi
                                                         ] ++
