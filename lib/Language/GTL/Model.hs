@@ -83,7 +83,24 @@ gtlParseSpec decls = do
                              ) Map.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
                                              [] -> GConstBool True
                                              x -> foldl1 (GBin GOpAnd) x)
-    return $ GTLSpec { gtlSpecModels = Map.fromList rmdls
+    let mdl_mp = Map.fromList rmdls
+    sequence_ [ do
+                   fmdl <- case Map.lookup f mdl_mp of
+                     Nothing -> Left $ "Model "++f++" not found."
+                     Just x -> return x
+                   tmdl <- case Map.lookup t mdl_mp of
+                     Nothing -> Left $ "Model "++t++" not found."
+                     Just x -> return x
+                   fvar <- case Map.lookup fv (gtlModelOutput fmdl) of
+                     Nothing -> Left $ "Variable "++f++"."++fv++" not found or not an output variable."
+                     Just x -> return x
+                   tvar <- case Map.lookup tv (gtlModelInput tmdl) of
+                     Nothing -> Left $ "Variable "++t++"."++tv++" not found or not an input variable."
+                     Just x -> return x
+                   if fvar==tvar then return ()
+                     else Left $ "Type mismatch between "++f++"."++fv++" and "++t++"."++tv++"."
+              |  Connect (ConnectDecl f fv t tv) <- decls ]
+    return $ GTLSpec { gtlSpecModels = mdl_mp
                      , gtlSpecVerify = vexpr
                      , gtlSpecConnections = [ (f,fv,t,tv)
                                             | Connect (ConnectDecl f fv t tv) <- decls ]
