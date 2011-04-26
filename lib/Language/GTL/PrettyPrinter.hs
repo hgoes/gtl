@@ -205,7 +205,11 @@ dotToTikz mtp gr
                                   _ -> False) (nodeAttributes nd) of
                     Just (Label (RecordLabel x)) -> x
                     _ -> error "No record label given"
-           rects = [x | Rects x <- (nodeAttributes nd)]
+           rects = case List.find (\attr -> case attr of
+                                  Rects _ -> True
+                                  _ -> False) (nodeAttributes nd) of
+                    Just (Rects x) -> x
+                    _ -> error "No rects given"
            Just reprs = mtp
            (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
            Rect m1 m2 = head (drop (Map.size inp) rects)
