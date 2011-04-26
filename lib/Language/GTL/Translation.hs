@@ -11,7 +11,7 @@ module Language.GTL.Translation(
   gtlToLTL
   ) where
 
-import Language.GTL.Syntax as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.LTL as LTL
 import Data.Binary
 import Data.Word
@@ -24,6 +24,12 @@ import Data.Set as Set
 data GTLAtom v = forall t. (Eq v, Show t, Eq t, Ord t, Typeable t, Binary t) => GTLRel GTL.Relation (GTL.EqualExpr v t)
                | GTLElem v [Integer] Bool
                | GTLVar v Integer Bool
+               deriving (Eq,Ord)
+
+instance Show v => Show (GTLAtom v) where
+  show (GTLRel rel lhs rhs) = show lhs ++ " " ++ show rel ++ " " ++ show rhs
+  show (GTLElem var vals t) = show var ++ (if t then "" else " not")++" in "++show vals
+  show (GTLVar var hist t) = show var ++ (if hist==0 then "" else "["++show hist++"]")
 
 instance Eq v => Eq (GTLAtom v) where
   (==) (GTLRel a1 a2) (GTLRel b1 b2) = (((a1 == b1)) && (castEqual a2 b2))

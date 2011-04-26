@@ -24,7 +24,7 @@ import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
-import qualified Language.GTL.Syntax as GTL
+import qualified Language.GTL.Expression as GTL
 import Language.GTL.Translation
 
 -- | A trace is a list of requirements.

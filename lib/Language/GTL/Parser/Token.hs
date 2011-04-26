@@ -1,4 +1,4 @@
-module Language.GTL.Token where
+module Language.GTL.Parser.Token where
 
 data Token = Identifier String
            | Key KeyWord
@@ -17,7 +17,9 @@ data KeyWord = KeyAll
              | KeyConnect
              | KeyContract
              | KeyModel
+             | KeyOutput
              | KeyInit
+             | KeyInput
              | KeyVerify
              | KeyExists
              deriving Show
