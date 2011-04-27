@@ -116,7 +116,7 @@ formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let n
                                                                            in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
                                                                                     } }
                   | "output" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
                                                                                      } }
 
                   |                                             { id }
