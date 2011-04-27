@@ -87,13 +87,15 @@ getAtomVars (GTLVar n h _) = [(n,h)]
 
 -- | Translate a GTL expression into a LTL formula.
 gtlToLTL :: Expr v Bool -> LTL (GTLAtom v)
-gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom (GTLRel rel l r)
+gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom $ GTLRel rel l r
 gtlToLTL (GTL.ExprBinBool op l r) = case op of
   GTL.And -> LTL.Bin LTL.And (gtlToLTL l) (gtlToLTL r)
   GTL.Or -> LTL.Bin LTL.Or (gtlToLTL l) (gtlToLTL r)
   GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL l)) (gtlToLTL r)
+  GTL.Until -> LTL.Bin LTL.Until (gtlToLTL l) (gtlToLTL r)
 gtlToLTL (GTL.ExprNot x) = LTL.Un LTL.Not (gtlToLTL x)
 gtlToLTL (GTL.ExprAlways x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
 gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)
-gtlToLTL (GTL.ExprElem v lits p) = LTL.Atom (GTLElem v lits p)
-gtlToLTL (GTL.ExprVar n lvl) = LTL.Atom (GTLVar n lvl True)
+gtlToLTL (GTL.ExprElem v lits p) = LTL.Atom $ GTLElem v lits p
+gtlToLTL (GTL.ExprVar n lvl) = LTL.Atom $ GTLVar n lvl True
+gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLAutomaton (fmap (\co -> co { vars = gtlToLTL (vars co) }) buchi)

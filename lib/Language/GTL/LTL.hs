@@ -27,7 +27,7 @@ data LTL a = Atom a
            | Bin BinOp (LTL a) (LTL a)
            | Un UnOp (LTL a)
            | Ground Bool
-           | LTLAutomaton (Buchi (Map a Bool)) Integer Integer
+           | LTLAutomaton (GBuchi String (LTL a) Bool)
            deriving (Eq,Ord)
 
 -- | Minimal set of binary operators for LTL.
@@ -90,6 +90,7 @@ distributeNegation (Ground p) = Ground p
 distributeNegation (Bin op l r) = Bin op (distributeNegation l) (distributeNegation r)
 distributeNegation (Un Not x) = pushNegation x
 distributeNegation (Un op x) = Un op (distributeNegation x)
+distributeNegation aut@(LTLAutomaton _) = aut
 
 pushNegation :: LTL a -> LTL a
 pushNegation (Atom x) = Un Not (Atom x)
@@ -103,7 +104,7 @@ pushNegation (Bin op l r) = Bin (case op of
                             (pushNegation r)
 pushNegation (Un Not x) = distributeNegation x
 pushNegation (Un Next x) = Un Next (pushNegation x)
-pushNegation aut@(LTLAutomaton _ _ _) = Un Not aut
+pushNegation aut@(LTLAutomaton _) = error "Complementing automatons is not yet implemented"
 
 -- | Extracts all until constructs from a LTL formula.
 --   Each until gets a unique `Integer' identifier.
@@ -120,7 +121,9 @@ untils = untils' 0
                                  (mpr,nr) = untils' nl r
                              in (Map.union mpl mpr,nr+1)
     untils' n (Un op x) = untils' n x
-    untils' n (LTLAutomaton _ _ _) = (Map.empty,n)
+    untils' n (LTLAutomaton buchi) = foldl (\(mp,n) co -> let (nmp,n') = untils' n (vars co)
+                                                          in (Map.union mp nmp,n')) (Map.empty,0)
+                                     (Map.elems buchi)
 
 ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
 ltlAtoms f (Atom x) = Set.fromList (f x)
@@ -301,18 +304,18 @@ expand untils n f node nset = case new node of
                                                  }
                                     (nset',n',f') = expand untils (n+2) f node1 nset
                                in expand untils n' f' node2 nset'
-             LTLAutomaton buchi maxst maxf -> foldl (\(ns,cn,cf) nd -> expand untils cn cf nd ns) (nset,n+maxst,f+maxf)
-                                              [ Node { name = n + st
-                                                     , incoming = if isStart co
-                                                                  then incoming node
-                                                                  else Set.empty
-                                                     , outgoing = Set.map (+n) (successors co)
-                                                     , new = xs
-                                                     , old = Set.union (Set.insert x (old node)) (Set.fromList [ if p
-                                                                                                                 then Atom var
-                                                                                                                 else Un Not (Atom var)
-                                                                                                               | (var,p) <- Map.toList (vars co) ])
-                                                     , next = next node
-                                                     , finals = Set.map (+f) (finalSets co)
-                                                     }
-                                              | (st,co) <- Map.toList buchi ]
+             LTLAutomaton buchi -> let stmp = Map.fromList $ zip (Map.keys buchi) [n..]
+                                       n' = n+(fromIntegral $ Map.size buchi)
+                                       nodes = [ Node { name = stmp!st
+                                                      , new = (vars co):xs
+                                                      , old = Set.insert x (old node)
+                                                      , next = next node
+                                                      , incoming = if isStart co
+                                                                   then incoming node
+                                                                   else Set.empty
+                                                      , outgoing = Set.map (stmp!) (successors co)
+                                                      , finals = if finalSets co
+                                                                 then Set.singleton f
+                                                                 else Set.empty
+                                                      } | (st,co) <- Map.toList buchi ]
+                                   in foldl (\(ns,cn,cf) node -> expand untils cn cf node ns) (nset,n',f+1) nodes
