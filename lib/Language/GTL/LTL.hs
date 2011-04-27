@@ -155,7 +155,7 @@ ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buch
 ltlToBuchiM p f = let f' = distributeNegation f
                       (unt,max_unt) = untils f'
                       untr = untilsToUntilsRHS unt
-                  in buildGraph p unt (buildNodeSet untr max_unt f')
+                  in buildGraph p unt (buildNodeSet untr max_unt f') >>= return.buchiGC
 
 -- | Converts a LTL formula to a generalized buchi automaton.
 ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)

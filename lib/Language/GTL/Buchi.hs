@@ -77,3 +77,6 @@ buchiUndefinedStates :: Ord st => GBuchi st a f -> Set st
 buchiUndefinedStates buchi = foldl (\undef st -> foldl (\undef2 var -> if Map.member var buchi
                                                                        then undef2
                                                                        else Set.insert var undef2) undef (successors st)) Set.empty buchi
+
+buchiGC :: Ord st => GBuchi st a f -> GBuchi st a f
+buchiGC buchi = fmap (\co -> co { successors = Set.filter (\succ -> Map.member succ buchi) (successors co) }) buchi
