@@ -78,5 +78,19 @@ buchiUndefinedStates buchi = foldl (\undef st -> foldl (\undef2 var -> if Map.me
                                                                        then undef2
                                                                        else Set.insert var undef2) undef (successors st)) Set.empty buchi
 
+buchiRestrictReachable :: Ord st => GBuchi st a f -> GBuchi st a f
+buchiRestrictReachable buchi = Map.intersection buchi (buchiReachable buchi)
+
+buchiReachable :: Ord st => GBuchi st a f -> Map st ()
+buchiReachable buchi = foldl (\reached (name,co) -> if Map.member name reached
+                                                    then reached
+                                                    else buchiReachable' (Map.insert name () reached) co
+                             ) Map.empty [ el | el@(_,co) <- Map.toList buchi, isStart co ]
+  where
+    buchiReachable' reached co = foldl (\reached' succ -> if Map.member succ reached'
+                                                          then reached'
+                                                          else buchiReachable' (Map.insert succ () reached') (buchi!succ)) reached (successors co)
+
+
 buchiGC :: Ord st => GBuchi st a f -> GBuchi st a f
 buchiGC buchi = fmap (\co -> co { successors = Set.filter (\succ -> Map.member succ buchi) (successors co) }) buchi
