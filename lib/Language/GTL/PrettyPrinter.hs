@@ -22,6 +22,23 @@ import Data.Typeable
 import Data.Traversable
 import Prelude hiding (mapM)
 
+simplePrettyPrint :: GTLSpec -> String
+simplePrettyPrint spec
+  = unlines $ concat [
+     [name ++ "{"]++
+     (fmap ("  "++) (simplePrettyPrintBuchi (ltlToBuchi (gtlToLTL (gtlModelContract mdl)))))++
+     ["}"]
+  | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
+
+simplePrettyPrintBuchi :: GBuchi Integer (Map (GTLAtom String) Bool) (Set Integer) -> [String]
+simplePrettyPrintBuchi buchi = concat
+                               [ [(if isStart co then "initial " else "")++"state "++show st++" {"]++
+                                 [ "  "++(if p then "" else "not ") ++ show at | (at,p) <- Map.toList (vars co) ]++
+                                 [ "  -> "++show succ | succ <- Set.toList (successors co) ]++
+                                 [ "  final "++show f | f <- Set.toList (finalSets co) ] ++
+                                 ["}"]
+                               | (st,co) <- Map.toList buchi ]
+
 -- | Get the bounding box of a preprocessed graph.
 getDotBoundingBox :: DotGraph a -> Rect
 getDotBoundingBox gr
