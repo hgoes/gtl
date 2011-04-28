@@ -10,7 +10,6 @@ module Language.GTL.LTL(
   Buchi(..),
   BuchiState(..),
   ltlToBuchi,
-  ltlToBuchiM,
   translateGBA,
   buchiProduct
   ) where
@@ -18,9 +17,10 @@ module Language.GTL.LTL(
 import Data.Set as Set
 import Data.Map as Map
 import Data.Foldable
-import Prelude hiding (foldl)
-import Control.Monad.Identity
+import Prelude hiding (foldl,mapM,foldl1)
+import Control.Monad.Identity (runIdentity)
 import Language.GTL.Buchi
+import Data.Traversable
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -28,6 +28,7 @@ data LTL a = Atom a
            | Un UnOp (LTL a)
            | Ground Bool
            | LTLAutomaton (GBuchi String (LTL a) Bool)
+           | LTLSimpleAutomaton (GBuchi Integer (Set a) Bool)
            deriving (Eq,Ord)
 
 -- | Minimal set of binary operators for LTL.
@@ -90,6 +91,7 @@ distributeNegation (Ground p) = Ground p
 distributeNegation (Bin op l r) = Bin op (distributeNegation l) (distributeNegation r)
 distributeNegation (Un Not x) = pushNegation x
 distributeNegation (Un op x) = Un op (distributeNegation x)
+distributeNegation aut@(LTLSimpleAutomaton _) = aut
 distributeNegation aut@(LTLAutomaton _) = aut
 
 pushNegation :: LTL a -> LTL a
@@ -104,7 +106,8 @@ pushNegation (Bin op l r) = Bin (case op of
                             (pushNegation r)
 pushNegation (Un Not x) = distributeNegation x
 pushNegation (Un Next x) = Un Next (pushNegation x)
-pushNegation aut@(LTLAutomaton _) = error "Complementing automatons is not yet implemented"
+pushNegation (LTLSimpleAutomaton _) = error "Complementing automata is not yet implemented"
+pushNegation (LTLAutomaton _) = error "Complementing automata is not yet implemented"
 
 -- | Extracts all until constructs from a LTL formula.
 --   Each until gets a unique `Integer' identifier.
@@ -121,8 +124,10 @@ untils = untils' 0
                                  (mpr,nr) = untils' nl r
                              in (Map.union mpl mpr,nr+1)
     untils' n (Un op x) = untils' n x
+    untils' n (LTLSimpleAutomaton _) = (Map.empty,n)
     untils' n (LTLAutomaton buchi) = foldl (\(mp,n) co -> let (nmp,n') = untils' n (vars co)
-                                                          in (Map.union mp nmp,n')) (Map.empty,0)
+                                                          in (Map.union mp nmp,n')
+                                           ) (Map.empty,0)
                                      (Map.elems buchi)
 
 ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
@@ -150,34 +155,74 @@ type UntilsRHS a = Set (LTL a)
 untilsToUntilsRHS :: Ord a => Untils a -> UntilsRHS a
 untilsToUntilsRHS mp = Set.map snd $ Map.keysSet mp
 
--- | Same as `ltlToBuchi' but also allows the user to construct the variable type and runs in a monad.
-ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
-ltlToBuchiM p f = let f' = distributeNegation f
-                      (unt,max_unt) = untils f'
-                      untr = untilsToUntilsRHS unt
-                  in buildGraph p unt (buildNodeSet untr max_unt f') >>= return.buchiGC
+extractAutomata :: LTL a -> (Maybe (LTL a),[GBuchi Integer (Set a) Bool])
+extractAutomata (LTLSimpleAutomaton buchi) = (Nothing,[buchi])
+extractAutomata (Bin And l r) = let (ml,al) = extractAutomata l
+                                    (mr,ar) = extractAutomata r
+                                in (case ml of
+                                       Nothing -> mr
+                                       Just rl -> case mr of
+                                         Nothing -> Just rl
+                                         Just rr -> Just (Bin And rl rr),al++ar)
+extractAutomata x = (Just x,[])
 
--- | Converts a LTL formula to a generalized buchi automaton.
-ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
-ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
+-- | Same as `ltlToBuchi' but also allows the user to construct the variable type and runs in a monad.
+ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Set (a,Bool))
+ltlToBuchi f = let (f',buchis) = extractAutomata f
+                   mbuchi_prod b1 b2 = buchiProduct'
+                                       (\s1 s2 -> s1 + s2*(fromIntegral $ Map.size b1)) 
+                                       Set.union
+                                       (either (*2) ((+1).(*2)))
+                                       b1 b2
+                   rbuchi = case buchis of
+                     [] -> Nothing
+                     _ -> Just $ foldl1 mbuchi_prod $ fmap
+                          (fmap (\co -> co { vars = Set.map (\x -> (x,True)) (vars co)
+                                           , finalSets = if finalSets co
+                                                         then Set.singleton 0
+                                                         else Set.empty
+                                           }
+                                )
+                          ) buchis
+                   res = case f' of
+                     Nothing -> case rbuchi of
+                       Nothing -> Map.singleton 0 (BuchiState { isStart = True
+                                                              , vars = Set.empty
+                                                              , finalSets = Set.empty
+                                                              , successors = Set.singleton 0
+                                                              })
+                       Just b -> b
+                     Just formula -> let negf = distributeNegation formula
+                                         (unt,max_unt) = untils negf                      
+                                         untr = untilsToUntilsRHS unt
+                                         buchi = buildGraph unt (buildNodeSet untr max_unt negf)
+                                     in case rbuchi of
+                                       Nothing -> buchi
+                                       Just b -> mbuchi_prod buchi b
+               in res
+
+--- | Converts a LTL formula to a generalized buchi automaton.
+--ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
+--ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
 
 finalSet :: Ord a => Set (LTL a) -> Untils a -> Set Integer
 finalSet cur acc = Set.fromList $ Map.elems $ Map.difference acc $ 
                    Map.fromList [ ((l,r),undefined) | Bin Until l r <- Set.toList cur,not $ Set.member r cur ]
 
-buildGraph :: (Ord a,Monad m) => ([(a,Bool)] -> m b) -> Untils a -> NodeSet a -> m (Buchi b)
-buildGraph f untils nset 
-  = foldlM (\mp ((old,next),(name,inc,out,fin)) -> do
-               v <- f $ [ (p,True) | Atom p <- Set.toList old ] ++
-                    [ (p,False) | Un Not (Atom p) <- Set.toList old ]
-               return $ Map.alter (\cur -> Just $ BuchiState { isStart = Set.member 0 inc
-                                                             , vars = v
-                                                             , finalSets = Set.union (finalSet old untils) fin
-                                                             , successors = case cur of
-                                                               Nothing -> out
-                                                               Just buchi -> Set.union out (successors buchi)
-                                                             }
-                                  ) name $ 
+buildGraph :: Ord a => Untils a -> NodeSet a -> Buchi (Set (a,Bool))
+buildGraph untils nset 
+  = foldl (\mp ((old,next),(name,inc,out,fin))
+           -> let v = Set.fromList $
+                      [ (p,True) | Atom p <- Set.toList old ] ++
+                      [ (p,False) | Un Not (Atom p) <- Set.toList old ]
+              in Map.alter (\cur -> Just $ BuchiState { isStart = Set.member 0 inc
+                                                      , vars = v
+                                                      , finalSets = Set.union (finalSet old untils) fin
+                                                      , successors = case cur of
+                                                        Nothing -> out
+                                                        Just buchi -> Set.union out (successors buchi)
+                                                      }
+                           ) name $ 
                  foldl (\cmp i -> if i == 0
                                   then cmp
                                   else Map.alter (\cur -> case cur of
@@ -189,7 +234,7 @@ buildGraph f untils nset
                                                      Just buchi -> Just $ buchi { successors = Set.insert name $ successors buchi }
                                                  ) i cmp
                        ) mp inc
-           ) Map.empty (Map.toList nset)
+          ) Map.empty (Map.toList nset)
 
 buildNodeSet :: Ord a => UntilsRHS a -> Integer -> LTL a -> NodeSet a
 buildNodeSet untils curf ltl

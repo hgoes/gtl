@@ -87,7 +87,7 @@ neverClaim trace f mdls
                               
                        cexprl = [ atomToC (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                                      in varName iface q v l) ratom
-                                | (atom,en) <- Map.toList $ fst $ vars st,
+                                | (atom,en) <- Set.toList $ fst $ vars st,
                                   let ratom = if en then atom else gtlAtomNot atom ]
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner

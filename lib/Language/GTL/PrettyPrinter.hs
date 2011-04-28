@@ -30,10 +30,10 @@ simplePrettyPrint spec
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
 
-simplePrettyPrintBuchi :: GBuchi Integer (Map (GTLAtom String) Bool) (Set Integer) -> [String]
+simplePrettyPrintBuchi :: GBuchi Integer (Set (GTLAtom String,Bool)) (Set Integer) -> [String]
 simplePrettyPrintBuchi buchi = concat
                                [ [(if isStart co then "initial " else "")++"state "++show st++" {"]++
-                                 [ "  "++(if p then "" else "not ") ++ show at | (at,p) <- Map.toList (vars co) ]++
+                                 [ "  "++(if p then "" else "not ") ++ show at | (at,p) <- Set.toList (vars co) ]++
                                  [ "  -> "++show succ | succ <- Set.toList (successors co) ]++
                                  [ "  final "++show f | f <- Set.toList (finalSets co) ] ++
                                  ["}"]
@@ -52,7 +52,7 @@ getDotBoundingBox gr
       (x:xs) -> x
 
 -- | Convert a Buchi automaton into a Dot graph.
-buchiToDot :: GBuchi Integer (Map (GTLAtom String) Bool) f -> DotGraph String
+buchiToDot :: GBuchi Integer (Set (GTLAtom String,Bool)) f -> DotGraph String
 buchiToDot buchi
   = DotGraph { strictGraph = False
              , directedGraph = True
@@ -66,12 +66,12 @@ buchiToDot buchi
                                                                           unlines [replicate (estimateWidth (if tr
                                                                                                              then at
                                                                                                              else gtlAtomNot at)) ' '
-                                                                                  | (at,tr) <- Map.toList (vars st)]
+                                                                                  | (at,tr) <- Set.toList (vars st)]
                                                                          ,Comment $ "\\begin{array}{c}" ++ 
                                                                           (concat $ intersperse "\\\\" [ atomToLatex (if tr
                                                                                                                       then at
                                                                                                                       else gtlAtomNot at)
-                                                                                                       | (at,tr) <- Map.toList (vars st)]) ++
+                                                                                                       | (at,tr) <- Set.toList (vars st)]) ++
                                                                           "\\end{array}"
                                                                          ,Height 0.5,Width 0.5,Margin (DVal 0)
                                                                          ]
@@ -211,7 +211,7 @@ dotToTikz mtp gr
                                   Comment _ -> True
                                   _ -> False) (nodeAttributes nd) of
                  Just (Comment x) -> x
-                 _ -> error "No label given"
+                 _ -> "none" --error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of

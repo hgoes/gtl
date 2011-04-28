@@ -54,23 +54,32 @@ buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2)
                 => GBuchi st1 a (Set f1) -- ^ First buchi automaton
                 -> GBuchi st2 b (Set f2) -- ^ Second buchi automaton
                 -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
-buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
-                     [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
+buchiProduct = buchiProduct' (\s1 s2 -> (s1,s2)) (\l r -> (l,r)) id
+
+buchiProduct' :: (Ord st1,Ord f1,Ord st2,Ord f2,Ord f,Ord st)
+                 => (st1 -> st2 -> st)
+                 -> (a -> b -> c)
+                 -> (Either f1 f2 -> f)
+                 -> GBuchi st1 a (Set f1) -- ^ First buchi automaton
+                 -> GBuchi st2 b (Set f2) -- ^ Second buchi automaton
+                 -> GBuchi st c (Set f)
+buchiProduct' cst cco cf b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
+                                 [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
   where
     putIn mp i1 i2 st1 st2
       = let succs = [ (i,j)
                     | i <- Set.toList $ successors st1,
                       j <- Set.toList $ successors st2]
-            nmp = Map.insert (i1,i2) (BuchiState { isStart = isStart st1 && isStart st2
-                                                 , vars = (vars st1,vars st2)
-                                                 , finalSets = Set.union
-                                                               (Set.mapMonotonic (Left) (finalSets st1))
-                                                               (Set.mapMonotonic (Right) (finalSets st2))
-                                                 , successors = Set.fromList succs
-                                                 }) mp
+            nmp = Map.insert (cst i1 i2) (BuchiState { isStart = isStart st1 && isStart st2
+                                                     , vars = cco (vars st1) (vars st2)
+                                                     , finalSets = Set.union
+                                                                   (Set.map (cf.Left) (finalSets st1))
+                                                                   (Set.map (cf.Right) (finalSets st2))
+                                                     , successors = Set.fromList (fmap (uncurry cst) succs)
+                                                     }) mp
         in foldl (\tmp (i,j) -> trace tmp i j) nmp succs
     trace mp i1 i2
-      | Map.member (i1,i2) mp = mp
+      | Map.member (cst i1 i2) mp = mp
       | otherwise = putIn mp i1 i2 (b1!i1) (b2!i2)
 
 buchiUndefinedStates :: Ord st => GBuchi st a f -> Set st
@@ -94,3 +103,9 @@ buchiReachable buchi = foldl (\reached (name,co) -> if Map.member name reached
 
 buchiGC :: Ord st => GBuchi st a f -> GBuchi st a f
 buchiGC buchi = fmap (\co -> co { successors = Set.filter (\succ -> Map.member succ buchi) (successors co) }) buchi
+
+buchiMapStates :: (Ord st,Ord st') => (st -> st') -> GBuchi st a f -> GBuchi st' a f
+buchiMapStates f buchi = Map.fromList [ (f name,co { successors = Set.map f (successors co) }) | (name,co) <- Map.toList buchi ]
+
+buchiMapVars :: (a -> b) -> GBuchi st a f -> GBuchi st b f
+buchiMapVars f = fmap (\co -> co { vars = f (vars co) })
