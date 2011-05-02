@@ -128,7 +128,7 @@ expandExpr (GTL.ExprElem v lits p) = [Set.singleton (GTLElem v lits p)]
 expandExpr (GTL.ExprVar n lvl) = [Set.singleton (GTLVar n lvl True)]
 expandExpr (GTL.ExprAutomaton buchi) = error "Can't use automata in state formulas yet"
 
-simpleAutomaton :: Ord v => GBuchi String (Expr v Bool) f -> GBuchi Integer (Set (GTLAtom v)) f
+simpleAutomaton :: Ord v => GBuchi Integer (Expr v Bool) f -> GBuchi Integer (Set (GTLAtom v)) f
 simpleAutomaton buchi
   = let expandState st = [ BuchiState { isStart = isStart st
                                       , vars = nvar

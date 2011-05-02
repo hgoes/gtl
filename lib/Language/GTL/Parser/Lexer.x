@@ -35,6 +35,7 @@ tokens:-
   input				 { key KeyInput }
   in                             { bin GOpIn }
   state                          { key KeyState }
+  transition                     { key KeyTransition }
   until                          { key KeyUntil }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }

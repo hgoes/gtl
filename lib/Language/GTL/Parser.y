@@ -34,6 +34,7 @@ import qualified Data.Map as Map
   "input"           { Key KeyInput }
   "output"          { Key KeyOutput }
   "state"           { Key KeyState }
+  "transition"      { Key KeyTransition }
   "until"           { Key KeyUntil }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
@@ -186,8 +187,9 @@ state : initial final "state" id "{" state_contents "}" { State $4 $1 $2 $6 }
 state_contents : state_content state_contents { $1:$2 }
                |                              { [] }
 
-state_content : ":" id ";" { Right $2 }
-              | expr ";"   { Left $1 }
+state_content : "transition" id ";"              { Right ($2,Nothing) }
+              | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
+              | expr ";"                         { Left $1 }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

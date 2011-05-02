@@ -25,6 +25,7 @@ data KeyWord = KeyAll
              | KeyFinal
              | KeyAutomaton
              | KeyState
+             | KeyTransition
              | KeyUntil
              deriving Show
 

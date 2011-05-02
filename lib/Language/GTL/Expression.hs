@@ -11,7 +11,11 @@ import Data.Binary
 import Data.Typeable
 import Data.Map as Map
 import Data.Set as Set
+import Data.List as List (find)
 import Data.Either
+import Data.Foldable
+import Prelude hiding (foldl,foldl1,concat)
+import Data.Maybe (isNothing)
 
 -- | A type-safe expression type.
 --   /v/ is the type of variables (for example `String') and /a/ is the type of the expression.
@@ -25,7 +29,7 @@ data Expr v a where
   ExprNot :: Expr v Bool -> Expr v Bool
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
-  ExprAutomaton :: GBuchi String (Expr v Bool) Bool -> Expr v Bool
+  ExprAutomaton :: GBuchi Integer (Expr v Bool) Bool -> Expr v Bool
   deriving Typeable
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
@@ -85,37 +89,55 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
                           -> (Maybe String -> String -> Either String a)
                           -> ExistsBinding a
                           -> [State]
-                          -> Either String (GBuchi String (Expr a Bool) Bool)
+                          -> Either String (GBuchi Integer (Expr a Bool) Bool)
     typeCheckAutomaton tp f bind states = do
-      rst <- mapM (\st -> do
-                      r <- typeCheckState tp f bind st
-                      return (stateName st,r)) states
-      let buchi = Map.fromList rst
-          undef = buchiUndefinedStates buchi
-      if Set.null undef
-        then return buchi
-        else Left $ "The following states are undefined: "++show undef
+      (buchi,_,_) <- foldlM (\(cbuchi,ccur,cmp) state -> do
+                                (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind states state Nothing ccur cmp cbuchi
+                                return (nbuchi,ncur,nmp)
+                            ) (Map.empty,0,Map.empty) [ state | state <- states, stateInitial state ]
+      return buchi
       
     typeCheckState :: (Ord a,Show a)
                       => Map a TypeRep
                       -> (Maybe String -> String -> Either String a)
                       -> ExistsBinding a
+                      -> [State]
                       -> State
-                      -> Either String (BuchiState String (Expr a Bool) Bool)
-    typeCheckState tp f bind st = do
-      rcont <- mapM (\cont -> case cont of
-                        Left expr -> do
-                          l <- typeCheck' tp f bind expr undefined
-                          return $ Left l
-                        Right nxt -> return $ Right nxt) (stateContent st)
-      let (exprs,nexts) = partitionEithers rcont
-      return $ BuchiState { isStart = stateInitial st
-                          , vars = case exprs of
-                            [] -> ExprConst True
-                            _ -> foldl1 (ExprBinBool And) exprs
-                          , finalSets = stateFinal st
-                          , successors = Set.fromList nexts
-                          }
+                      -> Maybe GExpr
+                      -> Integer
+                      -> Map (String,Maybe GExpr) Integer
+                      -> GBuchi Integer (Expr a Bool) Bool
+                      -> Either String (Integer,GBuchi Integer (Expr a Bool) Bool,Integer,Map (String,Maybe GExpr) Integer) 
+    typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName st,cond) mp of
+      Just res -> return (res,buchi,cur,mp)
+      Nothing -> do
+        rcont <- mapM (\cont -> case cont of
+                          Left expr -> do
+                            l <- typeCheck' tp f bind expr undefined
+                            return $ Left l
+                          Right nxt -> return $ Right nxt) (stateContent st)
+        rcond <- case cond of
+          Nothing -> return Nothing
+          Just c -> do
+            r <- typeCheck' tp f bind c undefined
+            return $ Just r
+        let (exprs,nexts) = partitionEithers rcont
+            rexprs = case rcond of
+              Nothing -> exprs
+              Just jcond -> jcond:exprs
+        (nbuchi,ncur,nmp,succ) <- foldrM (\(nxt,nxt_cond) (cbuchi,ccur,cmp,succ) -> case List.find (\cst -> (stateName cst) == nxt) all of
+                                             Nothing -> Left ("Undefined state: "++nxt)
+                                             Just rst -> do
+                                               (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind all rst nxt_cond ccur cmp cbuchi
+                                               return (nbuchi,ncur,nmp,Set.insert res succ)
+                                         ) (buchi,cur+1,Map.insert (stateName st,cond) cur mp,Set.empty) nexts
+        return (cur,Map.insert cur (BuchiState { isStart = (stateInitial st) && isNothing cond
+                                               , vars = case rexprs of
+                                                 [] -> ExprConst True
+                                                 _ -> foldl1 (ExprBinBool And) rexprs
+                                               , finalSets = stateFinal st
+                                               , successors = succ
+                                               }) nbuchi,ncur,nmp)
       
 
 -- | A GTL type can provide means to parse unary and binary operators of its type.

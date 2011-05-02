@@ -53,7 +53,7 @@ data State = State
              { stateName :: String
              , stateInitial :: Bool
              , stateFinal :: Bool
-             , stateContent :: [Either GExpr String]
+             , stateContent :: [Either GExpr (String,Maybe GExpr)]
              } deriving (Show,Eq,Ord)
 
 -- | Information about the initialization of a variable.
