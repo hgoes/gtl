@@ -121,8 +121,8 @@ gtlToTikz spec = do
                                                                                                                        | name <- Map.keys inp
                                                                                                                        ]])++
                                                                                [FieldLabel (unlines $
-                                                                                            replicate (round $ h / 20)
-                                                                                            (replicate (round $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+                                                                                            replicate (ceiling $ h / 20)
+                                                                                            (replicate (ceiling $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (if Map.null outp
                                                                                 then []
