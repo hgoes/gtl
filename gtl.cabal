@@ -29,6 +29,7 @@ Library
     Language.GTL.LocalVerification
     Language.GTL.Expression
     Language.GTL.Buchi
+    Language.GTL.PromelaNative
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

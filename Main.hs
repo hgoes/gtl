@@ -23,6 +23,7 @@ import Language.GTL.Translation
 import Language.GTL.Model
 import Language.GTL.PromelaDynamicBDD as PrBd
 import Language.GTL.PrettyPrinter as PrPr
+import Language.GTL.PromelaNative as PrNat
 
 data TranslationMode
      = NativeC
@@ -30,6 +31,7 @@ data TranslationMode
      | PromelaBuddy
      | Tikz
      | Pretty
+     | Native
      deriving (Show,Eq)
 
 data Options = Options
@@ -54,7 +56,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty),("native",Native)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -163,4 +165,5 @@ main = do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str
     Pretty -> putStrLn (simplePrettyPrint rgtl)
+    Native -> print (prettyPromela $ PrNat.translateSpec rgtl)
   return ()
