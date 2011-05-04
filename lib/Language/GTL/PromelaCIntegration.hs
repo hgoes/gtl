@@ -28,7 +28,7 @@ import Data.Bits
 --   Optionally takes a trace that is used to restrict the execution.
 --   Outputs promela code.
 translateGTL :: Maybe FilePath -- ^ An optional path to a trace file
-                -> GTLSpec -- ^ The GTL code
+                -> GTLSpec String -- ^ The GTL code
                 -> IO String
 translateGTL traces gtlcode
   = do
@@ -64,7 +64,7 @@ inputVars mdl iface = zipWith (\i _ -> "input_"++mdl++show i) [0..] (cIFaceInput
 --   If you don't want to include a trace, give an empty one `[]'.
 neverClaim :: Trace -- ^ The trace
               -> Expr (String,String) Bool -- ^ The verify expression
-              -> Map String GTLModel -- ^ All models
+              -> Map String (GTLModel String) -- ^ All models
               -> Pr.Module
 neverClaim trace f mdls
   = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
@@ -97,7 +97,7 @@ neverClaim trace f mdls
 
 
 -- | Create promela processes for each component in a GTL specification.
-generatePromelaCode :: GTLSpec -> Map (String,String) Integer -> [Pr.Module]
+generatePromelaCode :: GTLSpec String -> Map (String,String) Integer -> [Pr.Module]
 generatePromelaCode spec history
   = let procs = fmap (\(name,mdl) -> let iface = allCInterface (gtlModelBackend mdl)
                                          steps = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $

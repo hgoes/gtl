@@ -8,7 +8,7 @@ import Data.Map as Map
 
 -- | Performs the formalism-specific verification algorithms for each model
 --   in the specification to find out if the contract for the model holds.
-verifyLocal :: GTLSpec -> IO ()
+verifyLocal :: GTLSpec String -> IO ()
 verifyLocal spec = mapM_ (\(name,mdl) -> do
                              putStrLn $ "Verifying "++name++":"
                              res <- allVerifyLocal (gtlModelBackend mdl) (gtlModelContract mdl)

@@ -14,23 +14,23 @@ import Prelude hiding (mapM)
 import Data.Traversable (mapM)
 
 -- | A parsed and typechecked GTL model.
-data GTLModel = GTLModel
-                { gtlModelContract :: Expr String Bool -- ^ The contract of the model as a boolean formula.
-                , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
-                , gtlModelInput :: Map String TypeRep -- ^ The input variables with types of the model.
-                , gtlModelOutput :: Map String TypeRep -- ^ The output variables with types of the model.
-                , gtlModelDefaults :: Map String (Maybe Dynamic) -- ^ Default values for inputs. `Nothing' means any value.
-                }
+data GTLModel a = GTLModel
+                  { gtlModelContract :: Expr a Bool -- ^ The contract of the model as a boolean formula.
+                  , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
+                  , gtlModelInput :: Map a TypeRep -- ^ The input variables with types of the model.
+                  , gtlModelOutput :: Map a TypeRep -- ^ The output variables with types of the model.
+                  , gtlModelDefaults :: Map a (Maybe Dynamic) -- ^ Default values for inputs. `Nothing' means any value.
+                  }
 
 -- | A GTL specification represents a type checked GTL file.
-data GTLSpec = GTLSpec
-               { gtlSpecModels :: Map String GTLModel -- ^ All models in the specification.
-               , gtlSpecVerify :: Expr (String,String) Bool -- ^ A formula to verify.
-               , gtlSpecConnections :: [(String,String,String,String)] -- ^ Connections between models.
+data GTLSpec a = GTLSpec
+               { gtlSpecModels :: Map String (GTLModel a) -- ^ All models in the specification.
+               , gtlSpecVerify :: Expr (String,a) Bool -- ^ A formula to verify.
+               , gtlSpecConnections :: [(String,a,String,a)] -- ^ Connections between models.
                }
 
 -- | Parse a GTL model from a unchecked model declaration.
-gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel))
+gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String))
 gtlParseModel mdl = do
   mback <- initAllBackend (modelType mdl) (modelArgs mdl)
   case mback of
@@ -65,7 +65,7 @@ gtlParseModel mdl = do
                                      })
 
 -- | Parse a GTL specification from an unchecked list of declarations.
-gtlParseSpec :: [Declaration] -> IO (Either String GTLSpec)
+gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
 gtlParseSpec decls = do
   mdls <- fmap sequence $ sequence [ gtlParseModel m
                                    | Model m <- decls

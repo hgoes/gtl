@@ -22,7 +22,7 @@ import Data.Typeable
 import Data.Traversable
 import Prelude hiding (mapM)
 
-simplePrettyPrint :: GTLSpec -> String
+simplePrettyPrint :: GTLSpec String -> String
 simplePrettyPrint spec
   = unlines $ concat [
      [name ++ "{"]++
@@ -102,7 +102,7 @@ buchiToDot buchi
 
 -- | Convert a GTL specification to Tikz drawing commands.
 --   This needs to be IO because it calls graphviz programs to preprocess the picture.
-gtlToTikz :: GTLSpec -> IO String
+gtlToTikz :: GTLSpec String -> IO String
 gtlToTikz spec = do
   mp <- mapM (\m -> do
                  (repr,w,h) <- modelToTikz m
@@ -150,7 +150,7 @@ gtlToTikz spec = do
 
 -- | Convert a single model into Tikz drawing commands.
 --   Also returns the width and height of the bounding box for the rendered picture.
-modelToTikz :: GTLModel -> IO (String,Double,Double)
+modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL (gtlModelContract m)
       buchi = ltlToBuchi ltl
