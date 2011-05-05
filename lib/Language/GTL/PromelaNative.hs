@@ -319,31 +319,43 @@ translateRestriction mdl var outmp inmp restr
 
 buildGenerator :: [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.AnyExpression -> Maybe Pr.AnyExpression) -> String -> String -> OutputMap -> InputMap -> [Pr.Statement]
 buildGenerator upper lower check mdl var outmp inmp
-  = let (upinc,rupper) = case upper of
-          [] -> (True,Pr.ConstExpr $ Pr.ConstInt (fromIntegral (maxBound::Int)))
-          [up] -> up
-          _ -> error "More than one upper limit (currently) not supported"
-        (lowinc,rlower) = case lower of
-          [] -> (True,Pr.ConstExpr $ Pr.ConstInt (fromIntegral (minBound::Int)))
-          [low] -> low
-          _ -> error "More than one lower limit (currently) not supported"
+  = let rupper e = case upper of
+          [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (maxBound::Int)))
+          _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $ 
+               fmap (\(inc,expr) -> Pr.BinExpr Pr.BinLT e (if inc
+                                                           then expr
+                                                           else Pr.BinExpr Pr.BinMinus expr (Pr.ConstExpr $ Pr.ConstInt 1))
+                    ) upper
+        rlower = fmap (\(inc,expr) -> if inc
+                                      then expr
+                                      else Pr.BinExpr Pr.BinPlus expr (Pr.ConstExpr $ Pr.ConstInt 1)) lower
     in case firstAssignTarget mdl var outmp inmp of
       Nothing -> []
-      Just trg -> (outputAssign mdl var (if lowinc
-                                         then rlower
-                                         else Pr.BinExpr Pr.BinPlus rlower (Pr.ConstExpr $ Pr.ConstInt 1)) outmp inmp)++
-                  [prDo $ [[Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr Pr.BinLT (Pr.RefExpr trg) (if upinc
-                                                                                             then rupper
-                                                                                             else (Pr.BinExpr Pr.BinMinus rupper (Pr.ConstExpr $ Pr.ConstInt 1)))
-                           ]++
+      Just trg -> [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (minBound::Int)))
+                   (\e -> prSequence $ outputAssign mdl var e outmp inmp)
+                   rlower]++
+                  [prDo $ [[Pr.StmtExpr $ Pr.ExprAny $ rupper (Pr.RefExpr trg)]++
                            (outputAssign mdl var (Pr.BinExpr Pr.BinPlus (Pr.RefExpr trg) (Pr.ConstExpr $ Pr.ConstInt 1)) outmp inmp)
                           ]++(case check (Pr.RefExpr trg) of
-                                   Nothing -> []
+                                   Nothing -> [[Pr.StmtBreak]]
                                    Just rcheck -> [[Pr.StmtExpr $ Pr.ExprAny rcheck
-                                                   ,Pr.StmtBreak]])++
-                   [[Pr.StmtBreak]
-                   ]
+                                                   ,Pr.StmtBreak]
+                                                  ,[Pr.StmtElse,Pr.StmtSkip]
+                                                  ])
                   ]
+
+minimumAssignment :: Pr.AnyExpression -> (Pr.AnyExpression -> Pr.Statement) -> [Pr.AnyExpression] -> Pr.Statement
+minimumAssignment def f []     = f def
+minimumAssignment _   f (x:xs) = minimumAssignment' x xs
+  where
+    minimumAssignment' x [] = f x
+    minimumAssignment' x (y:ys) = prIf [ [Pr.StmtExpr $ Pr.ExprAny $ Pr.BinExpr Pr.BinLT x y
+                                         ,minimumAssignment' x ys
+                                         ]
+                                       , [Pr.StmtElse
+                                         ,minimumAssignment' y ys
+                                         ]
+                                       ]
 
 translateState :: Maybe String -> (a -> (String,String)) -> OutputMap -> InputMap -> (Integer,Int) -> BuchiState (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool -> GBuchi (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool -> Pr.Statement
 translateState mmdl f outmp inmp (n1,n2) st buchi
