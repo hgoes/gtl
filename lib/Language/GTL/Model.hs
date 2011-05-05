@@ -25,9 +25,16 @@ data GTLModel a = GTLModel
 -- | A GTL specification represents a type checked GTL file.
 data GTLSpec a = GTLSpec
                { gtlSpecModels :: Map String (GTLModel a) -- ^ All models in the specification.
+               , gtlSpecInstances :: Map String (GTLInstance a)
                , gtlSpecVerify :: Expr (String,a) Bool -- ^ A formula to verify.
                , gtlSpecConnections :: [(String,a,String,a)] -- ^ Connections between models.
                }
+
+data GTLInstance a = GTLInstance
+                     { gtlInstanceModel :: String
+                     , gtlInstanceContract :: Maybe (Expr a Bool)
+                     , gtlInstanceDefaults :: Map a (Maybe Dynamic)
+                     }
 
 -- | Parse a GTL model from a unchecked model declaration.
 gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String))
@@ -84,6 +91,24 @@ gtlParseSpec decls = do
                                              [] -> GConstBool True
                                              x -> foldl1 (GBin GOpAnd) x)
     let mdl_mp = Map.fromList rmdls
+    insts <- sequence 
+             [ do 
+                  mdl <- case Map.lookup (instanceModel i) mdl_mp of
+                    Nothing -> Left $ "Model "++(instanceModel i)++" not found."
+                    Just m -> return m
+                  contr <- case instanceContract i of
+                    [] -> return Nothing
+                    _ -> typeCheck (Map.union (gtlModelInput mdl) (gtlModelOutput mdl))
+                         (\q n -> case q of
+                             Nothing -> Right n
+                             _ -> Left "Contract may not contain qualified variables") Map.empty
+                         (foldl1 (GBin GOpAnd) (instanceContract i)) >>= return.Just
+                  return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
+                                                     , gtlInstanceContract = contr
+                                                     , gtlInstanceDefaults = Map.empty
+                                                     })
+             | Instance i <- decls ]
+    let inst_mp = Map.fromList insts
     sequence_ [ do
                    fmdl <- case Map.lookup f mdl_mp of
                      Nothing -> Left $ "Model "++f++" not found."
@@ -101,6 +126,7 @@ gtlParseSpec decls = do
                      else Left $ "Type mismatch between "++f++"."++fv++" and "++t++"."++tv++"."
               |  Connect (ConnectDecl f fv t tv) <- decls ]
     return $ GTLSpec { gtlSpecModels = mdl_mp
+                     , gtlSpecInstances = inst_mp
                      , gtlSpecVerify = vexpr
                      , gtlSpecConnections = [ (f,fv,t,tv)
                                             | Connect (ConnectDecl f fv t tv) <- decls ]
