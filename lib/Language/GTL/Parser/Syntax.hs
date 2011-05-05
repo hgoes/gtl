@@ -11,6 +11,7 @@ import Data.Typeable
 data Declaration = Model ModelDecl -- ^ Declares a model.
                  | Connect ConnectDecl -- ^ Declares a connection between two models.
                  | Verify VerifyDecl -- ^ Declares a property that needs to be verified.
+                 | Instance InstanceDecl
                  deriving Show
 
 -- | Declares a synchronous model.
@@ -36,6 +37,13 @@ data ConnectDecl = ConnectDecl
 data VerifyDecl = VerifyDecl
                   { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
                   } deriving Show
+
+data InstanceDecl = InstanceDecl
+                    { instanceModel :: String
+                    , instanceName :: String
+                    , instanceContract :: [GExpr]
+                    , instanceInits :: [(String,InitExpr)]
+                    } deriving Show
 
 -- | An untyped expression type.
 --   Used internally in the parser.

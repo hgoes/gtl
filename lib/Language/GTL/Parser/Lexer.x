@@ -22,6 +22,7 @@ tokens:-
   contract                       { key KeyContract }
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
+  instance                       { key KeyInstance }
   model                          { key KeyModel }
   finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
                                                             [] -> Nothing
