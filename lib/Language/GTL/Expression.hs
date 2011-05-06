@@ -115,6 +115,9 @@ checkType t1 t2 what =
 
 -- Factory functions
 
+makeTypeErasedExpr :: BaseType t => Expr v t -> TypeErasedExpr v
+makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (typeOf (undefined::t)) e
+
 makeExprVar :: VarType v => v -> Integer -> TypeRep -> Either String (TypeErasedExpr v)
 makeExprVar name time t =
   let
@@ -152,7 +155,7 @@ makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
 
     makeExprRelInt :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
     makeExprRelInt op lhs rhs
-      = TypeErasedExpr intRep (ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Int))
+      = makeTypeErasedExpr (ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Int))
 
     makeExprRelBool :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
     makeExprRelBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs)
