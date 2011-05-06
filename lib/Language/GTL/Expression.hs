@@ -16,6 +16,7 @@ import Data.Maybe
 import Data.Map as Map
 import Unsafe.Coerce
 import Control.Exception
+import Control.Monad (foldM)
 
 instance Ord TypeRep where
     compare t1 t2 =
@@ -172,6 +173,27 @@ makeExprBinBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
   else
     error "Types in makeExprBinBool not equal!"
 
+makeExprNot :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
+makeExprNot (TypeErasedExpr tl lhs) =
+  if tl == boolRep then
+    Right (TypeErasedExpr tl (ExprNot (unsafeCoerce lhs)))
+  else
+    Left $ "Expected type Bool for operator not but got type " ++ show tl ++ "."
+
+makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
+makeExprAlways (TypeErasedExpr tl lhs) =
+  if tl == boolRep then
+    Right (TypeErasedExpr tl (ExprAlways (unsafeCoerce lhs)))
+  else
+    Left $ "Expected type Bool for operator always but got type " ++ show tl ++ "."
+
+makeExprNext :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
+makeExprNext (TypeErasedExpr tl lhs) =
+  if tl == boolRep then
+    Right (TypeErasedExpr tl (ExprNext (unsafeCoerce lhs)))
+  else
+    Left $ "Expected type Bool for operator next but got type " ++ show tl ++ "."
+
 {-
 instance (Eq v, Binary v, Binary t, Typeable t) => Binary (EqualExpr v t) where
   put (EqualExpr lhs rhs) = put lhs >> put rhs
@@ -266,7 +288,26 @@ inferTypeUnary :: VarType a
              -> UnOp -- ^ The operator to type check
              -> GExpr -- ^ The left hand side of the operator
              -> Either String (TypeErasedExpr a)
-inferTypeUnary = undefined
+inferTypeUnary tp f bind op expr =
+  case op of
+    GOpAlways -> do
+      rexpr <- inferType tp f bind expr
+      makeExprAlways rexpr
+    GOpNext -> do
+      rexpr <- inferType tp f (fmap (\(v,lvl) -> (v,lvl+1)) bind) expr
+      makeExprNext rexpr
+    GOpNot -> do
+      rexpr <- inferType tp f bind expr
+      makeExprNot rexpr
+    GOpFinally Nothing -> Left "Unbounded finally not allowed"
+    GOpFinally (Just n) -> do
+      res <- Prelude.mapM (\i -> inferType tp f (fmap (\(v,lvl) -> (v,lvl+i)) bind) expr) [0..n]
+      let t = exprType (head res)
+      if t == boolRep then do
+          first <- makeExprNext (head res)
+          foldM (\x y -> do { eNext <- (makeExprNext y); makeExprBinBool Or x eNext }) first (tail res)
+        else
+          Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
 
 {-
 -- | A GTL type can provide means to parse unary and binary operators of its type.
