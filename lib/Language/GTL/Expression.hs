@@ -89,6 +89,11 @@ data TypeErasedExpr v = forall t. BaseType t => TypeErasedExpr TypeRep (Expr v t
 instance VarType v => Show (TypeErasedExpr v) where
   show (TypeErasedExpr t e) = show e ++ " :: " ++ show t
 
+-- | Erases the type of the given expression but saving the corresponding
+-- TypeRep.
+makeTypeErasedExpr :: BaseType t => Expr v t -> TypeErasedExpr v
+makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (typeOf (undefined::t)) e
+
 exprType :: VarType v => TypeErasedExpr v -> TypeRep
 exprType (TypeErasedExpr t e) = t
 
@@ -102,13 +107,20 @@ castExpr e = castExpr' e undefined
       else
         Nothing
 
+-- | Compose a function of one argument with a function of two
+-- arguments. The resulting function has again two arguments.
 comp12 :: (c -> d) -> (a -> b -> c) -> a -> b -> d
---comp12 g f a b = g(f a b)
 comp12 = (.).(.)
+--comp12 g f a b = g(f a b)
 
+-- | Compose a function of two arguments with a function of two
+-- arguments. The resulting function has then three arguments.
 comp22 :: (c -> d -> e) -> (a -> b -> c) -> a -> b -> d -> e
 comp22 g f a b d = g (f a b) d
 
+-- | Checks if both given types are equal and else fails with a corresponding
+-- error message involving the given extra information. If Right is returned,
+-- the value is undefined.
 checkType :: TypeRep -> TypeRep -> String -> Either String (TypeErasedExpr v)
 checkType expected t what =
   if expected == t then
@@ -116,10 +128,7 @@ checkType expected t what =
   else
      Left $ "Expected type " ++ show expected ++ " for " ++ what ++ " but got type " ++ show t ++ "."
 
--- Factory functions
-
-makeTypeErasedExpr :: BaseType t => Expr v t -> TypeErasedExpr v
-makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (typeOf (undefined::t)) e
+-- Factory functions for runtime typed expressions.
 
 makeExprVar :: VarType v => v -> Integer -> TypeRep -> Either String (TypeErasedExpr v)
 makeExprVar name time t =
@@ -147,9 +156,6 @@ makeExprBinInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
 makeExprRel :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
   let
-    tl = exprType lhs
-    tr = exprType rhs
-
     makeEqualExpr :: (VarType v, BaseType t, Ord t) => (TypeErasedExpr v) -> (TypeErasedExpr v) -> EqualExpr v t
     makeEqualExpr (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs)
       = EqualExpr (unsafeCoerce lhs) (unsafeCoerce rhs)
@@ -167,6 +173,8 @@ makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
         (intRep, makeExprRelInt)
         , (boolRep, makeExprRelBool)]
 
+    tl = exprType lhs
+    tr = exprType rhs
   in if tl == tr then
     case Map.lookup tl constructors of
       Nothing -> Left $ "Relation " ++ show op ++ " not defined on type " ++ show tl ++ "."
