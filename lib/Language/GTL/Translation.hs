@@ -57,7 +57,7 @@ instance Ord v => Ord (GTLAtom v) where
       r -> r
   compare _ _ = LT
 
-instance (Eq v, Binary v) => Binary (GTLAtom v) where
+instance (VarType v, Binary v) => Binary (GTLAtom v) where
   put (GTLRel rel (GTL.EqualExpr lhs rhs)) = put (0::Word8) >> put rel >> put lhs >> put rhs
   put (GTLElem v vals b) = put (1::Word8) >> put v >> put vals >> put b
   put (GTLVar v h b) = put (2::Word8) >> put v >> put h >> put b
@@ -81,7 +81,7 @@ instance (Eq v, Binary v) => Binary (GTLAtom v) where
         return $ GTLVar v h b
 
 -- | Applies a function to every variable in the atom.
-mapGTLVars :: (Eq w, Binary w) => (v -> w) -> GTLAtom v -> GTLAtom w
+mapGTLVars :: (VarType w, Binary w) => (v -> w) -> GTLAtom v -> GTLAtom w
 mapGTLVars f (GTLRel rel (GTL.EqualExpr lhs rhs)) = GTLRel rel (GTL.EqualExpr (mapVars f lhs) (mapVars f rhs))
 mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b
 mapGTLVars f (GTLVar v i b) = GTLVar (f v) i b

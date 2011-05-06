@@ -49,7 +49,7 @@ instance GTLBackend Scade where
                                                           , cIFaceTranslateType = scadeTranslateTypeC
                                                           , cIFaceTranslateValue = scadeTranslateValueC
                                                           }
-  backendVerify Scade (ScadeData name decls) expr 
+  backendVerify Scade (ScadeData name decls) expr
     = let (inp,outp) = scadeInterface name decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
