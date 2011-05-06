@@ -79,17 +79,6 @@ gtlParseSpec decls = do
                                    ]
   return $ do
     rmdls <- mdls
-    let alltp = Map.fromList [ ((q,n),tp)
-                             | (q,mdl) <- rmdls
-                             , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
-                             ]
-
-    vexpr <- typeCheck alltp (\q n -> case q of
-                                 Nothing -> Left "No unqualified variables allowed in verify clause"
-                                 Just rq -> Right (rq,n)
-                             ) Map.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
-                                             [] -> GConstBool True
-                                             x -> foldl1 (GBin GOpAnd) x)
     let mdl_mp = Map.fromList rmdls
     insts <- sequence 
              [ do 
@@ -109,13 +98,28 @@ gtlParseSpec decls = do
                                                      })
              | Instance i <- decls ]
     let inst_mp = Map.fromList insts
+        alltp = Map.fromList [ ((q,n),tp)
+                             | (q,inst) <- insts
+                             , let mdl = mdl_mp!(gtlInstanceModel inst)
+                             , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
+                             ]
+    vexpr <- typeCheck alltp (\q n -> case q of
+                                 Nothing -> Left "No unqualified variables allowed in verify clause"
+                                 Just rq -> Right (rq,n)
+                             ) Map.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
+                                             [] -> GConstBool True
+                                             x -> foldl1 (GBin GOpAnd) x)
+    
+    
     sequence_ [ do
-                   fmdl <- case Map.lookup f mdl_mp of
-                     Nothing -> Left $ "Model "++f++" not found."
+                   finst <- case Map.lookup f inst_mp of
+                     Nothing -> Left $ "Instance "++f++" not found."
                      Just x -> return x
-                   tmdl <- case Map.lookup t mdl_mp of
-                     Nothing -> Left $ "Model "++t++" not found."
+                   let fmdl = mdl_mp!(gtlInstanceModel finst)
+                   tinst <- case Map.lookup t inst_mp of
+                     Nothing -> Left $ "Instance "++t++" not found."
                      Just x -> return x
+                   let tmdl = mdl_mp!(gtlInstanceModel tinst)
                    fvar <- case Map.lookup fv (gtlModelOutput fmdl) of
                      Nothing -> Left $ "Variable "++f++"."++fv++" not found or not an output variable."
                      Just x -> return x
