@@ -28,7 +28,7 @@ translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = let outmp = buildOutputMap spec
                          inmp = buildInputMap spec
                      in declareVars spec outmp inmp ++
-                        [ translateModel name mdl inmp outmp | (name,mdl) <- Map.toList $ gtlSpecModels spec]++
+                        [ translateInstance name (gtlSpecModels spec) inst inmp outmp | (name,inst) <- Map.toList $ gtlSpecInstances spec]++
                         [ translateNever (gtlSpecVerify spec) inmp outmp
                         , translateInit spec outmp inmp ]
 
@@ -43,7 +43,7 @@ translateInit spec outmp inmp
                               else outputAssign name var (convertValue rdef) outmp inmp
             | (name,mdl) <- Map.toList (gtlSpecModels spec),
               (var,def) <- Map.toList $ gtlModelDefaults mdl ]) ++
-    [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecModels spec) ]
+    [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecInstances spec) ]
 
 declareVars :: GTLSpec String -> OutputMap -> InputMap -> [Pr.Module]
 declareVars spec outmp inmp
@@ -52,13 +52,16 @@ declareVars spec outmp inmp
                                        Nothing -> cur
                                        Just rlvl -> Map.insertWith (\(lvl1,inp) (lvl2,_) -> (max lvl1 lvl2,inp)) (mf,vf) (rlvl,False) cur
                                     ) (fmap (\lvl -> (lvl,True)) inmp) outmp
-    in [ Pr.Decl $ Pr.Declaration Nothing (convertType $ getType spec mdl var inp) [(mdl++"_"++var,Just (lvl+1),Nothing)] | ((mdl,var),(lvl,inp)) <- Map.toList all_vars ]
+    in [ Pr.Decl $ Pr.Declaration Nothing (convertType $ getType spec mdl var inp) [(mdl++"_"++var,Just (lvl+1),Nothing)]
+       | ((mdl,var),(lvl,inp)) <- Map.toList all_vars ]
 
 getType :: GTLSpec String -> String -> String -> Bool -> TypeRep
-getType spec mdl var inp = case Map.lookup mdl (gtlSpecModels spec) of
-  Nothing -> error $ "Internal error: Model "++mdl++" not found"
-  Just model -> (if inp then gtlModelInput model
-                 else gtlModelOutput model)!var
+getType spec instname var inp = case Map.lookup instname (gtlSpecInstances spec) of
+  Nothing -> error $ "Internal error: Instance "++instname++" not found"
+  Just inst -> case Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec) of
+    Nothing -> error $ "Internal error: Model "++(gtlInstanceModel inst)++" not found"
+    Just mdl -> (if inp then gtlModelInput mdl
+                 else gtlModelOutput mdl)!var
 
 convertValue :: Dynamic -> Pr.AnyExpression
 convertValue dyn = case fromDynamic dyn of
@@ -96,13 +99,14 @@ buildOutputMap spec
 
 buildInputMap :: GTLSpec String -> InputMap
 buildInputMap spec
-  = Map.foldlWithKey (\mp name mdl
-                      -> foldl (\mp' (var,lvl)
-                                -> if Map.member var (gtlModelInput mdl)
-                                   then Map.insertWith max (name,var) lvl mp'
-                                   else mp'
-                               ) mp (getVars $ gtlModelContract mdl)
-                     ) Map.empty (gtlSpecModels spec)
+  = Map.foldlWithKey (\mp name inst
+                      -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                         in foldl (\mp' (var,lvl)
+                                   -> if Map.member var (gtlModelInput mdl)
+                                      then Map.insertWith max (name,var) lvl mp'
+                                      else mp'
+                                  ) mp (getVars $ gtlModelContract mdl)
+                     ) Map.empty (gtlSpecInstances spec)
 
 varName :: String -> String -> Integer -> Pr.VarRef
 varName mdl var lvl = VarRef (mdl ++ "_" ++ var) (Just lvl) Nothing
@@ -132,6 +136,10 @@ assign mdl var lvl expr = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var cl)
                                                                                   else RefExpr (varName mdl var (cl-1))):stmts)
                           []
                           [0..lvl]
+
+translateInstance :: String -> Map String (GTLModel String) -> GTLInstance String -> InputMap -> OutputMap -> Pr.Module
+translateInstance name models inst inmp outmp
+  = translateModel name (models!(gtlInstanceModel inst)) inmp outmp
 
 translateModel :: String -> GTLModel String -> InputMap -> OutputMap -> Pr.Module
 translateModel name model inmp outmp
