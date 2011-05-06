@@ -106,9 +106,16 @@ comp2 = (.).(.)
 comp22 :: (c -> d -> e) -> (a -> b -> c) -> a -> b -> d -> e
 comp22 g f a b d = g (f a b) d
 
+checkType :: TypeRep -> TypeRep -> String -> Either String (TypeErasedExpr v)
+checkType t1 t2 what =
+  if t1 == t2 then
+    Right undefined
+  else
+     Left $ "Expected type " ++ show t1 ++ " for " ++ what ++ " but got type " ++ show t2 ++ "."
+
 -- Factory functions
 
-makeExprVar :: VarType v => v -> Integer -> TypeRep -> Maybe (TypeErasedExpr v)
+makeExprVar :: VarType v => v -> Integer -> TypeRep -> Either String (TypeErasedExpr v)
 makeExprVar name time t =
   let
     varConstructors :: Map TypeRep (v -> Integer -> TypeErasedExpr v)
@@ -117,8 +124,8 @@ makeExprVar name time t =
         , (boolRep, TypeErasedExpr boolRep `comp2` (ExprVar :: v -> Integer -> Expr v Bool))]
     c' = Map.lookup t varConstructors
   in case c' of
-    Nothing -> Nothing
-    Just c -> Just (c name time)
+    Nothing -> Left $ "Type error for variable " ++ show name ++ ": unknown type " ++ show t
+    Just c -> Right (c name time)
 
 makeExprConst :: (BaseType t, VarType v) => t -> (TypeErasedExpr v)
 makeExprConst v = TypeErasedExpr (typeOf v) (ExprConst v)
@@ -180,6 +187,13 @@ makeExprNot (TypeErasedExpr tl lhs) =
   else
     Left $ "Expected type Bool for operator not but got type " ++ show tl ++ "."
 
+{-
+makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
+makeExprAlways (TypeErasedExpr tl lhs) = do
+  checkType boolRep tl "operator always"
+  return $ TypeErasedExpr tl (ExprAlways (unsafeCoerce lhs))
+-}
+
 makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprAlways (TypeErasedExpr tl lhs) =
   if tl == boolRep then
@@ -194,30 +208,21 @@ makeExprNext (TypeErasedExpr tl lhs) =
   else
     Left $ "Expected type Bool for operator next but got type " ++ show tl ++ "."
 
-{-
-instance (Eq v, Binary v, Binary t, Typeable t) => Binary (EqualExpr v t) where
-  put (EqualExpr lhs rhs) = put lhs >> put rhs
-  get = do
-    lhs <- get
-    rhs <- get
-    castSer (EqualExpr lhs rhs)
--}
-
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
---   Returns either an error message or the resulting expression of type `Bool'.
+--   Returns either an error message or the resulting expression of type /t/.
 typeCheck :: (VarType a, BaseType t)
              => Map a TypeRep -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
              -> GExpr -- ^ The expression to convert
-             -> Either String (Expr a t)
+             -> Either String (Expr a t) -- ^ Typed expression
 typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
   where
   typeCheck' :: (VarType a, BaseType t)
-               => Map a TypeRep -- ^ Type mapping
-               -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
+               => Map a TypeRep
+               -> (Maybe String -> String -> Either String a)
                -> ExistsBinding a
-               -> GExpr -- ^ The expression to convert
+               -> GExpr
                -> t
                -> Either String (Expr a t)
   typeCheck' tp f bind expr t =
@@ -227,12 +232,14 @@ typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
         Nothing -> Left $ "Expected expression of type " ++ (show $ typeOf t) ++ " but got type " ++ show (exprType expr)
         Just expr' -> Right expr'
 
+-- | Traverses the untyped expression tree and converts it into a typed one
+-- while calculating the types bottom up.
 inferType :: VarType a
-             => Map a TypeRep
-             -> (Maybe String -> String -> Either String a)
+             => Map a TypeRep -- ^ Type mapping
+             -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
-             -> GExpr
-             -> Either String (TypeErasedExpr a)
+             -> GExpr -- ^ The expression to convert
+             -> Either String (TypeErasedExpr a) -- ^ Typed expression
 inferType tp f bind (GVar q n) = do
   let nl = do
         v <- f q n
@@ -244,11 +251,7 @@ inferType tp f bind (GVar q n) = do
     _ -> nl
   case Map.lookup rv tp of
     Nothing -> Left $ "Unknown variable " ++ show rv
-    Just t ->
-      let v' = makeExprVar rv lvl t
-      in case v' of
-        Just v -> Right v
-        Nothing -> Left $ "Type error for variable " ++ show rv ++ ": unknown type " ++ show t
+    Just t -> makeExprVar rv lvl t
 inferType _ _ _ (GConst c) = Right (makeExprConst c)
 inferType _ _ _ (GConstBool c) = Right (makeExprConst c)
 inferType _ _ _ (GSet c) = Left $ "Type error for set constant " ++ show c ++ ": unknown type." -- Right (TypeErasedExpr (ExprConst c))
@@ -258,6 +261,9 @@ inferType tp f bind (GExists v q n expr) = do
   r <- f q n
   inferType tp f (Map.insert v (r,0) bind) expr
 
+-- | Infers the type for binary expressions. The type of the two arguments
+-- must be equal as all binary operations and relations require that
+-- for now.
 inferTypeBinary :: VarType a
              => Map a TypeRep -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
@@ -308,68 +314,6 @@ inferTypeUnary tp f bind op expr =
           foldM (\x y -> do { eNext <- (makeExprNext y); makeExprBinBool Or x eNext }) first (tail res)
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
-
-{-
--- | A GTL type can provide means to parse unary and binary operators of its type.
---   The default is to fail the parsing.
-class Typeable t => GTLType t where
-  -- | Type checks a binary operator of the given type.
-  typeCheckBin :: (Ord a,Show a,GTLType t)
-                 => Map a TypeRep -- ^ The type mapping
-                 -> (Maybe String -> String -> Either String a) -- ^ A function to convert variable names
-                 -> ExistsBinding a -- ^ All existentially bound variables
-                 -> t -- ^ An instance of the type (can be `undefined')
-                 -> BinOp -- ^ The operator to type check
-                 -> GExpr -- ^ The left hand side of the operator
-                 -> GExpr -- ^ The right hand side of the operator
-                 -> Either String (Expr a t)
-  typeCheckBin _ _ _ u op _ _ = Left $ "Operator "++show op++" is not of type "++show (typeOf u)
-  typeCheckUn :: (Ord a,Show a,GTLType t)
-                 => Map a TypeRep
-                 -> (Maybe String -> String -> Either String a)
-                 -> ExistsBinding a
-                 -> t
-                 -> UnOp -> GExpr -> Either String (Expr a t)
-  typeCheckUn _ _ _ u op _ = Left $ "Operator "++show op++" is not of type "++show (typeOf u)
-
-instance GTLType Bool where
-  typeCheckBin tp f bind u op lhs rhs = case toBoolOp op of
-    Nothing -> case toRelOp op of
-      Nothing -> Left $ show op ++ " is not a boolean operator"
-      Just rel -> do
-        rl :: (Expr v Int) <- error "not implemented" -- <- typeCheck tp f bind lhs FIXME: get type from somewhere
-        rr :: (Expr v Int) <- typeCheck tp f bind rhs
-        return $ ExprRel rel (EqualExpr rl rr)
-    Just rop -> do
-      rl <- typeCheck tp f bind lhs
-      rr <- typeCheck tp f bind rhs
-      return $ ExprBinBool rop rl rr
-  typeCheckUn tp f bind u op expr = do
-    case op of
-      GOpAlways -> do
-        rexpr <- typeCheck tp f bind expr
-        return $ ExprAlways rexpr
-      GOpNext -> do
-        rexpr <- typeCheck tp f (fmap (\(v,lvl) -> (v,lvl+1)) bind) expr
-        return $ ExprNext rexpr
-      GOpNot -> do
-        rexpr <- typeCheck tp f bind expr
-        return $ ExprNot rexpr
-      GOpFinally Nothing -> Left "Unbounded finally not allowed"
-      GOpFinally (Just n) -> do
-        res <- mapM (\i -> typeCheck tp f (fmap (\(v,lvl) -> (v,lvl+i)) bind) expr) [0..n]
-        return $ foldl1 (\x y -> ExprBinBool Or x (ExprNext y)) res
-
-instance GTLType Int where
-  typeCheckBin tp f bind u op lhs rhs = case toIntOp op of
-    Nothing -> Left $ show op ++ " is not an integer operator"
-    Just rop -> do
-      rl <- typeCheck tp f bind lhs
-      rr <- typeCheck tp f bind rhs
-      return $ ExprBinInt rop rl rr
-  typeCheckUn tp f bind u op expr = Left $ show op ++ " is not an integer operator"
-
--}
 
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
