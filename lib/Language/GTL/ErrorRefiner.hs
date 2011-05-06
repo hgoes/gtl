@@ -69,8 +69,8 @@ readBDDTraces fp = do
 atomToC :: CNameGen -- ^ Function to generate C-names
            -> GTLAtom (String,String) -- ^ GTL atom to convert
            -> String
-atomToC f (GTLRel rel (GTL.EqualExpr lhs rhs)) = (exprToC f lhs) ++ (relToC rel) ++ (exprToC f rhs)
-atomToC f (GTLElem (q,n) vals b) = (if b then "(" else "!(") ++ 
+atomToC f (GTLRel rel lhs rhs) = (exprToC f lhs) ++ (relToC rel) ++ (exprToC f rhs)
+atomToC f (GTLElem (q,n) vals b) = (if b then "(" else "!(") ++
                                    (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "("++(f q n 0) ++ "=="++show v ++ ")") vals)) ++
                                    ")"
 atomToC f (GTLVar (q,n) h b) = (if b then "" else "!") ++ (f q n h)

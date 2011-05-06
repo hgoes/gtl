@@ -246,7 +246,7 @@ splinePoints (x:xs) = splinePoints' x xs
 
 -- | Render a GTL atom to LaTeX.
 atomToLatex :: GTLAtom String -> String
-atomToLatex (GTLRel rel (EqualExpr lhs rhs)) = (exprToLatex lhs)++(case rel of
+atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
                                                           BinLT -> "<"
                                                           BinLTEq -> "\\leq "
                                                           BinGT -> ">"
@@ -267,7 +267,7 @@ atomToLatex (GTLVar v h t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" 
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
 estimateWidth :: GTLAtom String -> Int
-estimateWidth (GTLRel _ (EqualExpr lhs rhs)) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
+estimateWidth (GTLRel _ lhs rhs) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
   where
     estimateWidth' :: Expr String t -> Int
     estimateWidth' (ExprVar v h) = (length v)+(if h==0 then 0 else 2+(length (show h)))
