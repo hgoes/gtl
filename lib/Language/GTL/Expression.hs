@@ -102,19 +102,19 @@ castExpr e = castExpr' e undefined
       else
         Nothing
 
-comp2 :: (c -> d) -> (a -> b -> c) -> a -> b -> d
---comp2 g f a b = g(f a b)
-comp2 = (.).(.)
+comp12 :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+--comp12 g f a b = g(f a b)
+comp12 = (.).(.)
 
 comp22 :: (c -> d -> e) -> (a -> b -> c) -> a -> b -> d -> e
 comp22 g f a b d = g (f a b) d
 
 checkType :: TypeRep -> TypeRep -> String -> Either String (TypeErasedExpr v)
-checkType t1 t2 what =
-  if t1 == t2 then
+checkType expected t what =
+  if expected == t then
     Right undefined
   else
-     Left $ "Expected type " ++ show t1 ++ " for " ++ what ++ " but got type " ++ show t2 ++ "."
+     Left $ "Expected type " ++ show expected ++ " for " ++ what ++ " but got type " ++ show t ++ "."
 
 -- Factory functions
 
@@ -126,8 +126,8 @@ makeExprVar name time t =
   let
     varConstructors :: Map TypeRep (v -> Integer -> TypeErasedExpr v)
     varConstructors = Map.fromList [
-        (intRep, makeTypeErasedExpr `comp2` (ExprVar :: v -> Integer -> Expr v Int))
-        , (boolRep, makeTypeErasedExpr `comp2` (ExprVar :: v -> Integer -> Expr v Bool))]
+        (intRep, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Int))
+        , (boolRep, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Bool))]
     c' = Map.lookup t varConstructors
   in case c' of
     Nothing -> Left $ "Type error for variable " ++ show name ++ ": unknown type " ++ show t
@@ -138,16 +138,14 @@ makeExprConst v = makeTypeErasedExpr (ExprConst v)
 
 makeExprBinInt :: VarType v => IntOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprBinInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
-  if tr == tl then
-    if tr == intRep then
-      Right (makeTypeErasedExpr (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs)))
-    else
-      Left $ "Expected type int for operator " ++ show op ++  " but got type " ++ show tl ++ "."
+  if tr == tl then do
+    checkType intRep tl ("operator " ++ show op)
+    return $ makeTypeErasedExpr (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs))
   else
-    error "Types in makeExprBinInt not equal or not int"
+    error "Types in makeExprBinInt not equal!"
 
 makeExprRel :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
+makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
   let
     tl = exprType lhs
     tr = exprType rhs
@@ -158,11 +156,11 @@ makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
 
     makeExprRelInt :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
     makeExprRelInt op lhs rhs
-      = makeTypeErasedExpr (ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Int))
+      = makeTypeErasedExpr $ ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Int)
 
     makeExprRelBool :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
     makeExprRelBool op lhs rhs
-      = makeTypeErasedExpr (ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Bool))
+      = makeTypeErasedExpr $ ExprRel op ((makeEqualExpr lhs rhs) :: EqualExpr v Bool)
 
     constructors :: VarType v => Map TypeRep (Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v))
     constructors = Map.fromList [
@@ -178,41 +176,26 @@ makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
 
 makeExprBinBool :: VarType v => BoolOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprBinBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
-  if tr == tl then
-    if tr == boolRep then
-      Right (makeTypeErasedExpr (ExprBinBool op (unsafeCoerce lhs) (unsafeCoerce rhs)))
-    else
-      Left $ "Expected type Bool for operator " ++ show op ++  " but got type " ++ show tl ++ "."
+  if tr == tl then do
+    checkType boolRep tl ("operator " ++ show op)
+    return $ makeTypeErasedExpr (ExprBinBool op (unsafeCoerce lhs) (unsafeCoerce rhs))
   else
     error "Types in makeExprBinBool not equal!"
 
 makeExprNot :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprNot (TypeErasedExpr tl lhs) =
-  if tl == boolRep then
-    Right (makeTypeErasedExpr (ExprNot (unsafeCoerce lhs)))
-  else
-    Left $ "Expected type Bool for operator not but got type " ++ show tl ++ "."
+makeExprNot (TypeErasedExpr tl lhs) = do
+  checkType boolRep tl "operator not"
+  return $ makeTypeErasedExpr (ExprNot (unsafeCoerce lhs))
 
-{-
 makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprAlways (TypeErasedExpr tl lhs) = do
   checkType boolRep tl "operator always"
-  return $ TypeErasedExpr tl (ExprAlways (unsafeCoerce lhs))
--}
-
-makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprAlways (TypeErasedExpr tl lhs) =
-  if tl == boolRep then
-    Right (makeTypeErasedExpr (ExprAlways (unsafeCoerce lhs)))
-  else
-    Left $ "Expected type Bool for operator always but got type " ++ show tl ++ "."
+  return $ makeTypeErasedExpr (ExprAlways (unsafeCoerce lhs))
 
 makeExprNext :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprNext (TypeErasedExpr tl lhs) =
-  if tl == boolRep then
-    Right (makeTypeErasedExpr (ExprNext (unsafeCoerce lhs)))
-  else
-    Left $ "Expected type Bool for operator next but got type " ++ show tl ++ "."
+makeExprNext (TypeErasedExpr tl lhs) = do
+  checkType boolRep tl "operator next"
+  return (makeTypeErasedExpr (ExprNext (unsafeCoerce lhs)))
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type /t/.
