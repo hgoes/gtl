@@ -139,7 +139,13 @@ assign mdl var lvl expr = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var cl)
 
 translateInstance :: String -> Map String (GTLModel String) -> GTLInstance String -> InputMap -> OutputMap -> Pr.Module
 translateInstance name models inst inmp outmp
-  = translateModel name (models!(gtlInstanceModel inst)) inmp outmp
+  = translateModel name (let mdl = (models!(gtlInstanceModel inst))
+                         in mdl
+                         { gtlModelContract = case gtlInstanceContract inst of
+                              Nothing -> gtlModelContract mdl
+                              Just c -> ExprBinBool And (gtlModelContract mdl) c
+                         }
+                        ) inmp outmp
 
 translateModel :: String -> GTLModel String -> InputMap -> OutputMap -> Pr.Module
 translateModel name model inmp outmp
