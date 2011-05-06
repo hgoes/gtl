@@ -86,6 +86,9 @@ castCompare (EqualExpr lhs1 rhs1) (EqualExpr lhs2 rhs2) =
 
 data TypeErasedExpr v = forall t. BaseType t => TypeErasedExpr TypeRep (Expr v t)
 
+instance VarType v => Show (TypeErasedExpr v) where
+  show (TypeErasedExpr t e) = show e ++ " :: " ++ show t
+
 exprType :: VarType v => TypeErasedExpr v -> TypeRep
 exprType (TypeErasedExpr t e) = t
 
