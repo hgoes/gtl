@@ -122,14 +122,17 @@ makeExprVar name time t =
 makeExprConst :: (BaseType t, VarType v) => t -> (TypeErasedExpr v)
 makeExprConst v = TypeErasedExpr (typeOf v) (ExprConst v)
 
-makeExprBinInt :: VarType v => IntOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
+makeExprBinInt :: VarType v => IntOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprBinInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
-  if tr == tl && tr == intRep then
-    TypeErasedExpr tl (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs))
+  if tr == tl then
+    if tr == intRep then
+      Right (TypeErasedExpr tl (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs)))
+    else
+      Left $ "Expected type int for operator " ++ show op ++  " but got type " ++ show tl ++ "."
   else
     error "Types in makeExprBinInt not equal or not int"
 
-makeExprRel :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Maybe (TypeErasedExpr v)
+makeExprRel :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
   let
     tl = exprType lhs
@@ -154,10 +157,20 @@ makeExprRel op (lhs :: (TypeErasedExpr v)) (rhs :: (TypeErasedExpr v)) =
 
   in if tl == tr then
     case Map.lookup tl constructors of
-      Nothing -> Nothing
-      Just c -> Just (c op lhs rhs)
+      Nothing -> Left $ "Relation " ++ show op ++ " not defined on type " ++ show tl ++ "."
+      Just c -> Right (c op lhs rhs)
   else
-    error "Types in makeExprBinInt not equal"
+    error "Types in makeExprRel not equal!"
+
+makeExprBinBool :: VarType v => BoolOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
+makeExprBinBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
+  if tr == tl then
+    if tr == boolRep then
+      Right (TypeErasedExpr tl (ExprBinBool op (unsafeCoerce lhs) (unsafeCoerce rhs)))
+    else
+      Left $ "Expected type Bool for operator " ++ show op ++  " but got type " ++ show tl ++ "."
+  else
+    error "Types in makeExprBinBool not equal!"
 
 {-
 instance (Eq v, Binary v, Binary t, Typeable t) => Binary (EqualExpr v t) where
@@ -241,17 +254,10 @@ inferTypeBinary tp f bind op lhs rhs = do
     else case toBoolOp op of
       Nothing -> case toRelOp op of
         Nothing -> case toIntOp op of
-          Nothing -> Left $ "Unknown operator type: " ++ show op
-          Just iop -> do
-            if not (tl == intRep) then
-                Left $ "Expected type int but got type " ++ show tl
-              else
-                return $ makeExprBinInt iop le re
-        Just rop ->
-          case makeExprRel rop le re of
-            Nothing -> Left "Invalid relation"
-            Just e -> Right e
-      Just bop -> Left ""
+          Nothing -> Left $ "Unknown operator type: " ++ show op ++ "."
+          Just intOp -> makeExprBinInt intOp le re
+        Just relOp -> makeExprRel relOp le re
+      Just boolOp -> makeExprBinBool boolOp le re
 
 inferTypeUnary :: VarType a
              => Map a TypeRep -- ^ Type mapping
