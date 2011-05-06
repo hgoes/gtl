@@ -11,7 +11,7 @@
 (defconst gtl-font-lock-keywords-1
   (list
    (cons "//.*" 'font-lock-comment-face)
-   (cons (concat "\\<" (regexp-opt '("connect" "verify" "contract" "init") t) "\\>") 'font-lock-keyword-face)
+   (cons (concat "\\<" (regexp-opt '("automaton" "state" "transition" "connect" "verify" "contract" "init") t) "\\>") 'font-lock-keyword-face)
    (cons (concat "\\<" (regexp-opt '("int" "bool" "input" "output") t) "\\>") 'font-lock-type-face)
    (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies") t) "\\>") 'font-lock-builtin-face)
    )
@@ -30,7 +30,7 @@
 	     (2 'font-lock-function-name-face nil t)
 	     (3 'font-lock-variable-name-face nil t)
 	     )
-	   '("\\<\\([a-z]+\\)\\.\\([a-z]+\\)"
+	   '("\\<\\([a-z][a-z0-9]*\\)\\.\\([a-z][a-z0-9]*\\)"
 	     (1 'font-lock-variable-name-face nil t)
 	     )
 	   )))
