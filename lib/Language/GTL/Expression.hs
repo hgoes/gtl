@@ -6,6 +6,7 @@ module Language.GTL.Expression where
 
 import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
+import Language.GTL.Buchi
 
 import Data.Binary
 import Data.Typeable
@@ -17,6 +18,11 @@ import Data.Map as Map
 import Unsafe.Coerce
 import Control.Exception
 import Control.Monad (foldM)
+import Data.Set as Set
+import Data.List as List (find)
+import Data.Either
+import Data.Foldable
+import Prelude hiding (foldl,foldl1,concat)
 
 instance Ord TypeRep where
     compare t1 t2 =
@@ -63,6 +69,7 @@ data Expr v a where
   ExprNot :: Expr v Bool -> Expr v Bool
   ExprAlways :: Expr v Bool -> Expr v Bool
   ExprNext :: Expr v Bool -> Expr v Bool
+  ExprAutomaton :: GBuchi Integer (Expr v Bool) Bool -> Expr v Bool
   deriving Typeable
 
 castEqual :: (Eq v, Eq a1, BaseType a1, Eq a2, BaseType a2) => (Expr v a1) -> (Expr v a2) -> Bool
@@ -243,6 +250,11 @@ inferType tp f bind (GUn op expr) = inferTypeUnary tp f bind op expr
 inferType tp f bind (GExists v q n expr) = do
   r <- f q n
   inferType tp f (Map.insert v (r,0) bind) expr
+inferType tp f bind (GAutomaton states) u = do
+  aut <- typeCheckAutomaton tp f bind states
+  case gcast (ExprAutomaton aut) of
+    Just res -> return res
+    Nothing -> Left $ "Expression has type bool, expected "++show (typeOf u)
 
 -- | Infers the type for binary expressions. The type of the two arguments
 -- must be equal as all binary operations and relations require that
@@ -297,6 +309,61 @@ inferTypeUnary tp f bind op expr =
           foldM (\x y -> do { eNext <- (makeExprNext y); makeExprBinBool Or x eNext }) first (tail res)
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
+          
+typeCheckAutomaton :: (Ord a,Show a)
+                      => Map a TypeRep
+                      -> (Maybe String -> String -> Either String a)
+                      -> ExistsBinding a
+                      -> [State]
+                      -> Either String (GBuchi Integer (Expr a Bool) Bool)
+typeCheckAutomaton tp f bind states = do
+  (buchi,_,_) <- foldlM (\(cbuchi,ccur,cmp) state -> do
+                            (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind states state Nothing ccur cmp cbuchi
+                            return (nbuchi,ncur,nmp)
+                        ) (Map.empty,0,Map.empty) [ state | state <- states, stateInitial state ]
+  return buchi
+  
+typeCheckState :: (Ord a,Show a)
+                  => Map a TypeRep
+                  -> (Maybe String -> String -> Either String a)
+                  -> ExistsBinding a
+                  -> [State]
+                  -> State
+                  -> Maybe GExpr
+                  -> Integer
+                  -> Map (String,Maybe GExpr) Integer
+                  -> GBuchi Integer (Expr a Bool) Bool
+                  -> Either String (Integer,GBuchi Integer (Expr a Bool) Bool,Integer,Map (String,Maybe GExpr) Integer) 
+typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName st,cond) mp of
+  Just res -> return (res,buchi,cur,mp)
+  Nothing -> do
+    rcont <- mapM (\cont -> case cont of
+                      Left expr -> do
+                        l <- typeCheck' tp f bind expr undefined
+                        return $ Left l
+                      Right nxt -> return $ Right nxt) (stateContent st)
+    rcond <- case cond of
+      Nothing -> return Nothing
+      Just c -> do
+        r <- typeCheck' tp f bind c undefined
+        return $ Just r
+    let (exprs,nexts) = partitionEithers rcont
+        rexprs = case rcond of
+          Nothing -> exprs
+          Just jcond -> jcond:exprs
+    (nbuchi,ncur,nmp,succ) <- foldrM (\(nxt,nxt_cond) (cbuchi,ccur,cmp,succ) -> case List.find (\cst -> (stateName cst) == nxt) all of
+                                         Nothing -> Left ("Undefined state: "++nxt)
+                                         Just rst -> do
+                                           (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind all rst nxt_cond ccur cmp cbuchi
+                                           return (nbuchi,ncur,nmp,Set.insert res succ)
+                                     ) (buchi,cur+1,Map.insert (stateName st,cond) cur mp,Set.empty) nexts
+    return (cur,Map.insert cur (BuchiState { isStart = (stateInitial st) && isNothing cond
+                                           , vars = case rexprs of
+                                             [] -> ExprConst True
+                                             _ -> foldl1 (ExprBinBool And) rexprs
+                                           , finalSets = stateFinal st
+                                           , successors = succ
+                                           }) nbuchi,ncur,nmp)
 
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
@@ -465,6 +532,7 @@ getVars (ExprElem n _ _) = [(n,0)]
 getVars (ExprNot e) = getVars e
 getVars (ExprAlways e) = getVars e
 getVars (ExprNext e) = getVars e
+getVars (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVars (vars st)) (Map.toList aut)
 
 -- | Extracts the maximum level of history for each variable in the expression.
 maximumHistory :: Ord v => Expr v a -> Map v Integer
@@ -486,6 +554,7 @@ mapVars f (ExprNext e) = ExprNext (mapVars f e)
 data BoolOp = And     -- ^ &#8896;
             | Or      -- ^ &#8897;
             | Implies -- ^ &#8658;
+            | Until
             deriving (Show,Eq,Ord,Enum)
 
 instance Binary BoolOp where
@@ -540,6 +609,7 @@ toBoolOp :: BinOp -> Maybe BoolOp
 toBoolOp GOpAnd = Just And
 toBoolOp GOpOr = Just Or
 toBoolOp GOpImplies = Just Implies
+toBoolOp GOpUntil = Just Until
 toBoolOp _ = Nothing
 
 -- | Cast a binary operator into a relation. Returns `Nothing' if the cast fails.

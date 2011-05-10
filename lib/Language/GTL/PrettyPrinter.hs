@@ -22,6 +22,23 @@ import Data.Typeable
 import Data.Traversable
 import Prelude hiding (mapM)
 
+simplePrettyPrint :: GTLSpec String -> String
+simplePrettyPrint spec
+  = unlines $ concat [
+     [name ++ "{"]++
+     (fmap ("  "++) (simplePrettyPrintBuchi (ltlToBuchi (gtlToLTL (gtlModelContract mdl)))))++
+     ["}"]
+  | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
+
+simplePrettyPrintBuchi :: GBuchi Integer (Set (GTLAtom String,Bool)) (Set Integer) -> [String]
+simplePrettyPrintBuchi buchi = concat
+                               [ [(if isStart co then "initial " else "")++"state "++show st++" {"]++
+                                 [ "  "++(if p then "" else "not ") ++ show at | (at,p) <- Set.toList (vars co) ]++
+                                 [ "  -> "++show succ | succ <- Set.toList (successors co) ]++
+                                 [ "  final "++show f | f <- Set.toList (finalSets co) ] ++
+                                 ["}"]
+                               | (st,co) <- Map.toList buchi ]
+
 -- | Get the bounding box of a preprocessed graph.
 getDotBoundingBox :: DotGraph a -> Rect
 getDotBoundingBox gr
@@ -35,7 +52,7 @@ getDotBoundingBox gr
       (x:xs) -> x
 
 -- | Convert a Buchi automaton into a Dot graph.
-buchiToDot :: GBuchi Integer (Map (GTLAtom String) Bool) f -> DotGraph String
+buchiToDot :: GBuchi Integer (Set (GTLAtom String,Bool)) f -> DotGraph String
 buchiToDot buchi
   = DotGraph { strictGraph = False
              , directedGraph = True
@@ -54,9 +71,9 @@ buchiToDot buchi
                                                                           (concat $ intersperse "\\\\" [ atomToLatex (if tr
                                                                                                                       then at
                                                                                                                       else gtlAtomNot at)
-                                                                                                       | (at,tr) <- Map.toList (vars st)]) ++
+                                                                                                       | (at,tr) <- Set.toList (vars st)]) ++
                                                                           "\\end{array}"
-                                                                         ,Height 0,Width 0,Margin (DVal 0)
+                                                                         ,Height 0.5,Width 0.5,Margin (DVal 0)
                                                                          ]
                                                         | (i,st) <- Map.toList buchi
                                                         ] ++
@@ -85,7 +102,7 @@ buchiToDot buchi
 
 -- | Convert a GTL specification to Tikz drawing commands.
 --   This needs to be IO because it calls graphviz programs to preprocess the picture.
-gtlToTikz :: GTLSpec -> IO String
+gtlToTikz :: GTLSpec String -> IO String
 gtlToTikz spec = do
   mp <- mapM (\m -> do
                  (repr,w,h) <- modelToTikz m
@@ -104,8 +121,8 @@ gtlToTikz spec = do
                                                                                                                        | name <- Map.keys inp
                                                                                                                        ]])++
                                                                                [FieldLabel (unlines $
-                                                                                            replicate (round $ h / 20)
-                                                                                            (replicate (round $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+                                                                                            replicate (ceiling $ h / 20)
+                                                                                            (replicate (ceiling $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (if Map.null outp
                                                                                 then []
@@ -133,7 +150,7 @@ gtlToTikz spec = do
 
 -- | Convert a single model into Tikz drawing commands.
 --   Also returns the width and height of the bounding box for the rendered picture.
-modelToTikz :: GTLModel -> IO (String,Double,Double)
+modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL (gtlModelContract m)
       buchi = ltlToBuchi ltl
@@ -194,7 +211,7 @@ dotToTikz mtp gr
                                   Comment _ -> True
                                   _ -> False) (nodeAttributes nd) of
                  Just (Comment x) -> x
-                 _ -> error "No label given"
+                 _ -> "none" --error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of

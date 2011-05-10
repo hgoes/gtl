@@ -22,6 +22,11 @@ data KeyWord = KeyAll
              | KeyInput
              | KeyVerify
              | KeyExists
+             | KeyFinal
+             | KeyAutomaton
+             | KeyState
+             | KeyTransition
+             | KeyUntil
              deriving Show
 
 data BracketType = Parentheses
@@ -40,6 +45,7 @@ data BinOp = GOpAnd
            | GOpImplies
            | GOpIn
            | GOpNotIn
+           | GOpUntil
            | GOpLessThan
            | GOpLessThanEqual
            | GOpGreaterThan

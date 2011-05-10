@@ -46,7 +46,15 @@ data GExpr = GBin BinOp GExpr GExpr
            | GVar (Maybe String) String
            | GSet [Integer]
            | GExists String (Maybe String) String GExpr
+           | GAutomaton [State]
            deriving (Show,Eq,Ord)
+
+data State = State
+             { stateName :: String
+             , stateInitial :: Bool
+             , stateFinal :: Bool
+             , stateContent :: [Either GExpr (String,Maybe GExpr)]
+             } deriving (Show,Eq,Ord)
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.

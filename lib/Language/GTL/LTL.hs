@@ -10,7 +10,6 @@ module Language.GTL.LTL(
   Buchi(..),
   BuchiState(..),
   ltlToBuchi,
-  ltlToBuchiM,
   translateGBA,
   buchiProduct
   ) where
@@ -18,14 +17,18 @@ module Language.GTL.LTL(
 import Data.Set as Set
 import Data.Map as Map
 import Data.Foldable
-import Prelude hiding (foldl)
-import Control.Monad.Identity
+import Prelude hiding (foldl,mapM,foldl1)
+import Control.Monad.Identity (runIdentity)
+import Language.GTL.Buchi
+import Data.Traversable
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
            | Bin BinOp (LTL a) (LTL a)
            | Un UnOp (LTL a)
            | Ground Bool
+           | LTLAutomaton (GBuchi String (LTL a) Bool)
+           | LTLSimpleAutomaton (GBuchi Integer (Set a) Bool)
            deriving (Eq,Ord)
 
 -- | Minimal set of binary operators for LTL.
@@ -88,6 +91,8 @@ distributeNegation (Ground p) = Ground p
 distributeNegation (Bin op l r) = Bin op (distributeNegation l) (distributeNegation r)
 distributeNegation (Un Not x) = pushNegation x
 distributeNegation (Un op x) = Un op (distributeNegation x)
+distributeNegation aut@(LTLSimpleAutomaton _) = aut
+distributeNegation aut@(LTLAutomaton _) = aut
 
 pushNegation :: LTL a -> LTL a
 pushNegation (Atom x) = Un Not (Atom x)
@@ -101,11 +106,13 @@ pushNegation (Bin op l r) = Bin (case op of
                             (pushNegation r)
 pushNegation (Un Not x) = distributeNegation x
 pushNegation (Un Next x) = Un Next (pushNegation x)
+pushNegation (LTLSimpleAutomaton _) = error "Complementing automata is not yet implemented"
+pushNegation (LTLAutomaton _) = error "Complementing automata is not yet implemented"
 
 -- | Extracts all until constructs from a LTL formula.
 --   Each until gets a unique `Integer' identifier.
-untils :: Ord a => LTL a -> Map (LTL a,LTL a) Integer
-untils = fst . untils' 0
+untils :: Ord a => LTL a -> (Map (LTL a,LTL a) Integer,Integer)
+untils = untils' 0
   where
     untils' :: Ord a => Integer -> LTL a -> (Map (LTL a,LTL a) Integer,Integer)
     untils' n (Atom _) = (Map.empty,n)
@@ -117,6 +124,11 @@ untils = fst . untils' 0
                                  (mpr,nr) = untils' nl r
                              in (Map.union mpl mpr,nr+1)
     untils' n (Un op x) = untils' n x
+    untils' n (LTLSimpleAutomaton _) = (Map.empty,n)
+    untils' n (LTLAutomaton buchi) = foldl (\(mp,n) co -> let (nmp,n') = untils' n (vars co)
+                                                          in (Map.union mp nmp,n')
+                                           ) (Map.empty,0)
+                                     (Map.elems buchi)
 
 ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
 ltlAtoms f (Atom x) = Set.fromList (f x)
@@ -124,7 +136,7 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
-type NodeSet a = Map (Set (LTL a),Set (LTL a)) (Integer,Set Integer)
+type NodeSet a = Map (Set (LTL a),Set (LTL a)) (Integer,Set Integer,Set Integer,Set Integer)
 
 data Node a = Node
               { name :: Integer
@@ -132,21 +144,10 @@ data Node a = Node
               , old :: Set (LTL a)
               , next :: Set (LTL a)
               , incoming :: Set Integer
+              , outgoing :: Set Integer
+              , finals :: Set Integer
               } deriving Show
 
--- | A simple generalized buchi automaton.
-type Buchi a = GBuchi Integer a (Set Integer)
-
--- | A buchi automaton parametrized over the state identifier /st/, the variable type /a/ and the final set type /f/
-type GBuchi st a f = Map st (BuchiState st a f)
-
--- | A state representation of a buchi automaton.
-data BuchiState st a f = BuchiState
-                         { isStart :: Bool -- ^ Is the state an initial state?
-                         , vars :: a -- ^ The variables that must be true in this state.
-                         , finalSets :: f -- ^ In which final sets is this state a member?
-                         , successors :: Set st -- ^ All following states
-                         } deriving Show
 
 type Untils a = Map (LTL a,LTL a) Integer
 type UntilsRHS a = Set (LTL a)
@@ -154,34 +155,74 @@ type UntilsRHS a = Set (LTL a)
 untilsToUntilsRHS :: Ord a => Untils a -> UntilsRHS a
 untilsToUntilsRHS mp = Set.map snd $ Map.keysSet mp
 
--- | Same as `ltlToBuchi' but also allows the user to construct the variable type and runs in a monad.
-ltlToBuchiM :: (Ord a,Monad m,Show a) => ([(a,Bool)] -> m b) -> LTL a -> m (Buchi b)
-ltlToBuchiM p f = let f' = distributeNegation f
-                      unt = untils f'
-                      untr = untilsToUntilsRHS unt
-                  in buildGraph p unt (buildNodeSet untr f')
+extractAutomata :: LTL a -> (Maybe (LTL a),[GBuchi Integer (Set a) Bool])
+extractAutomata (LTLSimpleAutomaton buchi) = (Nothing,[buchi])
+extractAutomata (Bin And l r) = let (ml,al) = extractAutomata l
+                                    (mr,ar) = extractAutomata r
+                                in (case ml of
+                                       Nothing -> mr
+                                       Just rl -> case mr of
+                                         Nothing -> Just rl
+                                         Just rr -> Just (Bin And rl rr),al++ar)
+extractAutomata x = (Just x,[])
 
--- | Converts a LTL formula to a generalized buchi automaton.
-ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
-ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
+-- | Same as `ltlToBuchi' but also allows the user to construct the variable type and runs in a monad.
+ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Set (a,Bool))
+ltlToBuchi f = let (f',buchis) = extractAutomata f
+                   mbuchi_prod b1 b2 = buchiProduct'
+                                       (\s1 s2 -> s1 + s2*(fromIntegral $ Map.size b1)) 
+                                       Set.union
+                                       (either (*2) ((+1).(*2)))
+                                       b1 b2
+                   rbuchi = case buchis of
+                     [] -> Nothing
+                     _ -> Just $ foldl1 mbuchi_prod $ fmap
+                          (fmap (\co -> co { vars = Set.map (\x -> (x,True)) (vars co)
+                                           , finalSets = if finalSets co
+                                                         then Set.singleton 0
+                                                         else Set.empty
+                                           }
+                                )
+                          ) buchis
+                   res = case f' of
+                     Nothing -> case rbuchi of
+                       Nothing -> Map.singleton 0 (BuchiState { isStart = True
+                                                              , vars = Set.empty
+                                                              , finalSets = Set.empty
+                                                              , successors = Set.singleton 0
+                                                              })
+                       Just b -> b
+                     Just formula -> let negf = distributeNegation formula
+                                         (unt,max_unt) = untils negf                      
+                                         untr = untilsToUntilsRHS unt
+                                         buchi = buildGraph unt (buildNodeSet untr max_unt negf)
+                                     in case rbuchi of
+                                       Nothing -> buchi
+                                       Just b -> mbuchi_prod buchi b
+               in res
+
+--- | Converts a LTL formula to a generalized buchi automaton.
+--ltlToBuchi :: (Ord a,Show a) => LTL a -> Buchi (Map a Bool)
+--ltlToBuchi f = runIdentity $ ltlToBuchiM (return.Map.fromList) f
 
 finalSet :: Ord a => Set (LTL a) -> Untils a -> Set Integer
 finalSet cur acc = Set.fromList $ Map.elems $ Map.difference acc $ 
                    Map.fromList [ ((l,r),undefined) | Bin Until l r <- Set.toList cur,not $ Set.member r cur ]
 
-buildGraph :: (Ord a,Monad m) => ([(a,Bool)] -> m b) -> Untils a -> NodeSet a -> m (Buchi b)
-buildGraph f untils nset 
-  = foldlM (\mp ((old,next),(name,inc)) -> do
-               v <- f $ [ (p,True) | Atom p <- Set.toList old ] ++
-                    [ (p,False) | Un Not (Atom p) <- Set.toList old ]
-               return $ Map.alter (\cur -> Just $ BuchiState { isStart = Set.member 0 inc
-                                                             , vars = v
-                                                             , finalSets = finalSet old untils
-                                                             , successors = case cur of
-                                                               Nothing -> Set.empty
-                                                               Just buchi -> successors buchi
-                                                             }
-                                  ) name $ 
+buildGraph :: Ord a => Untils a -> NodeSet a -> Buchi (Set (a,Bool))
+buildGraph untils nset 
+  = foldl (\mp ((old,next),(name,inc,out,fin))
+           -> let v = Set.fromList $
+                      [ (p,True) | Atom p <- Set.toList old ] ++
+                      [ (p,False) | Un Not (Atom p) <- Set.toList old ]
+              in Map.alter (\cur -> Just $ BuchiState { isStart = Set.member 0 inc
+                                                      , vars = v
+                                                      , finalSets = Set.union (finalSet old untils) fin
+                                                      , successors = case cur of
+                                                        Nothing -> out
+                                                        Just buchi -> Set.union out (successors buchi)
+                                                      }
+                           ) name $ 
                  foldl (\cmp i -> if i == 0
                                   then cmp
                                   else Map.alter (\cur -> case cur of
@@ -193,56 +234,62 @@ buildGraph f untils nset
                                                      Just buchi -> Just $ buchi { successors = Set.insert name $ successors buchi }
                                                  ) i cmp
                        ) mp inc
-           ) Map.empty (Map.toList nset)
+          ) Map.empty (Map.toList nset)
 
-buildNodeSet :: Ord a => UntilsRHS a -> LTL a -> NodeSet a
-buildNodeSet untils ltl = fst $ expand untils 2 (Node { name = 1
-                                                      , new = [ltl]
-                                                      , old = Set.empty
-                                                      , next = Set.empty
-                                                      , incoming = Set.singleton 0
-                                                      }) Map.empty
-
-expand :: Ord a => UntilsRHS a -> Integer -> Node a -> NodeSet a -> (NodeSet a,Integer)
-expand untils n node nset = case new node of
-  [] -> let (res,nset') = Map.insertLookupWithKey
-                         (\_ (k2,inc2) (k1,inc1) -> (k1,Set.union inc1 inc2))
-                         (old node,next node)
-                         (name node,incoming node)
-                         nset
-       in case res of
-         Nothing -> expand untils (n+1) (Node { name = n
-                                              , new = Set.toList (next node)
+buildNodeSet :: Ord a => UntilsRHS a -> Integer -> LTL a -> NodeSet a
+buildNodeSet untils curf ltl
+  = let (ns,_,_) = expand untils 2 curf (Node { name = 1
+                                              , new = [ltl]
                                               , old = Set.empty
                                               , next = Set.empty
-                                              , incoming = Set.singleton (name node)
-                                              }) nset'
-         Just prev -> (nset',n)
+                                              , incoming = Set.singleton 0
+                                              , outgoing = Set.empty
+                                              , finals = Set.empty
+                                              }) Map.empty
+    in ns
+
+expand :: Ord a => UntilsRHS a -> Integer -> Integer -> Node a -> NodeSet a -> (NodeSet a,Integer,Integer)
+expand untils n f node nset = case new node of
+  [] -> let (res,nset') = Map.insertLookupWithKey
+                         (\_ (k2,inc2,out2,fin2) (k1,inc1,out1,fin1) -> (k1,Set.union inc1 inc2,Set.union out1 out2,Set.union fin1 fin2))
+                         (old node,next node)
+                         (name node,incoming node,outgoing node,finals node)
+                         nset
+       in case res of
+         Nothing -> expand untils (n+1) f (Node { name = n
+                                                , new = Set.toList (next node)
+                                                , old = Set.empty
+                                                , next = Set.empty
+                                                , incoming = Set.singleton (name node)
+                                                , outgoing = Set.empty
+                                                , finals = Set.empty
+                                                }) nset'
+         Just prev -> (nset',n,f)
   (x:xs) -> if Set.member x (old node)
-           then expand untils n (node { new = xs }) nset
+           then expand untils n f (node { new = xs }) nset
            else case x of
              Atom p -> if Set.member (Un Not (Atom p)) (old node)
-                      then (nset,n)
-                      else expand untils n (node { old = Set.insert x (old node)
-                                                 , new = xs
-                                                 }) nset
+                      then (nset,n,f)
+                      else expand untils n f (node { old = Set.insert x (old node)
+                                                   , new = xs
+                                                   }) nset
              Ground p -> if p
-                        then expand untils n (node { new = xs }) nset
-                        else (nset,n)
+                        then expand untils n f (node { new = xs }) nset
+                        else (nset,n,f)
              Un Not (Atom p) -> if Set.member (Atom p) (old node)
-                               then (nset,n)
-                               else expand untils n (node { old = Set.insert x (old node)
-                                                          , new = xs
-                                                          }) nset
-             Un Next f -> expand untils n (node { new = xs
-                                                , old = Set.insert x (old node)
-                                                , next = Set.insert f (next node)
-                                                }) nset
-             Bin And l r -> expand untils n (node { new = l:r:xs
-                                                  , old = if Set.member x untils
-                                                          then Set.insert x (old node)
-                                                          else old node
-                                                  }) nset
+                               then (nset,n,f)
+                               else expand untils n f (node { old = Set.insert x (old node)
+                                                            , new = xs
+                                                            }) nset
+             Un Next ff -> expand untils n f (node { new = xs
+                                                   , old = Set.insert x (old node)
+                                                   , next = Set.insert ff (next node)
+                                                   }) nset
+             Bin And l r -> expand untils n f (node { new = l:r:xs
+                                                    , old = if Set.member x untils
+                                                            then Set.insert x (old node)
+                                                            else old node
+                                                    }) nset
              Bin Or l r -> let storeOld = Set.member x untils
                                node1 = Node { name = n
                                             , incoming = incoming node
@@ -251,6 +298,8 @@ expand untils n node nset = case new node of
                                                     then Set.insert x (old node)
                                                     else old node
                                             , next = next node
+                                            , outgoing = outgoing node
+                                            , finals = finals node
                                             }
                                node2 = Node { name = n+1
                                             , incoming = incoming node
@@ -259,88 +308,59 @@ expand untils n node nset = case new node of
                                                     then Set.insert x (old node)
                                                     else old node
                                             , next = next node
+                                            , outgoing = outgoing node
+                                            , finals = finals node
                                             }
-                               (nset',n') = expand untils (n+2) node1 nset
-                          in expand untils n' node2 nset'
+                               (nset',n',f') = expand untils (n+2) f node1 nset
+                          in expand untils n' f' node2 nset'
              Bin Until l r -> let node1 = Node { name = n
                                               , incoming = incoming node
+                                              , outgoing = outgoing node
                                               , new = l:xs
                                               , old = Set.insert x (old node)
                                               , next = Set.insert x (next node)
+                                              , finals = finals node
                                               }
                                   node2 = Node { name = n+1
                                                , incoming = incoming node
+                                               , outgoing = outgoing node
                                                , new = r:xs
                                                , old = Set.insert x (old node)
                                                , next = next node
+                                               , finals = finals node
                                                }
-                                  (nset',n') = expand untils (n+2) node1 nset
-                             in expand untils n' node2 nset'
+                                  (nset',n',f') = expand untils (n+2) f node1 nset
+                             in expand untils n' f' node2 nset'
              Bin UntilOp l r -> let node1 = Node { name = n
                                                 , incoming = incoming node
+                                                , outgoing = outgoing node
                                                 , new = r:xs
                                                 , old = Set.insert x (old node)
                                                 , next = Set.insert x (next node)
+                                                , finals = finals node
                                                 }
                                     node2 = Node { name = n+1
                                                  , incoming = incoming node
+                                                 , outgoing = outgoing node
                                                  , new = l:r:xs
                                                  , old = Set.insert x (old node)
                                                  , next = next node
+                                                 , finals = finals node
                                                  }
-                                    (nset',n') = expand untils (n+2) node1 nset
-                               in expand untils n' node2 nset'
-
--- | Transforms a generalized buchi automaton into a regular one.
-translateGBA :: (Ord st,Ord f) => GBuchi st a (Set f) -> GBuchi (st,Int) a Bool
-translateGBA buchi = let finals = Set.unions [ finalSets decl | decl <- Map.elems buchi ]
-                         fsize = Set.size finals
-                         finals_list = Set.toList finals
-                         expand c f st decl mp = case Map.lookup (st,c) mp of
-                           Just _ -> mp
-                           Nothing -> let isFinal = Set.member f (finalSets decl)
-                                          nsuccs = Set.map (\n -> (n,nc)) (successors decl)
-                                          nmp = Map.insert (st,c) (BuchiState { isStart = isStart decl
-                                                                              , vars = vars decl
-                                                                              , finalSets = isFinal
-                                                                              , successors = nsuccs
-                                                                              }) mp
-                                          nc = if isFinal
-                                               then (c+1) `mod` fsize
-                                               else c
-                                          nf = if isFinal
-                                               then finals_list!!nc
-                                               else f
-                                      in foldl (\cmp succ -> expand nc nf succ (buchi!succ) cmp) nmp (successors decl)
-                     in if fsize == 0
-                        then Map.fromAscList [ ((st,0),BuchiState { isStart = isStart decl
-                                                                  , vars = vars decl
-                                                                  , finalSets = True
-                                                                  , successors = Set.map (\n -> (n,0)) (successors decl)
-                                                                  })
-                                             | (st,decl) <- Map.toAscList buchi ]
-                        else foldl (\mp (st,decl) -> expand 0 (head finals_list) st decl mp) Map.empty [ st | st <- Map.toList buchi, isStart $ snd st ]
-
--- | Calculates the product automaton of two given buchi automatons.
-buchiProduct :: (Ord st1,Ord f1,Ord st2,Ord f2)
-                => GBuchi st1 a (Set f1) -- ^ First buchi automaton
-                -> GBuchi st2 b (Set f2) -- ^ Second buchi automaton
-                -> GBuchi (st1,st2) (a,b) (Set (Either f1 f2))
-buchiProduct b1 b2 = foldl (\tmp ((i1,st1),(i2,st2)) -> putIn tmp i1 i2 st1 st2) Map.empty
-                     [ ((i1,st1),(i2,st2)) | (i1,st1) <- Map.toList b1, isStart st1, (i2,st2) <- Map.toList b2, isStart st2 ]
-  where
-    putIn mp i1 i2 st1 st2
-      = let succs = [ (i,j)
-                    | i <- Set.toList $ successors st1,
-                      j <- Set.toList $ successors st2]
-            nmp = Map.insert (i1,i2) (BuchiState { isStart = isStart st1 && isStart st2
-                                                 , vars = (vars st1,vars st2)
-                                                 , finalSets = Set.union
-                                                               (Set.mapMonotonic (Left) (finalSets st1))
-                                                               (Set.mapMonotonic (Right) (finalSets st2))
-                                                 , successors = Set.fromList succs
-                                                 }) mp
-        in foldl (\tmp (i,j) -> trace tmp i j) nmp succs
-    trace mp i1 i2
-      | Map.member (i1,i2) mp = mp
-      | otherwise = putIn mp i1 i2 (b1!i1) (b2!i2)
+                                    (nset',n',f') = expand untils (n+2) f node1 nset
+                               in expand untils n' f' node2 nset'
+             LTLAutomaton buchi -> let stmp = Map.fromList $ zip (Map.keys buchi) [n..]
+                                       n' = n+(fromIntegral $ Map.size buchi)
+                                       nodes = [ Node { name = stmp!st
+                                                      , new = (vars co):xs
+                                                      , old = Set.insert x (old node)
+                                                      , next = next node
+                                                      , incoming = if isStart co
+                                                                   then incoming node
+                                                                   else Set.empty
+                                                      , outgoing = Set.map (stmp!) (successors co)
+                                                      , finals = if finalSets co
+                                                                 then Set.singleton f
+                                                                 else Set.empty
+                                                      } | (st,co) <- Map.toList buchi ]
+                                   in foldl (\(ns,cn,cf) node -> expand untils cn cf node ns) (nset,n',f+1) nodes

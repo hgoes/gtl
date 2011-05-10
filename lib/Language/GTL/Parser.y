@@ -17,10 +17,12 @@ import qualified Data.Map as Map
 %token
   "all"             { Key KeyAll }
   "always"          { Unary GOpAlways }
+  "automaton"       { Key KeyAutomaton }
   "connect"         { Key KeyConnect }
   "contract"        { Key KeyContract }
   "and"             { Binary GOpAnd }
   "exists"          { Key KeyExists }
+  "final"           { Key KeyFinal }
   "finally"         { Unary (GOpFinally $$) }
   "implies"         { Binary GOpImplies }
   "model"           { Key KeyModel }
@@ -31,6 +33,9 @@ import qualified Data.Map as Map
   "init"            { Key KeyInit }
   "input"           { Key KeyInput }
   "output"          { Key KeyOutput }
+  "state"           { Key KeyState }
+  "transition"      { Key KeyTransition }
+  "until"           { Key KeyUntil }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
   ")"               { Bracket Parentheses True }
@@ -58,6 +63,7 @@ import qualified Data.Map as Map
 
 %left ":"
 %left "always" "next" "finally"
+%left "until"
 %left "or"
 %left "and"
 %left "implies"
@@ -111,7 +117,7 @@ formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let n
                                                                            in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
                                                                                     } }
                   | "output" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
                                                                                      } }
 
                   |                                             { id }
@@ -127,6 +133,7 @@ formula : expr { $1 }
 expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "or" expr               { GBin GOpOr $1 $3 }
      | expr "implies" expr          { GBin GOpImplies $1 $3 }
+     | expr "until" expr            { GBin GOpUntil $1 $3 }
      | expr "<" expr                { GBin GOpLessThan $1 $3 }
      | expr "<=" expr               { GBin GOpLessThanEqual $1 $3 }
      | expr ">" expr                { GBin GOpGreaterThan $1 $3 }
@@ -148,6 +155,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "/" expr                { GBin GOpDiv $1 $3 }
      | expr "*" expr                { GBin GOpMult $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
+     | "automaton" "{" states "}"   { GAutomaton $3 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
@@ -164,6 +172,24 @@ verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
 init_decl : "init" id "all" { ($2,InitAll) }
           | "init" id int   { ($2,InitOne $3) }
+
+states : state states { $1:$2 }
+       |              { [] }
+
+initial : "init" { True }
+        |        { False }
+
+final : "final" { True }
+      |         { False }
+
+state : initial final "state" id "{" state_contents "}" { State $4 $1 $2 $6 }
+
+state_contents : state_content state_contents { $1:$2 }
+               |                              { [] }
+
+state_content : "transition" id ";"              { Right ($2,Nothing) }
+              | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
+              | expr ";"                         { Left $1 }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))
