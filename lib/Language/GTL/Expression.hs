@@ -94,15 +94,15 @@ makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (typeOf (undefined::t)) e
 exprType :: VarType v => TypeErasedExpr v -> TypeRep
 exprType (TypeErasedExpr t e) = t
 
-castExpr :: (VarType v, BaseType t) => TypeErasedExpr v -> Maybe (Expr v t)
+castExpr :: (VarType v, BaseType t) => TypeErasedExpr v -> Either String (Expr v t)
 castExpr e = castExpr' e undefined
   where
-    castExpr' :: (VarType v, BaseType t) => TypeErasedExpr v -> t -> Maybe (Expr v t)
+    castExpr' :: (VarType v, BaseType t) => TypeErasedExpr v -> t -> Either String (Expr v t)
     castExpr' (TypeErasedExpr t expr) t' =
       if t == typeOf t' then
-        Just (unsafeCoerce expr)
+        Right (unsafeCoerce expr)
       else
-        Nothing
+        Left $ "Expected expression of type " ++ show t' ++ " but got type " ++ show t ++ "."
 
 -- | Compose a function of one argument with a function of two
 -- arguments. The resulting function has again two arguments.
@@ -206,21 +206,9 @@ typeCheck :: (VarType a, BaseType t)
              -> ExistsBinding a
              -> GExpr -- ^ The expression to convert
              -> Either String (Expr a t) -- ^ Typed expression
-typeCheck tp f bind expr = typeCheck' tp f bind expr undefined
-  where
-  typeCheck' :: (VarType a, BaseType t)
-               => Map a TypeRep
-               -> (Maybe String -> String -> Either String a)
-               -> ExistsBinding a
-               -> GExpr
-               -> t
-               -> Either String (Expr a t)
-  typeCheck' tp f bind expr t =
-    case inferType tp f bind expr of
-      Left e -> Left e
-      Right expr -> case castExpr expr of
-        Nothing -> Left $ "Expected expression of type " ++ (show $ typeOf t) ++ " but got type " ++ show (exprType expr)
-        Just expr' -> Right expr'
+typeCheck tp f bind expr = do
+    expr <- inferType tp f bind expr
+    castExpr expr
 
 -- | Traverses the untyped expression tree and converts it into a typed one
 -- while calculating the types bottom up.
