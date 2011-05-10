@@ -66,7 +66,7 @@ buchiToDot buchi
                                                                           unlines [replicate (estimateWidth (if tr
                                                                                                              then at
                                                                                                              else gtlAtomNot at)) ' '
-                                                                                  | (at,tr) <- Map.toList (vars st)]
+                                                                                  | (at,tr) <- Set.toList (vars st)]
                                                                          ,Comment $ "\\begin{array}{c}" ++
                                                                           (concat $ intersperse "\\\\" [ atomToLatex (if tr
                                                                                                                       then at

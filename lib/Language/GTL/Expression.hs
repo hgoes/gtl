@@ -238,11 +238,7 @@ inferType tp f bind (GUn op expr) = inferTypeUnary tp f bind op expr
 inferType tp f bind (GExists v q n expr) = do
   r <- f q n
   inferType tp f (Map.insert v (r,0) bind) expr
-inferType tp f bind (GAutomaton states) u = do
-  aut <- typeCheckAutomaton tp f bind states
-  case gcast (ExprAutomaton aut) of
-    Just res -> return res
-    Nothing -> Left $ "Expression has type bool, expected "++show (typeOf u)
+inferType tp f bind (GAutomaton states) = inferTypeAutomaton tp f bind states
 
 -- | Infers the type for binary expressions. The type of the two arguments
 -- must be equal as all binary operations and relations require that
@@ -297,21 +293,21 @@ inferTypeUnary tp f bind op expr =
           foldM (\x y -> do { eNext <- (makeExprNext y); makeExprBinBool Or x eNext }) first (tail res)
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
-          
-typeCheckAutomaton :: (Ord a,Show a)
+
+inferTypeAutomaton :: (VarType a)
                       => Map a TypeRep
                       -> (Maybe String -> String -> Either String a)
                       -> ExistsBinding a
                       -> [State]
-                      -> Either String (GBuchi Integer (Expr a Bool) Bool)
-typeCheckAutomaton tp f bind states = do
+                      -> Either String (TypeErasedExpr a) -- (GBuchi Integer (Expr a Bool) Bool)
+inferTypeAutomaton tp f bind states = do
   (buchi,_,_) <- foldlM (\(cbuchi,ccur,cmp) state -> do
                             (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind states state Nothing ccur cmp cbuchi
                             return (nbuchi,ncur,nmp)
                         ) (Map.empty,0,Map.empty) [ state | state <- states, stateInitial state ]
-  return buchi
-  
-typeCheckState :: (Ord a,Show a)
+  return $ makeTypeErasedExpr $ ExprAutomaton buchi
+
+typeCheckState :: (VarType a)
                   => Map a TypeRep
                   -> (Maybe String -> String -> Either String a)
                   -> ExistsBinding a
@@ -321,19 +317,19 @@ typeCheckState :: (Ord a,Show a)
                   -> Integer
                   -> Map (String,Maybe GExpr) Integer
                   -> GBuchi Integer (Expr a Bool) Bool
-                  -> Either String (Integer,GBuchi Integer (Expr a Bool) Bool,Integer,Map (String,Maybe GExpr) Integer) 
+                  -> Either String (Integer,GBuchi Integer (Expr a Bool) Bool,Integer,Map (String,Maybe GExpr) Integer)
 typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName st,cond) mp of
   Just res -> return (res,buchi,cur,mp)
   Nothing -> do
     rcont <- mapM (\cont -> case cont of
                       Left expr -> do
-                        l <- typeCheck' tp f bind expr undefined
+                        l <- inferType tp f bind expr
                         return $ Left l
                       Right nxt -> return $ Right nxt) (stateContent st)
     rcond <- case cond of
       Nothing -> return Nothing
       Just c -> do
-        r <- typeCheck' tp f bind c undefined
+        r <- inferType tp f bind c
         return $ Just r
     let (exprs,nexts) = partitionEithers rcont
         rexprs = case rcond of
@@ -345,13 +341,22 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
                                            (res,nbuchi,ncur,nmp) <- typeCheckState tp f bind all rst nxt_cond ccur cmp cbuchi
                                            return (nbuchi,ncur,nmp,Set.insert res succ)
                                      ) (buchi,cur+1,Map.insert (stateName st,cond) cur mp,Set.empty) nexts
+    varExpr <- makeVars rexprs
     return (cur,Map.insert cur (BuchiState { isStart = (stateInitial st) && isNothing cond
-                                           , vars = case rexprs of
-                                             [] -> ExprConst True
-                                             _ -> foldl1 (ExprBinBool And) rexprs
+                                           , vars = varExpr
                                            , finalSets = stateFinal st
                                            , successors = succ
                                            }) nbuchi,ncur,nmp)
+  where
+    makeVars :: VarType a => [TypeErasedExpr a] -> Either String (Expr a Bool)
+    makeVars [] = Right $ ExprConst True
+    makeVars rexprs =
+      let t = exprType (head rexprs)
+      in if t == boolRep then do
+          first <- castExpr $ head rexprs
+          foldM (\x y -> do { eNext <- castExpr y; return $ ExprBinBool And x eNext }) first (tail rexprs)
+        else
+          Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
 
 instance (Eq a,Eq v) => Eq (Expr v a) where
   (ExprVar n1 lvl1) == (ExprVar n2 lvl2) = n1 == n2 && lvl1 == lvl2
