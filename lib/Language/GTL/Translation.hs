@@ -108,6 +108,7 @@ gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)
 gtlToLTL (GTL.ExprElem v lits p) = LTL.Atom $ GTLElem v lits p
 gtlToLTL (GTL.ExprVar n lvl) = LTL.Atom $ GTLVar n lvl True
 gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLSimpleAutomaton (simpleAutomaton buchi)
+gtlToLTL (GTL.ExprConst c) = LTL.Ground c
 --gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLAutomaton (fmap (\co -> co { vars = gtlToLTL (vars co) }) (buchiSwitch buchi))
 
 expandExpr :: Ord v => Expr v Bool -> [Set (GTLAtom v)]
