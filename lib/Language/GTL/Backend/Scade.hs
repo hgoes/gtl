@@ -19,34 +19,37 @@ import Control.Monad.Identity
 data Scade = Scade deriving (Show)
 
 instance GTLBackend Scade where
-  data GTLBackendModel Scade = ScadeData String [Sc.Declaration]
+  data GTLBackendModel Scade = ScadeData String [Sc.Declaration] ScadeTypeMapping
   backendName Scade = "scade"
   initBackend Scade [file,name] = do
     str <- readFile file
-    return $ ScadeData name (scade $ alexScanTokens str)
-  typeCheckInterface Scade (ScadeData name decls) (ins,outs) = do
+    let decls = scade $ alexScanTokens str
+    return $ ScadeData name decls (scadeTypes decls)
+  typeCheckInterface Scade (ScadeData name decls tps) (ins,outs) = do
     let (sc_ins,sc_outs) = scadeInterface (scadeParseNodeName name) decls
-    mp_ins <- scadeTypeMap sc_ins
-    mp_outs <- scadeTypeMap sc_outs
+        Just local = scadeMakeLocal (scadeParseNodeName name) tps
+    mp_ins <- scadeTypeMap tps local sc_ins
+    mp_outs <- scadeTypeMap tps local sc_outs
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
-  cInterface Scade (ScadeData name decls) = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-                                            in CInterface { cIFaceIncludes = [name++".h"]
-                                                          , cIFaceStateType = ["outC_"++name]
-                                                          , cIFaceInputType = if Prelude.null inp
-                                                                              then []
-                                                                              else ["inC_"++name]
-                                                          , cIFaceStateInit = \[st] -> name++"_reset(&("++st++"))"
-                                                          , cIFaceIterate = \[st] inp -> case inp of
-                                                               [] -> name++"(&("++st++"))"
-                                                               [rinp] -> name++"(&("++rinp++"),&("++st++"))"
-                                                          , cIFaceGetInputVar = \[inp] var -> inp++"."++var
-                                                          , cIFaceGetOutputVar = \[st] var -> st++"."++var
-                                                          , cIFaceTranslateType = scadeTranslateTypeC
-                                                          , cIFaceTranslateValue = scadeTranslateValueC
-                                                          }
-  backendVerify Scade (ScadeData name decls) expr 
+  cInterface Scade (ScadeData name decls tps)
+    = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
+      in CInterface { cIFaceIncludes = [name++".h"]
+                    , cIFaceStateType = ["outC_"++name]
+                    , cIFaceInputType = if Prelude.null inp
+                                        then []
+                                        else ["inC_"++name]
+                    , cIFaceStateInit = \[st] -> name++"_reset(&("++st++"))"
+                    , cIFaceIterate = \[st] inp -> case inp of
+                         [] -> name++"(&("++st++"))"
+                         [rinp] -> name++"(&("++rinp++"),&("++st++"))"
+                    , cIFaceGetInputVar = \[inp] var -> inp++"."++var
+                    , cIFaceGetOutputVar = \[st] var -> st++"."++var
+                    , cIFaceTranslateType = scadeTranslateTypeC
+                    , cIFaceTranslateValue = scadeTranslateValueC
+                    }
+  backendVerify Scade (ScadeData name decls tps) expr 
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
@@ -66,14 +69,62 @@ scadeTranslateValueC d = case fromDynamic d of
     Just v -> if v then "1" else "0"
     Nothing -> error $ "Couldn't translate "++show d++" to C-value"
 
-scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
-scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))
-scadeTypeToGTL Sc.TypeBool = Just (typeOf (undefined::Bool))
-scadeTypeToGTL _ = Nothing
+scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe TypeRep
+scadeTypeToGTL _ _ Sc.TypeInt = Just (typeOf (undefined::Int))
+scadeTypeToGTL _ _ Sc.TypeBool = Just (typeOf (undefined::Bool))
+scadeTypeToGTL _ _ Sc.TypeReal = Just (typeOf (undefined::Double))
+scadeTypeToGTL _ _ Sc.TypeChar = Just (typeOf (undefined::Char))
+scadeTypeToGTL g l (Sc.TypePath (Path path)) = do
+  tp <- scadeLookupType g l path
+  scadeTypeToGTL g Map.empty tp
+scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (typeOf (undefined::Int))
+scadeTypeToGTL g l (Sc.TypePower tp expr) = do
+  rtp <- scadeTypeToGTL g l tp
+  case expr of
+    ConstIntExpr 1 -> return rtp
+    ConstIntExpr n -> return $ mkTyConApp (mkTyCon $ "("++(replicate (fromIntegral n) ',')++")") (replicate (fromIntegral n) rtp)
+scadeTypeToGTL _ _ _ = Nothing
 
-scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
-scadeTypeMap tps = do
-  res <- mapM (\(name,expr) -> case scadeTypeToGTL expr of
+data ScadeTypeInfo = ScadePackage ScadeTypeMapping
+                   | ScadeType Sc.TypeExpr
+                   deriving Show
+
+type ScadeTypeMapping = Map String ScadeTypeInfo
+
+scadeLookupType :: ScadeTypeMapping -> ScadeTypeMapping -> [String] -> Maybe Sc.TypeExpr
+scadeLookupType global local name = case scadeLookupType' local name of
+  Nothing -> scadeLookupType' global name
+  Just res -> Just res
+  where
+    scadeLookupType' mp [] = Nothing
+    scadeLookupType' mp (n:ns) = do
+      res <- Map.lookup n mp
+      case res of
+        ScadeType expr -> case ns of
+          [] -> Just expr
+          _ -> Nothing
+        ScadePackage nmp -> scadeLookupType' nmp ns
+
+scadeMakeLocal :: [String] -> ScadeTypeMapping -> Maybe ScadeTypeMapping
+scadeMakeLocal [_] mp = Just mp
+scadeMakeLocal (x:xs) mp = do
+  entr <- Map.lookup x mp
+  case entr of
+    ScadePackage nmp -> scadeMakeLocal xs nmp
+    ScadeType _ -> Nothing
+
+scadeTypes :: [Sc.Declaration] -> ScadeTypeMapping
+scadeTypes [] = Map.empty
+scadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont of
+                                            Nothing -> mp
+                                            Just expr -> Map.insert name (ScadeType expr) mp
+                                        ) (scadeTypes xs) tps
+scadeTypes ((PackageDecl _ name decls):xs) = Map.insert name (ScadePackage (scadeTypes decls)) (scadeTypes xs)
+scadeTypes (_:xs) = scadeTypes xs
+
+scadeTypeMap :: ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
+scadeTypeMap global local tps = do
+  res <- mapM (\(name,expr) -> case scadeTypeToGTL global local expr of
                   Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
                   Just tp -> Right (name,tp)) tps
   return $ Map.fromList res
