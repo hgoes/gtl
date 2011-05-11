@@ -25,13 +25,13 @@ instance GTLBackend Scade where
     str <- readFile file
     return $ ScadeData name (scade $ alexScanTokens str)
   typeCheckInterface Scade (ScadeData name decls) (ins,outs) = do
-    let (sc_ins,sc_outs) = scadeInterface name decls
+    let (sc_ins,sc_outs) = scadeInterface (scadeParseNodeName name) decls
     mp_ins <- scadeTypeMap sc_ins
     mp_outs <- scadeTypeMap sc_outs
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
-  cInterface Scade (ScadeData name decls) = let (inp,outp) = scadeInterface name decls
+  cInterface Scade (ScadeData name decls) = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
                                             in CInterface { cIFaceIncludes = [name++".h"]
                                                           , cIFaceStateType = ["outC_"++name]
                                                           , cIFaceInputType = if Prelude.null inp
@@ -47,7 +47,7 @@ instance GTLBackend Scade where
                                                           , cIFaceTranslateValue = scadeTranslateValueC
                                                           }
   backendVerify Scade (ScadeData name decls) expr 
-    = let (inp,outp) = scadeInterface name decls
+    = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
         print $ prettyScade [scade]
@@ -78,14 +78,22 @@ scadeTypeMap tps = do
                   Just tp -> Right (name,tp)) tps
   return $ Map.fromList res
 
+scadeParseNodeName :: String -> [String]
+scadeParseNodeName name = case break (=='.') name of
+  (rname,[]) -> [rname]
+  (name1,rest) -> name1:(scadeParseNodeName (tail rest))
+
 -- | Extract type information from a SCADE model.
 --   Returns two list of variable-type pairs, one for the input variables, one for the outputs.
-scadeInterface :: String -- ^ The name of the Scade model to analyze
+scadeInterface :: [String] -- ^ The name of the Scade model to analyze
                   -> [Sc.Declaration] -- ^ The parsed source code
                   -> ([(String,Sc.TypeExpr)],[(String,Sc.TypeExpr)])
-scadeInterface name (op@(Sc.UserOpDecl {}):xs)
-  | Sc.userOpName op == name = (varNames' (Sc.userOpParams op),varNames' (Sc.userOpReturns op))
+scadeInterface (name@(n1:names)) ((Sc.PackageDecl _ pname decls):xs)
+  | n1==pname = scadeInterface names decls
   | otherwise = scadeInterface name xs
+scadeInterface [name] (op@(Sc.UserOpDecl {}):xs)
+  | Sc.userOpName op == name = (varNames' (Sc.userOpParams op),varNames' (Sc.userOpReturns op))
+  | otherwise = scadeInterface [name] xs
     where
       varNames' :: [Sc.VarDecl] -> [(String,Sc.TypeExpr)]
       varNames' (x:xs) = (fmap (\var -> (Sc.name var,Sc.varType x)) (Sc.varNames x)) ++ varNames' xs
