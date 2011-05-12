@@ -2,6 +2,7 @@
 module Language.GTL.Parser.Syntax where
 
 import Language.GTL.Parser.Token (UnOp(..),BinOp(..))
+import Language.GTL.Types
 import Control.Monad.Error
 import Data.Map as Map
 import Data.Word
@@ -20,8 +21,8 @@ data ModelDecl = ModelDecl
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
-                 , modelInputs :: Map String String -- ^ Declared inputs of the model with their corresponding type
-                 , modelOutputs :: Map String String -- ^ Declared outputs of a model
+                 , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
+                 , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
                  } deriving Show
 
 -- | Declares a connection between two variables

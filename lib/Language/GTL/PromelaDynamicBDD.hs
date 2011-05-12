@@ -17,6 +17,7 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
 import Language.GTL.Expression as GTL
 import Language.GTL.Model
+import Language.GTL.Types
 
 import Data.Map as Map
 import Data.Set as Set
@@ -25,7 +26,6 @@ import Control.Monad.State
 import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
-import Data.Typeable
 import Data.Dynamic
 import Data.Maybe
 
@@ -412,10 +412,10 @@ instance BDDConst Bool where
                in if v then var
                   else "Cudd_Not("++var++")"
 
-bddBaseConstr :: Map TypeRep (Dynamic -> String)
+bddBaseConstr :: Map GTLType (Dynamic -> String)
 bddBaseConstr = Map.fromList [
-    (typeOf (undefined::Bool), (\c -> bddConst (unsafeFromDyn c :: Bool))),
-    (typeOf (undefined::Int), (\c -> bddConst (unsafeFromDyn c :: Int)))
+    (GTLBool, (\c -> bddConst (unsafeFromDyn c :: Bool))),
+    (GTLInt, (\c -> bddConst (unsafeFromDyn c :: Int)))
   ]
 
 constrBddConst :: GTL.BaseType a => a -> String

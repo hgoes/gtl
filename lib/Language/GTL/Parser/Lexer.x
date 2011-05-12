@@ -18,10 +18,15 @@ tokens:-
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
   automaton                      { key KeyAutomaton }
+  bool                           { key KeyBool }
+  byte                           { key KeyByte }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
+  enum                           { key KeyEnum }
+  float                          { key KeyFloat }
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
+  int                            { key KeyInt }
   model                          { key KeyModel }
   finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
                                                             [] -> Nothing
@@ -60,6 +65,7 @@ tokens:-
   "-"                            { bin GOpMinus }
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
+  "^"                            { bin GOpPow }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }
   $digit10+                      { \s -> ConstInt (read s) }

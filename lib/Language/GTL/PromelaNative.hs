@@ -10,6 +10,7 @@ import Language.GTL.Expression as GTL
 import Language.Promela.Syntax as Pr
 import Language.GTL.Translation
 import Language.GTL.Buchi
+import Language.GTL.Types
 
 import Data.Set as Set
 import Data.Map as Map
@@ -18,7 +19,6 @@ import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1)
 import Control.Monad.Identity
 import Data.Monoid
-import Data.Typeable
 import Data.Maybe
 import Foreign.Marshal.Utils
 
@@ -55,7 +55,7 @@ declareVars spec outmp inmp
                                     ) (fmap (\lvl -> (lvl,True)) inmp) outmp
     in [ Pr.Decl $ Pr.Declaration Nothing (convertType $ getType spec mdl var inp) [(mdl++"_"++var,Just (lvl+1),Nothing)] | ((mdl,var),(lvl,inp)) <- Map.toList all_vars ]
 
-getType :: GTLSpec String -> String -> String -> Bool -> TypeRep
+getType :: GTLSpec String -> String -> String -> Bool -> GTLType
 getType spec mdl var inp = case Map.lookup mdl (gtlSpecModels spec) of
   Nothing -> error $ "Internal error: Model "++mdl++" not found"
   Just model -> (if inp then gtlModelInput model
@@ -68,10 +68,9 @@ convertValue dyn = case fromDynamic dyn of
     Just (v::Bool) -> Pr.ConstExpr $ Pr.ConstInt $ if v then 1 else 0
     Nothing -> error $ "Unknown value "++show dyn
 
-convertType :: TypeRep -> Pr.Typename
-convertType rep
-  | rep == (typeOf (undefined::Int)) = Pr.TypeInt
-  | rep == (typeOf (undefined::Bool)) = Pr.TypeBool
+convertType :: GTLType -> Pr.Typename
+convertType GTLInt = Pr.TypeInt
+convertType GTLBool = Pr.TypeBool
 
 translateNever :: Expr (String,String) Bool -> InputMap -> OutputMap -> Pr.Module
 translateNever expr inmp outmp
@@ -192,7 +191,7 @@ translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
                                     Just cond2 -> (mp,Just $ Pr.BinExpr Pr.BinAnd cond cond2)
                               ) (Map.empty,Nothing)
 
-completeRestrictions :: Ord a => Map a TypeRep -> Map a IntRestriction -> Map a IntRestriction
+completeRestrictions :: Ord a => Map a GTLType -> Map a IntRestriction -> Map a IntRestriction
 completeRestrictions tp mp = Map.union mp (fmap (const mempty) tp)
 
 translateAtom :: Ord a => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> GTLAtom a -> Either (a,IntRestriction) Pr.AnyExpression
@@ -251,10 +250,10 @@ translateExpr mmdl f expr@(ExprVar var 0)
 translateExpr mmdl f expr = Right $ translateCheckExpr mmdl f expr
 
 -- Constructors for base types
-baseConstr :: Map TypeRep (Dynamic -> Pr.AnyExpression)
+baseConstr :: Map GTLType (Dynamic -> Pr.AnyExpression)
 baseConstr = Map.fromList [
-    (typeOf (undefined::Bool), (\c -> ConstExpr (ConstInt $ fromBool $ unsafeFromDyn c))),
-    (typeOf (undefined::Int), (\c -> ConstExpr (ConstInt $ unsafeFromDyn c)))
+    (GTLBool, (\c -> ConstExpr (ConstInt $ fromBool $ unsafeFromDyn c))),
+    (GTLInt, (\c -> ConstExpr (ConstInt $ fromIntegral $ (unsafeFromDyn c::Int))))
   ]
 
 translateCheckExpr :: (Ord a, BaseType t) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Expr a t -> Pr.AnyExpression
@@ -263,7 +262,9 @@ translateCheckExpr mmdl f (ExprVar var lvl) = case mmdl of
   Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
                      then RefExpr (f (Just name) var lvl)
                      else error "Can't relate more than one output var (yet)"
-translateCheckExpr mmdl f (ExprConst i) = fromJust $ construct i  baseConstr
+translateCheckExpr mmdl f (ExprConst i) = case construct i  baseConstr of
+  Nothing -> error $ "Can't construct constant of type "++show (typeOf i)
+  Just p -> p
 translateCheckExpr mmdl f (ExprBinInt op lhs rhs) = BinExpr (case op of
                                                                 OpPlus -> Pr.BinPlus
                                                                 OpMinus -> Pr.BinMinus

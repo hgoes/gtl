@@ -7,6 +7,7 @@ module Language.GTL.Expression where
 import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
 import Language.GTL.Buchi
+import Language.GTL.Types
 
 import Data.Binary
 import Data.Typeable
@@ -40,20 +41,22 @@ instance BaseType Bool where
 instance BaseType Int where
 instance BaseType (Array Integer Integer) where
 
-intRep = typeOf (undefined :: Int)
-boolRep = typeOf (undefined :: Bool)
-
 -- | Constructs a value of type b by appliying the constructor
 -- to the value castet from type a into its correct type.
-construct :: BaseType a => a -> (Map TypeRep (Dynamic -> b)) -> Maybe b
+construct :: BaseType a => a -> (Map GTLType (Dynamic -> b)) -> Maybe b
 construct x constructors =
-  let c' = Map.lookup (typeOf x) constructors
+  let c' = Map.lookup (gtlTypeOf x) constructors
   in case c' of
     Nothing -> Nothing
     Just c -> Just (c (toDyn x))
 
 unsafeFromDyn :: Typeable a => Dynamic -> a
-unsafeFromDyn = fromJust . fromDynamic
+unsafeFromDyn x = case fromDynamic x of
+  Nothing -> error $ "Can't convert dynamic"++show x++" to "++show (typeOf c)
+  Just p -> p
+  _ -> c
+  where
+    c = undefined
 
 -- | A type-safe expression type.
 --   /v/ is the type of variables description (for example `String' or `(String, String)'
@@ -81,7 +84,7 @@ castCompare e1 e2 =
   let testCasted p v = maybe LT p (gcast v)
   in  testCasted (compare e1) e2
 
-data TypeErasedExpr v = forall t. BaseType t => TypeErasedExpr TypeRep (Expr v t)
+data TypeErasedExpr v = forall t. BaseType t => TypeErasedExpr GTLType (Expr v t)
 
 instance VarType v => Show (TypeErasedExpr v) where
   show (TypeErasedExpr t e) = show e ++ " :: " ++ show t
@@ -89,9 +92,15 @@ instance VarType v => Show (TypeErasedExpr v) where
 -- | Erases the type of the given expression but saving the corresponding
 -- TypeRep.
 makeTypeErasedExpr :: BaseType t => Expr v t -> TypeErasedExpr v
-makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (typeOf (undefined::t)) e
+makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (gtlTypeOf (undefined::t)) e
 
-exprType :: VarType v => TypeErasedExpr v -> TypeRep
+gtlTypeOf :: Typeable a => a -> GTLType
+gtlTypeOf x
+  | typeOf x == (typeOf (undefined::Int)) = GTLInt
+  | typeOf x == (typeOf (undefined::Bool)) = GTLBool
+  | typeOf x == (typeOf (undefined::Float)) = GTLFloat
+
+exprType :: VarType v => TypeErasedExpr v -> GTLType
 exprType (TypeErasedExpr t e) = t
 
 castExpr :: (VarType v, BaseType t) => TypeErasedExpr v -> Either String (Expr v t)
@@ -99,7 +108,7 @@ castExpr e = castExpr' e undefined
   where
     castExpr' :: (VarType v, BaseType t) => TypeErasedExpr v -> t -> Either String (Expr v t)
     castExpr' (TypeErasedExpr t expr) t' =
-      if t == typeOf t' then
+      if t == gtlTypeOf t' then
         Right (unsafeCoerce expr)
       else
         Left $ "Expected expression of type " ++ show t' ++ " but got type " ++ show t ++ "."
@@ -118,7 +127,7 @@ comp22 g f a b d = g (f a b) d
 -- | Checks if both given types are equal and else fails with a corresponding
 -- error message involving the given extra information. If Right is returned,
 -- the value is undefined.
-checkType :: TypeRep -> TypeRep -> String -> Either String (TypeErasedExpr v)
+checkType :: GTLType -> GTLType -> String -> Either String (TypeErasedExpr v)
 checkType expected t what =
   if expected == t then
     Right undefined
@@ -127,13 +136,13 @@ checkType expected t what =
 
 -- Factory functions for runtime typed expressions.
 
-makeExprVar :: VarType v => v -> Integer -> TypeRep -> Either String (TypeErasedExpr v)
+makeExprVar :: VarType v => v -> Integer -> GTLType -> Either String (TypeErasedExpr v)
 makeExprVar name time t =
   let
-    varConstructors :: Map TypeRep (v -> Integer -> TypeErasedExpr v)
+    varConstructors :: Map GTLType (v -> Integer -> TypeErasedExpr v)
     varConstructors = Map.fromList [
-        (intRep, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Int))
-        , (boolRep, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Bool))]
+        (GTLInt, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Int))
+        , (GTLBool, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Bool))]
     c' = Map.lookup t varConstructors
   in case c' of
     Nothing -> Left $ "Type error for variable " ++ show name ++ ": unknown type " ++ show t
@@ -145,7 +154,7 @@ makeExprConst v = makeTypeErasedExpr (ExprConst v)
 makeExprBinInt :: VarType v => IntOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprBinInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
   if tr == tl then do
-    checkType intRep tl ("operator " ++ show op)
+    checkType GTLInt tl ("operator " ++ show op)
     return $ makeTypeErasedExpr (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs))
   else
     error "Types in makeExprBinInt not equal!"
@@ -161,10 +170,10 @@ makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
     makeExprRelBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs)
       = makeTypeErasedExpr $ ExprRel op ((unsafeCoerce lhs) :: Expr v Bool) ((unsafeCoerce rhs) :: Expr v Bool)
 
-    constructors :: VarType v => Map TypeRep (Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v))
+    constructors :: VarType v => Map GTLType (Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v))
     constructors = Map.fromList [
-        (intRep, makeExprRelInt)
-        , (boolRep, makeExprRelBool)]
+        (GTLInt, makeExprRelInt)
+        , (GTLBool, makeExprRelBool)]
 
     tl = exprType lhs
     tr = exprType rhs
@@ -178,30 +187,30 @@ makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
 makeExprBinBool :: VarType v => BoolOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprBinBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
   if tr == tl then do
-    checkType boolRep tl ("operator " ++ show op)
+    checkType GTLBool tl ("operator " ++ show op)
     return $ makeTypeErasedExpr (ExprBinBool op (unsafeCoerce lhs) (unsafeCoerce rhs))
   else
     error "Types in makeExprBinBool not equal!"
 
 makeExprNot :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprNot (TypeErasedExpr tl lhs) = do
-  checkType boolRep tl "operator not"
+  checkType GTLBool tl "operator not"
   return $ makeTypeErasedExpr (ExprNot (unsafeCoerce lhs))
 
 makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprAlways (TypeErasedExpr tl lhs) = do
-  checkType boolRep tl "operator always"
+  checkType GTLBool tl "operator always"
   return $ makeTypeErasedExpr (ExprAlways (unsafeCoerce lhs))
 
 makeExprNext :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
 makeExprNext (TypeErasedExpr tl lhs) = do
-  checkType boolRep tl "operator next"
+  checkType GTLBool tl "operator next"
   return (makeTypeErasedExpr (ExprNext (unsafeCoerce lhs)))
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type /t/.
 typeCheck :: (VarType a, BaseType t)
-             => Map a TypeRep -- ^ Type mapping
+             => Map a GTLType -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
              -> GExpr -- ^ The expression to convert
@@ -213,7 +222,7 @@ typeCheck tp f bind expr = do
 -- | Traverses the untyped expression tree and converts it into a typed one
 -- while calculating the types bottom up.
 inferType :: VarType a
-             => Map a TypeRep -- ^ Type mapping
+             => Map a GTLType -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
              -> GExpr -- ^ The expression to convert
@@ -244,7 +253,7 @@ inferType tp f bind (GAutomaton states) = inferTypeAutomaton tp f bind states
 -- must be equal as all binary operations and relations require that
 -- for now.
 inferTypeBinary :: VarType a
-             => Map a TypeRep -- ^ Type mapping
+             => Map a GTLType -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
              -> BinOp -- ^ The operator to type check
@@ -267,7 +276,7 @@ inferTypeBinary tp f bind op lhs rhs = do
       Just boolOp -> makeExprBinBool boolOp le re
 
 inferTypeUnary :: VarType a
-             => Map a TypeRep -- ^ Type mapping
+             => Map a GTLType -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
              -> UnOp -- ^ The operator to type check
@@ -288,14 +297,14 @@ inferTypeUnary tp f bind op expr =
     GOpFinally (Just n) -> do
       res <- Prelude.mapM (\i -> inferType tp f (fmap (\(v,lvl) -> (v,lvl+i)) bind) expr) [0..n]
       let t = exprType (head res)
-      if t == boolRep then do
+      if t == GTLBool then do
           first <- makeExprNext (head res)
           foldM (\x y -> do { eNext <- (makeExprNext y); makeExprBinBool Or x eNext }) first (tail res)
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
 
 inferTypeAutomaton :: (VarType a)
-                      => Map a TypeRep
+                      => Map a GTLType
                       -> (Maybe String -> String -> Either String a)
                       -> ExistsBinding a
                       -> [State]
@@ -308,7 +317,7 @@ inferTypeAutomaton tp f bind states = do
   return $ makeTypeErasedExpr $ ExprAutomaton buchi
 
 typeCheckState :: (VarType a)
-                  => Map a TypeRep
+                  => Map a GTLType
                   -> (Maybe String -> String -> Either String a)
                   -> ExistsBinding a
                   -> [State]
@@ -352,7 +361,7 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
     makeVars [] = Right $ ExprConst True
     makeVars rexprs =
       let t = exprType (head rexprs)
-      in if t == boolRep then do
+      in if t == GTLBool then do
           first <- castExpr $ head rexprs
           foldM (\x y -> do { eNext <- castExpr y; return $ ExprBinBool And x eNext }) first (tail rexprs)
         else
@@ -585,12 +594,6 @@ instance Show Relation where
   show BinGTEq = ">="
   show BinEq = "="
   show BinNEq = "!="
-
--- | Convert a `String' into a type representation. Only covers types which are allowed in the GTL.
-parseGTLType :: String -> Maybe TypeRep
-parseGTLType "int" = Just (typeOf (undefined::Int))
-parseGTLType "bool" = Just (typeOf (undefined::Bool))
-parseGTLType _ = Nothing
 
 -- | Lift `gcast' in a monad and fail with an error if the cast fails
 castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)

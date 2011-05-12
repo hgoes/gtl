@@ -14,12 +14,17 @@ data Token = Identifier String
            deriving Show
 
 data KeyWord = KeyAll
+             | KeyBool
+             | KeyByte
              | KeyConnect
              | KeyContract
+             | KeyEnum
              | KeyModel
              | KeyOutput
+             | KeyFloat
              | KeyInit
              | KeyInput
+             | KeyInt
              | KeyVerify
              | KeyExists
              | KeyFinal
@@ -56,4 +61,5 @@ data BinOp = GOpAnd
            | GOpMinus
            | GOpMult
            | GOpDiv
+           | GOpPow
            deriving (Show,Eq,Ord)

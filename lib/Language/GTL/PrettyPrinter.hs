@@ -8,6 +8,7 @@ import Language.GTL.Model
 import Language.GTL.Expression
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
+import Language.GTL.Types
 import Data.GraphViz hiding (Model)
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
@@ -18,7 +19,6 @@ import Data.List as List
 import Data.Graph.Inductive.Graph
 import Data.Graph.Inductive.Tree
 import System.Process
-import Data.Typeable
 import Data.Traversable
 import Prelude hiding (mapM)
 
@@ -166,7 +166,7 @@ pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
 
 -- | Convert a graphviz graph to Tikz drawing commands.
 dotToTikz :: (Show a,Ord a)
-             => Maybe (Map a (Map String TypeRep,Map String TypeRep,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
+             => Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
              -> DotGraph a
              -> String
 dotToTikz mtp gr

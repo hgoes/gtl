@@ -5,6 +5,7 @@ import Language.Scade.Lexer (alexScanTokens)
 import Language.Scade.Parser (scade)
 import Language.GTL.Backend
 import Language.GTL.Translation
+import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
@@ -12,10 +13,8 @@ import Language.GTL.LTL as LTL
 import Data.Map as Map
 import Data.Set as Set
 import Data.List as List
-import Data.Typeable
 import Data.Dynamic
 import Control.Monad.Identity
-import Data.Typeable
 import Data.Dynamic
 import Data.Maybe
 
@@ -56,11 +55,10 @@ instance GTLBackend Scade where
         print $ prettyScade [scade]
         return $ Nothing
 
-scadeTranslateTypeC :: TypeRep -> String
-scadeTranslateTypeC rep
-  | rep == typeOf (undefined::Int) = "kcg_int"
-  | rep == typeOf (undefined::Bool) = "kcg_bool"
-  | otherwise = error $ "Couldn't translate "++show rep++" to C-type"
+scadeTranslateTypeC :: GTLType -> String
+scadeTranslateTypeC GTLInt = "kcg_int"
+scadeTranslateTypeC GTLBool = "kcg_bool"
+scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: Dynamic -> String
 scadeTranslateValueC d = case fromDynamic d of
@@ -69,12 +67,12 @@ scadeTranslateValueC d = case fromDynamic d of
     Just v -> if v then "1" else "0"
     Nothing -> error $ "Couldn't translate "++show d++" to C-value"
 
-scadeTypeToGTL :: Sc.TypeExpr -> Maybe TypeRep
-scadeTypeToGTL Sc.TypeInt = Just (typeOf (undefined::Int))
-scadeTypeToGTL Sc.TypeBool = Just (typeOf (undefined::Bool))
+scadeTypeToGTL :: Sc.TypeExpr -> Maybe GTLType
+scadeTypeToGTL Sc.TypeInt = Just GTLInt
+scadeTypeToGTL Sc.TypeBool = Just GTLBool
 scadeTypeToGTL _ = Nothing
 
-scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
+scadeTypeMap :: [(String,Sc.TypeExpr)] -> Either String (Map String GTLType)
 scadeTypeMap tps = do
   res <- mapM (\(name,expr) -> case scadeTypeToGTL expr of
                   Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
@@ -222,10 +220,10 @@ stateToTransition name st
     Nothing
     (TargetFork Restart ("st"++show name))
 
-baseConstr :: Map TypeRep (Dynamic -> Sc.Expr)
+baseConstr :: Map GTLType (Dynamic -> Sc.Expr)
 baseConstr = Map.fromList [
-    (typeOf (undefined::Bool), (\c -> ConstBoolExpr (unsafeFromDyn c))),
-    (typeOf (undefined::Int), (\c -> ConstIntExpr (unsafeFromDyn c)))
+    (GTLBool, (\c -> ConstBoolExpr (unsafeFromDyn c))),
+    (GTLInt, (\c -> ConstIntExpr (unsafeFromDyn c)))
   ]
 
 litToExpr :: GTL.BaseType a => GTL.Expr String a -> Sc.Expr

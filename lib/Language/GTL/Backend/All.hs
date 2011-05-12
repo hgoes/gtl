@@ -8,7 +8,6 @@ import Language.GTL.Backend
 import Language.GTL.Backend.Scade
 import Language.GTL.Backend.None
 import Data.Map as Map
-import Data.Typeable
 
 -- | Essentially a `GTLBackend' with the parameters instantiated, thus eliminating
 --   the type variable.

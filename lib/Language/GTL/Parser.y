@@ -5,6 +5,7 @@ module Language.GTL.Parser (gtl) where
 
 import Language.GTL.Parser.Token
 import Language.GTL.Parser.Syntax
+import Language.GTL.Types
 
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
@@ -17,14 +18,19 @@ import qualified Data.Map as Map
 %token
   "all"             { Key KeyAll }
   "always"          { Unary GOpAlways }
+  "and"             { Binary GOpAnd }
   "automaton"       { Key KeyAutomaton }
+  "bool"            { Key KeyBool }
+  "byte"            { Key KeyByte }
   "connect"         { Key KeyConnect }
   "contract"        { Key KeyContract }
-  "and"             { Binary GOpAnd }
+  "enum"            { Key KeyEnum }
   "exists"          { Key KeyExists }
   "final"           { Key KeyFinal }
   "finally"         { Unary (GOpFinally $$) }
+  "float"           { Key KeyFloat }
   "implies"         { Binary GOpImplies }
+  "int"             { Key KeyInt }
   "model"           { Key KeyModel }
   "next"            { Unary GOpNext}
   "not"             { Unary GOpNot }
@@ -57,6 +63,7 @@ import qualified Data.Map as Map
   "-"               { Binary GOpMinus }
   "*"               { Binary GOpMult }
   "/"               { Binary GOpDiv }
+  "^"               { Binary GOpPow }
   id                { Identifier $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
@@ -73,6 +80,7 @@ import qualified Data.Map as Map
 %left "-"
 %left "*"
 %left "/"
+%left "^"
 %left "in"
 
 %%
@@ -113,12 +121,12 @@ formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let n
                   | init_decl ";" formulas_or_inits             { \decl -> let ndecl = $3 decl
                                                                            in ndecl { modelInits = $1:(modelInits ndecl)
                                                                                     } }
-                  | "input" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                           in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
-                                                                                    } }
-                  | "output" id id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                            in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
-                                                                                     } }
+                  | "input" type id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
+                                                                             in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                                      } }
+                  | "output" type id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
+                                                                              in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
+                                                                                       } }
 
                   |                                             { id }
 
@@ -190,6 +198,26 @@ state_contents : state_content state_contents { $1:$2 }
 state_content : "transition" id ";"              { Right ($2,Nothing) }
               | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
               | expr ";"                         { Left $1 }
+
+type : "int"                    { GTLInt }
+     | "bool"                   { GTLBool }
+     | "byte"                   { GTLByte }
+     | "float"                  { GTLFloat }
+     | "enum" "{" enum_list "}" { GTLEnum $3 }
+     | "(" type_list ")"        { GTLTuple $2 }
+     | type "^" int             { GTLArray $3 $1 }
+
+enum_list : id enum_lists { $1:$2 }
+          |               { [] }
+
+enum_lists : "," id enum_lists { $2:$3 }
+           |                   { [] }
+
+type_list : type type_lists { $1:$2 }
+          |                 { [] }
+
+type_lists : "," type type_lists { $2:$3 }
+           |                     { [] }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

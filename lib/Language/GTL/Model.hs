@@ -6,6 +6,7 @@ import Language.GTL.Parser.Token (BinOp(GOpAnd))
 import Language.GTL.Parser.Syntax
 import Language.GTL.Backend.All
 import Language.GTL.Expression
+import Language.GTL.Types
 import Data.Typeable
 import Data.Dynamic
 import Data.Map as Map
@@ -17,8 +18,8 @@ import Data.Traversable (mapM)
 data GTLModel a = GTLModel
                   { gtlModelContract :: Expr a Bool -- ^ The contract of the model as a boolean formula.
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
-                  , gtlModelInput :: Map a TypeRep -- ^ The input variables with types of the model.
-                  , gtlModelOutput :: Map a TypeRep -- ^ The output variables with types of the model.
+                  , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
+                  , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
                   , gtlModelDefaults :: Map a (Maybe Dynamic) -- ^ Default values for inputs. `Nothing' means any value.
                   }
 
@@ -36,13 +37,13 @@ gtlParseModel mdl = do
   case mback of
     Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
     Just back -> return $ do
-      oinp <- mapM (\str -> case parseGTLType str of
+      {-oinp <- mapM (\str -> case parseGTLType str of
                        Nothing -> Left $ "Unknown type "++show str
                        Just rtp -> return rtp) (modelInputs mdl)
       oout <- mapM (\str -> case parseGTLType str of
                        Nothing -> Left $ "Unknown type "++show str
-                       Just rtp -> return rtp) (modelOutputs mdl)
-      (inp,outp) <- allTypecheck back (oinp,oout)
+                       Just rtp -> return rtp) (modelOutputs mdl)-}
+      (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
       let allType = Map.union inp outp
       expr <- typeCheck allType
               (\q n -> case q of
@@ -54,7 +55,7 @@ gtlParseModel mdl = do
                       InitAll -> return (var,Nothing)
                       InitOne c -> case Map.lookup var allType of
                         Nothing -> Left $ "Unknown variable: "++show var
-                        Just tp -> if tp == typeOf (undefined::Int)
+                        Just tp -> if tp == GTLInt
                                    then return (var,Just $ toDyn (fromIntegral c::Int))
                                    else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
       return (modelName mdl,GTLModel { gtlModelContract = expr

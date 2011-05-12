@@ -4,6 +4,7 @@ import Text.Read
 
 data GTLType = GTLInt
              | GTLByte
+             | GTLBool
              | GTLFloat
              | GTLEnum [String]
              | GTLArray Integer GTLType
