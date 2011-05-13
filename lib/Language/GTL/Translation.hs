@@ -27,88 +27,39 @@ import Data.Map as Map
 
 -- | A representation of GTL expressions that can't be further translated into LTL
 --   and thus have to be used as atoms.
-data GTLAtom v = forall t. (Eq v, BaseType t) => GTLRel GTL.Relation (GTL.Expr v t) (GTL.Expr v t)
-               | GTLElem v [Integer] Bool
-               | GTLVar v Integer Bool
+data GTLAtom v = GTLBoolExpr (GTL.BoolExpr v) Bool
+               deriving (Eq, Ord)
 
-instance Show v => Show (GTLAtom v) where
-  show (GTLRel rel lhs rhs) = show lhs ++ " " ++ show rel ++ " " ++ show rhs
-  show (GTLElem var vals t) = show var ++ (if t then "" else " not")++" in "++show vals
-  show (GTLVar var hist t) = show var ++ (if hist==0 then "" else "["++show hist++"]")
-
-instance Eq v => Eq (GTLAtom v) where
-  (==) (GTLRel a1 lhs1 rhs1) (GTLRel b1 lhs2 rhs2) = (a1 == b1) && (castEqual lhs1 lhs2) && (castEqual rhs1 rhs1)
-  (==) (GTLElem a1 a2 a3) (GTLElem b1 b2 b3)
-           = ((((a1 == b1)) && ((a2 == b2))) && ((a3 == b3)))
-  (==) (GTLVar a1 a2 a3) (GTLVar b1 b2 b3)
-           = ((((a1 == b1)) && ((a2 == b2))) && ((a3 == b3)))
-  (==) _ _ = False
-
-instance Ord v => Ord (GTLAtom v) where
-  compare (GTLRel a1 lhs1 rhs1) (GTLRel b1 lhs2 rhs2) =
-    case compare a1 b1 of
-      EQ -> case castCompare lhs1 lhs2 of
-        EQ -> castCompare rhs1 rhs1
-      r -> r
-  compare (GTLElem a1 a2 a3) (GTLElem b1 b2 b3) =
-    case compare a1 b1 of
-      EQ -> case compare a2 b2 of
-        EQ -> compare a3 b3
-        r -> r
-      r -> r
-  compare (GTLVar a1 a2 a3) (GTLVar b1 b2 b3) =
-    case compare a1 b1 of
-      EQ -> case compare a2 b2 of
-        EQ -> compare a3 b3
-        r -> r
-      r -> r
-  compare _ _ = LT
+instance VarType v => Show (GTLAtom v) where
+  show (GTLBoolExpr e _) = show e
 
 instance (VarType v, Binary v) => Binary (GTLAtom v) where
-  put (GTLRel rel lhs rhs) = put (0::Word8) >> put rel >> put lhs >> put rhs
-  put (GTLElem v vals b) = put (1::Word8) >> put v >> put vals >> put b
-  put (GTLVar v h b) = put (2::Word8) >> put v >> put h >> put b
+  put (GTLBoolExpr e n) = put e >> put n
   get = do
-    i <- get :: Get Word8
-    case i of
-      0 -> do
-        rel <- get
-        lhs :: (GTL.Expr v Int) <- error "Not implemented" -- get TODO
-        rhs :: (GTL.Expr v Int) <- get
-        return $ GTLRel rel lhs rhs
-      1 -> do
-        v <- get
-        vals <- get
-        b <- get
-        return $ GTLElem v vals b
-      2 -> do
-        v <- get
-        h <- get
-        b <- get
-        return $ GTLVar v h b
+    e <- get
+    n <- get
+    return $ GTLBoolExpr e n
 
 -- | Applies a function to every variable in the atom.
-mapGTLVars :: (VarType w, Binary w) => (v -> w) -> GTLAtom v -> GTLAtom w
-mapGTLVars f (GTLRel rel lhs rhs) = GTLRel rel (mapVars f lhs) (mapVars f rhs)
-mapGTLVars f (GTLElem v vals b) = GTLElem (f v) vals b
-mapGTLVars f (GTLVar v i b) = GTLVar (f v) i b
+mapGTLVars :: (VarType v, VarType w) => (v -> w) -> GTLAtom v -> GTLAtom w
+mapGTLVars f (GTLBoolExpr e p) = GTLBoolExpr (mapVarsBoolExpr f e) p
 
 -- | Negate a GTL atom.
 gtlAtomNot :: GTLAtom v -> GTLAtom v
-gtlAtomNot (GTLRel rel l r) = GTLRel (relNot rel) l r
-gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
-gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
+gtlAtomNot (GTLBoolExpr e p) = GTLBoolExpr e (not p) -- TODO: be more intelligent as before
+--gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
+--gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
 
 -- | Like `gtlToBuchi' but takes more than one formula.
-gtlsToBuchi :: (Monad m,Ord v,Show v) => ([GTLAtom v] -> m a) -> [GTL.Expr v Bool] -> m (Buchi a)
-gtlsToBuchi f = gtlToBuchi f . foldl1 (ExprBinBool GTL.And)
+gtlsToBuchi :: (Monad m, VarType v) => ([GTLAtom v] -> m a) -> [GTL.LogicExpr v] -> m (Buchi a)
+gtlsToBuchi f = (gtlToBuchi f) . foldl1 (BinLogicExpr GTL.And)
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtlToBuchi :: (Monad m,Ord v,Show v) => ([GTLAtom v] -> m a) -> GTL.Expr v Bool -> m (Buchi a)
+gtlToBuchi :: (Monad m, VarType v) => ([GTLAtom v] -> m a) -> GTL.LogicExpr v -> m (Buchi a)
 gtlToBuchi f expr = mapM (\co -> do
-                             nvars <- f (fmap (\(at,p) -> if p 
+                             nvars <- f (fmap (\(at,p) -> if p
                                                           then at
                                                           else gtlAtomNot at
                                               ) $ Set.toList (vars co))
@@ -117,46 +68,40 @@ gtlToBuchi f expr = mapM (\co -> do
                     ltlToBuchi (gtlToLTL expr)
 
 -- | Extract all variables with their history level from an atom.
-getAtomVars :: GTLAtom v -> [(v,Integer)]
-getAtomVars (GTLElem n _ _) = [(n,0)]
-getAtomVars (GTLRel _ lhs rhs) = getVars lhs ++ getVars rhs
-getAtomVars (GTLVar n h _) = [(n,h)]
+getAtomVars :: VarType v => GTLAtom v -> [(v,Integer)]
+getAtomVars (GTLBoolExpr e _) = getVarsBoolExpr e
 
 -- | Translate a GTL expression into a LTL formula.
-gtlToLTL :: Ord v => Expr v Bool -> LTL (GTLAtom v)
-gtlToLTL (GTL.ExprRel rel l r) = LTL.Atom $ GTLRel rel l r
-gtlToLTL (GTL.ExprBinBool op l r) = case op of
+gtlToLTL :: VarType v => LogicExpr v -> LTL (GTLAtom v)
+gtlToLTL (GTL.LogicTerm t) = LTL.Atom $ GTLBoolExpr t True
+gtlToLTL (GTL.BinLogicExpr op l r) = case op of
   GTL.And -> LTL.Bin LTL.And (gtlToLTL l) (gtlToLTL r)
   GTL.Or -> LTL.Bin LTL.Or (gtlToLTL l) (gtlToLTL r)
   GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL l)) (gtlToLTL r)
   GTL.Until -> LTL.Bin LTL.Until (gtlToLTL l) (gtlToLTL r)
-gtlToLTL (GTL.ExprNot x) = LTL.Un LTL.Not (gtlToLTL x)
-gtlToLTL (GTL.ExprAlways x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
-gtlToLTL (GTL.ExprNext x) = LTL.Un LTL.Next (gtlToLTL x)
-gtlToLTL (GTL.ExprElem v lits p) = LTL.Atom $ GTLElem v lits p
-gtlToLTL (GTL.ExprVar n lvl) = LTL.Atom $ GTLVar n lvl True
+gtlToLTL (GTL.Not x) = LTL.Un LTL.Not (gtlToLTL x)
+gtlToLTL (GTL.Always x) = LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL x)
+gtlToLTL (GTL.Next x) = LTL.Un LTL.Next (gtlToLTL x)
 gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLSimpleAutomaton (simpleAutomaton buchi)
 --gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLAutomaton (fmap (\co -> co { vars = gtlToLTL (vars co) }) (buchiSwitch buchi))
 
-expandExpr :: Ord v => Expr v Bool -> [Set (GTLAtom v)]
-expandExpr (GTL.ExprRel rel l r) = [Set.singleton (GTLRel rel l r)]
-expandExpr (GTL.ExprBinBool op l r) = case op of
+expandExpr :: VarType v => LogicExpr v -> [Set (GTLAtom v)]
+expandExpr (GTL.LogicTerm t) = [Set.singleton (GTLBoolExpr t True)]
+expandExpr (GTL.BinLogicExpr op l r) = case op of
   GTL.And -> [ Set.union lm rm | lm <- expandExpr l, rm <- expandExpr r ]
   GTL.Or -> expandExpr l ++ expandExpr r
-  GTL.Implies -> expandExpr (GTL.ExprBinBool GTL.Or (GTL.ExprNot l) r)
+  GTL.Implies -> expandExpr (GTL.BinLogicExpr GTL.Or (GTL.Not l) r)
   GTL.Until -> error "Can't use until in state formulas yet"
-expandExpr (GTL.ExprNot x) = expandNot (expandExpr x)
+expandExpr (GTL.Not x) = expandNot (expandExpr x)
   where
     expandNot [] = [Set.empty]
     expandNot (x:xs) = let res = expandNot xs
                        in Set.fold (\at cur -> fmap (Set.insert (gtlAtomNot at)) res ++ cur) res x
-expandExpr (GTL.ExprAlways x) = error "Can't use always in state formulas yet"
-expandExpr (GTL.ExprNext x) = error "Can't use next in state formulas yet"
-expandExpr (GTL.ExprElem v lits p) = [Set.singleton (GTLElem v lits p)]
-expandExpr (GTL.ExprVar n lvl) = [Set.singleton (GTLVar n lvl True)]
+expandExpr (GTL.Always x) = error "Can't use always in state formulas yet"
+expandExpr (GTL.Next x) = error "Can't use next in state formulas yet"
 expandExpr (GTL.ExprAutomaton buchi) = error "Can't use automata in state formulas yet"
 
-simpleAutomaton :: Ord v => GBuchi Integer (Expr v Bool) f -> GBuchi Integer (Set (GTLAtom v)) f
+simpleAutomaton :: VarType v => GBuchi Integer (LogicExpr v) f -> GBuchi Integer (Set (GTLAtom v)) f
 simpleAutomaton buchi
   = let expandState st = [ BuchiState { isStart = isStart st
                                       , vars = nvar
@@ -172,8 +117,8 @@ simpleAutomaton buchi
                                            ) (Map.empty,0,Map.empty) buchi
     in res
 
-     
-     
+
+
 buchiSwitch :: Ord a => GBuchi a b f -> GBuchi a b f
 buchiSwitch buchi = Map.foldrWithKey (\name co mp->
                                        foldl (\mp2 succ ->
