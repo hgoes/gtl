@@ -540,12 +540,15 @@ pushNot expr = expr
 getVarsTerm (VarExpr v) = [(name v, time v)]
 getVarsTerm (ConstExpr _) = []
 getVarsTerm (BinExpr _ _ lhs rhs) = getVarsTerm lhs ++ getVarsTerm rhs
+
+getVarsBoolExpr (RelExpr _ lhs rhs) = getVarsTerm lhs ++ getVarsTerm rhs
+getVarsBoolExpr (ElemExpr v _ _) = [(name v, 0)]
+getVarsBoolExpr (BoolConst _) = []
+getVarsBoolExpr (BoolVar v) = [(name v, time v)]
+
 getVars :: VarType v => Expr v -> [(v,Integer)]
 getVars (Term t) = getVarsTerm t
-getVars (BoolExpr e) = getVarsBool e
-  where
-    getVarsBool (RelExpr _ lhs rhs) = getVarsTerm lhs ++ getVarsTerm rhs
-    getVarsBool (ElemExpr v _ _) = [(name v, 0)]
+getVars (BoolExpr e) = getVarsBoolExpr e
 getVars (LogicExpr e) = getVarsLogic e
   where
     getVarsLogic (Not e) = getVarsLogic e
@@ -563,10 +566,15 @@ mapVarsTerm f (VarExpr v) = VarExpr $ v {name = f (name v)}
 mapVarsTerm _ (ConstExpr c) = ConstExpr c
 mapVarsTerm f (BinExpr t op lhs rhs) = BinExpr t op (mapVarsTerm f lhs) (mapVarsTerm f rhs)
 
+mapVarsBoolExpr :: (VarType v, VarType w) => (v -> w) -> BoolExpr v -> BoolExpr w
+mapVarsBoolExpr f (RelExpr rel lhs rhs) = RelExpr rel (mapVarsTerm f lhs) (mapVarsTerm f rhs)
+mapVarsBoolExpr f (ElemExpr v vals b) = ElemExpr (v {name = f (name v)}) vals b
+mapVarsBoolExpr f (BoolConst c) = BoolConst c
+mapVarsBoolExpr f (BoolVar v) = BoolVar $ v {name = f (name v)}
+
 mapVars :: (VarType v, VarType w) => (v -> w) -> Expr v -> Expr w
 mapVars f (Term t) = Term $ mapVarsTerm f t
-mapVars f (BoolExpr (RelExpr rel lhs rhs)) = BoolExpr $ RelExpr rel (mapVarsTerm f lhs) (mapVarsTerm f rhs)
-mapVars f (BoolExpr (ElemExpr v vals b)) = BoolExpr $ ElemExpr (v {name = f (name v)}) vals b
+mapVars f (BoolExpr e) = BoolExpr $ mapVarsBoolExpr f e
 mapVars f (LogicExpr e) = LogicExpr $ mapVarsLogic f e
   where
     mapVarsLogic f (Not e) = Not (mapVarsLogic f e)
