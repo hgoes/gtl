@@ -62,4 +62,5 @@ data BinOp = GOpAnd
            | GOpMult
            | GOpDiv
            | GOpPow
+           | GOpBang
            deriving (Show,Eq,Ord)

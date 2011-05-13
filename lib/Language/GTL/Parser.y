@@ -64,6 +64,7 @@ import qualified Data.Map as Map
   "*"               { Binary GOpMult }
   "/"               { Binary GOpDiv }
   "^"               { Binary GOpPow }
+  "!"               { Binary GOpBang }
   id                { Identifier $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
@@ -80,6 +81,7 @@ import qualified Data.Map as Map
 %left "-"
 %left "*"
 %left "/"
+%left "!"
 %left "^"
 %left "in"
 
@@ -155,7 +157,10 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "in" expr               { GBin GOpIn $1 $3 }
      | expr "not" "in" expr         { GBin GOpNotIn $1 $4 }
      | "{" ints "}"                 { GSet $2 }
-     | "(" expr ")"                 { $2 }
+     | "(" expr_list ")"            { case $2 of
+                                         [x] -> x
+                                         xs -> GTuple xs
+                                    }
      | var                          { GVar (fst $1) (snd $1) }
      | int                          { GConst $ fromIntegral $1 }
      | expr "+" expr                { GBin GOpPlus $1 $3 }
@@ -164,6 +169,13 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "*" expr                { GBin GOpMult $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
+     | expr "!" expr                { GBin GOpBang $1 $3 }
+
+expr_list : expr expr_lists { $1:$2 }
+          |                 { [] }
+
+expr_lists : "," expr expr_lists { $2:$3 }
+           |                     { [] }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
