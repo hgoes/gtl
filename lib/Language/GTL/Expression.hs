@@ -34,7 +34,7 @@ data Variable v = Variable
                   { name :: v
                   , time :: Integer
                   , varType :: GTLType
-                  } deriving (Show, Eq, Ord)
+                  } deriving (Eq, Ord)
 
 -- | Representation of typed constants
 data Constant = Constant
@@ -42,7 +42,7 @@ data Constant = Constant
                   , constType :: GTLType
                   } deriving (Show, Eq, Ord)
 
-data GTLOp = IntOp IntOp
+data GTLOp = IntOp IntOp deriving (Eq, Ord)
 
 -- We split the expression typing in 'static' and 'dynamic' typing.
 -- This is because we have expressions which types are fixed (e.g. bool)
@@ -63,7 +63,8 @@ data VarType v => BoolExpr v
 
 -- | Statically typed
 data VarType v => LogicExpr v
-  = LogicTerm (BoolExpr v)
+  = LogicConstant Bool
+  | LogicTerm (BoolExpr v)
   | Not (LogicExpr v)
   | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
   | Always (LogicExpr v)
@@ -275,6 +276,11 @@ makeExprNext (TypeErasedExpr tl lhs) = do
 
 -}
 
+getLogicExpr :: VarType v => Expr v -> Either String (LogicExpr v)
+getLogicExpr (LogicExpr e) = Right e
+getLogicExpr (BoolExpr e) = Right $ LogicTerm e
+getLogicExpr _ = Left ""
+
 makeUnaryLogicExpr :: VarType v => (LogicExpr v -> LogicExpr v) -> String -> Expr v -> Either String (LogicExpr v)
 makeUnaryLogicExpr constructor _ (LogicExpr e) = Right $ constructor e
 makeUnaryLogicExpr constructor _ (BoolExpr e) = Right $ constructor $ LogicTerm e
@@ -434,7 +440,7 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
         r <- inferType tp f bind c
         return $ Just r
     let (exprs,nexts) = partitionEithers rcont
-        rexprs = case rcond of
+    let rexprs = case rcond of
           Nothing -> exprs
           Just jcond -> jcond:exprs
     (nbuchi,ncur,nmp,succ) <- foldrM (\(nxt,nxt_cond) (cbuchi,ccur,cmp,succ) -> case List.find (\cst -> (stateName cst) == nxt) all of
@@ -450,37 +456,42 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
                                            , successors = succ
                                            }) nbuchi,ncur,nmp)
   where
-    makeVars :: VarType a => [LogicExpr a] -> Either String (LogicExpr a)
-    makeVars [] = Right $ ConstExpr True
+    makeVars :: VarType a => [Expr a] -> Either String (LogicExpr a)
+    makeVars [] = Right $ LogicConstant True
     makeVars rexprs =
-      let t = exprType (head rexprs)
-      in if t == GTLBool then do
-          first <- head rexprs
-          foldM (\x y -> do { eNext <- y; return $ BinLogicExpr And x eNext }) first (tail rexprs)
+      let first = head rexprs
+      in case first of
+        LogicExpr first' -> do
+          foldM (\x y -> do { y' <- getLogicExpr y; return $ BinLogicExpr And x y' }) first' (tail rexprs)
+        _ -> Left $ "Expected type Bool for operator finally but got type " ++ (show $ exprType first) ++ "."
+
+{-
+      let t = exprType (head res)
+      if t == GTLBool then do
+          first <- makeUnaryLogicExpr Next "next" (head res)
+          folded <- foldM (\x y -> do { eNext <- (makeUnaryLogicExpr Next "next" y); return $ BinLogicExpr Or x eNext }) first (tail res)
+          return $ LogicExpr folded
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
+-}
 
-instance Eq v => Eq (Term v) where
-  (VarExpr n1 lvl1) == (VarExpr n2 lvl2) = n1 == n2 && lvl1 == lvl2
-  (ConstExpr i1) == (ConstExpr i2) = i1 == i2
+instance VarType v => Eq (Term v) where
+  (VarExpr v1) == (VarExpr v2) = v1 == v2
+  (ConstExpr c1) == (ConstExpr c2) = c1 == c2
   (BinExpr t1 op1 l1 r1) == (BinExpr t2 op2 l2 r2) = t1 == t2 && op1==op2 && l1==l2 && r1==r2
 
-instance Eq v => Eq (BoolExpr v) where
+instance VarType v => Eq (BoolExpr v) where
   (RelExpr rel1 lhs1 rhs1) == (RelExpr rel2 lhs2 rhs2) = rel1 == rel2 && lhs1 == lhs2 && rhs1 == rhs1
   (ElemExpr n1 s1 p1) == (ElemExpr n2 s2 p2) = n1 == n2 && s1 == s2 && p1 == p2
 
-instance Eq v => Eq (LogicExpr v) where
+instance VarType v => Eq (LogicExpr v) where
   (Not e1) == (Not e2) = e1 == e2
   (Always e1) == (Always e2) = e1 == e2
   (Next e1) == (Next e2) = e1 == e2
 
-instance Ord v => Ord (Term v) where
-  compare (VarExpr t1 var1) (VarExpr t2 var2) = case compare t1 t2 of
-    EQ -> compare var1 var2
-    r -> r
-  compare (ConstExpr t1 c1) (ConstExpr t2 c2) = case compare t1 t2 of
-    EQ -> compare c1 c2
-    r -> r
+instance VarType v => Ord (Term v) where
+  compare (VarExpr v1) (VarExpr v2) = compare v1 v2
+  compare (ConstExpr c1) (ConstExpr c2) = compare c1 c2
   compare (BinExpr t1 op1 l1 r1) (BinExpr t2 op2 l2 r2) = case compare t1 t2 of
     EQ -> case compare op1 op2 of
       EQ -> case compare l1 l2 of
@@ -489,20 +500,20 @@ instance Ord v => Ord (Term v) where
       r -> r
     r -> r
 
-instance Ord v => Ord (BoolExpr v) where
+instance VarType v => Ord (BoolExpr v) where
   compare (RelExpr rel1 lhs1 rhs1) (RelExpr rel2 lhs2 rhs2) = case compare rel1 rel2 of
     EQ -> case compare lhs1 lhs2 of
       EQ -> compare rhs1 rhs1
     r -> r
   compare (RelExpr _ _ _) _ = LT
-  compare (ElemExpr n1 s1 p1) (ElemExpr n2 s2 p2) = case compare (VarExpr n1 0:: Expr v Int) (VarExpr n2 0) of
+  compare (ElemExpr v1 s1 p1) (ElemExpr v2 s2 p2) = case compare v1 v2 of
     EQ -> case compare s1 s2 of
       EQ -> compare p1 p2
       r -> r
     r -> r
   compare (ElemExpr _ _ _) _ = LT
 
-instance Ord v => Ord (LogicExpr v) where
+instance VarType v => Ord (LogicExpr v) where
   compare (Not e1) (Not e2) = compare e1 e2
   compare (Not _) _ = LT
   compare (Always e1) (Always e2) = compare e1 e2
@@ -510,86 +521,150 @@ instance Ord v => Ord (LogicExpr v) where
   compare (Next e1) (Next e2) = compare e1 e2
   compare (Next _) _ = LT
 
-instance (Show v) => Show (Expr v) where
-  show (VarExpr q lvl) = let suff = case lvl of
-                               0 -> ""
-                               _ -> "#"++show lvl
-                         in show q++suff
+instance Show GTLOp where
+  show (IntOp op) = case op of
+                     OpPlus -> "+"
+                     OpMinus -> "-"
+                     OpMult -> "*"
+                     OpDiv -> "/"
+
+instance VarType v => Show (Variable v) where
+  show v = let suff = case time v of
+                        0 -> ""
+                        _ -> "#" ++ (show $ time v)
+            in (show $ name v) ++ suff
+
+instance VarType v => Show (Term v) where
+  show (VarExpr v) = show v
   show (ConstExpr i) = show i
-  show (BinExpr GTLInt op lhs rhs) = "(" ++ show lhs ++ ")" ++
-                                 (case op of
-                                     OpPlus -> "+"
-                                     OpMinus -> "-"
-                                     OpMult -> "*"
-                                     OpDiv -> "/") ++
-                                 "(" ++ show rhs ++ ")"
-  show (BinExpr GTLBool op lhs rhs) = "(" ++ show lhs ++ ") " ++
-                                  (case op of
-                                      And -> "and"
-                                      Or -> "or"
-                                      Implies -> "implies") ++
-                                  " ("++show rhs++")"
+  show (BinExpr _ op lhs rhs) = "(" ++ show lhs ++ ")"
+                                 ++ show op
+                                 ++ "(" ++ show rhs ++ ")"
+
+instance VarType v => Show (BoolExpr v) where
   show (RelExpr rel lhs rhs) = "(" ++ show lhs ++ ") " ++
                                show rel ++
                                " (" ++ show rhs ++ ")"
-  show (ElemExpr q ints pos) = show (VarExpr q 0::Expr v Int) ++
+  show (ElemExpr v ints pos) = show v ++
                                (if pos then " in "
                                 else " not in ") ++
                                show ints
-  show (Not e) = "not ("++show e++")"
-  show (Always e) = "always ("++show e++")"
-  show (Next e) = "next ("++show e++")"
 
-instance (VarType v, Binary v) => Binary (Expr v) where
-  put (VarExpr n hist) = put (0::Word8) >> put n >> put hist
-  put (ConstExpr c) = put (1::Word8) >> put c
-  put (BinExpr GTLInt op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
-  put (BinExpr GTLBool op lhs rhs) = put (2::Word8) >> put op >> put lhs >> put rhs
-  put (RelExpr rel lhs rhs) = put (3::Word8) >> put rel >> put lhs >> put rhs
-  put (ElemExpr n vals b) = put (4::Word8) >> put n >> put vals >> put b
-  put (Not e) = put (5::Word8) >> put e
-  put (Always e) = put (6::Word8) >> put e
-  put (Next e) = put (7::Word8) >> put e
+instance VarType v => Show (LogicExpr v) where
+  show (LogicConstant c) = show c
+  show (LogicTerm t) = show t
+  show (BinLogicExpr op lhs rhs) = "(" ++ show lhs ++ ") " ++
+                                  (case op of
+                                      And -> "and"
+                                      Or -> "or"
+                                      Implies -> "implies"
+                                      Until -> "until") ++
+                                  " ("++show rhs++")"
+  show (Not e) = "not (" ++ show e ++ ")"
+  show (Always e) = "always (" ++ show e ++ ")"
+  show (Next e) = "next (" ++ show e ++ ")"
+  show (ExprAutomaton a) = "Automaton"
+
+instance VarType v => Show (Expr v) where
+  show (Term e) = show e
+  show (BoolExpr e) = show e
+  show (LogicExpr e) = show e
+
+instance (VarType v, Binary v) => Binary (Variable v) where
+  put v = put (varType v) >> put (name v) >> put (time v)
   get = do
-    i <- get :: Get Word8
-    case i of
-      0 -> do
-        n <- get
-        hist <- get
-        return (VarExpr n hist)
-      1 -> do
-        c <- get
-        return (ConstExpr c)
-      2 -> case gcast (BinExpr GTLInt undefined undefined undefined) of
-        Nothing -> do
-          op <- get
-          lhs <- get
-          rhs <- get
-          castSer (BinExpr GTLBool op lhs rhs)
-        Just (_::Expr v a) -> do
-          op <- get
-          lhs <- get
-          rhs <- get
-          castSer (BinExpr GTLInt op lhs rhs)
+    varType <- get
+    name <- get
+    time <- get
+    return $ Variable name time varType
+
+putBinaryGTLTypeVal :: GTLTypeVal -> Put
+putBinaryGTLTypeVal (IntVal c) = put c
+putBinaryGTLTypeVal (BoolVal c) = put c
+
+getBinaryGTLTypeVal :: GTLType -> Get GTLTypeVal
+getBinaryGTLTypeVal GTLInt = fmap IntVal $ (get :: Get Int)
+getBinaryGTLTypeVal GTLBool = fmap BoolVal $ (get :: Get Bool)
+
+instance Binary Constant where
+  put c = put (constType c) >> putBinaryGTLTypeVal (value c)
+  get = do
+    t <- get :: Get GTLType
+    c <- getBinaryGTLTypeVal t
+    return $ Constant c t
+
+instance Binary GTLOp where
+  put (IntOp o) = case o of
+    OpPlus -> putWord8 0
+    OpMinus -> putWord8 1
+    OpMult -> putWord8 2
+    OpDiv -> putWord8 3
+  get = do
+    which <- getWord8
+    return $ IntOp (case which of
+      0 -> OpPlus
+      1 -> OpMinus
+      2 -> OpMult
+      3 -> OpDiv)
+
+instance (VarType v, Binary v) => Binary (Term v) where
+  put (VarExpr v) = putWord8 0 >> put v
+  put (ConstExpr c) = putWord8 1 >> put c
+  put (BinExpr t op lhs rhs) = putWord8 2 >> put t >> put op >> put lhs >> put rhs
+  get = do
+    which <- getWord8
+    case which of
+      0 -> fmap VarExpr $ (get :: Get (Variable v))
+      1 -> fmap ConstExpr $ (get :: Get Constant)
+      2 -> do
+        t <- get
+        op <- get
+        lhs <- get
+        rhs <- get
+        return $ BinExpr t op lhs rhs
+
+instance (VarType v, Binary v) => Binary (BoolExpr v) where
+  put (RelExpr rel lhs rhs) = putWord8 3 >> put rel >> put lhs >> put rhs
+  put (ElemExpr n vals b) = putWord8 4 >> put n >> put vals >> put b
+  get = do
+    which <- getWord8
+    case which of
       3 -> do
         rel <- get
-        lhs :: (Expr v a) <- error "not implemented" -- get -- TODO: hier muss der Typ genommen werden, der serialisiert wurde. a ist aber Bool!
-        rhs :: (Expr v a) <- get
-        castSer (RelExpr rel lhs rhs)
+        lhs <- get
+        rhs <- get
+        return $ RelExpr rel lhs rhs
       4 -> do
-        n <- get
-        vals <- get
-        b <- get
-        castSer (ElemExpr n vals b)
+        var <- get
+        cs <- get
+        isIn <- get
+        return $ ElemExpr var cs isIn
+
+instance (VarType v, Binary v) => Binary (LogicExpr v) where
+  put (Not e) = putWord8 5 >> put e
+  put (Always e) = putWord8 6 >> put e
+  put (Next e) = putWord8 7 >> put e
+  put (LogicConstant c) = putWord8 8 >> put c
+  put (LogicTerm t) = putWord8 9 >> put t
+  put (ExprAutomaton _ ) = undefined
+  get = do
+    i <- getWord8
+    case i of
       5 -> do
         e <- get
-        castSer (Not e)
+        return $ Not e
       6 -> do
         e <- get
-        castSer (Always e)
+        return $ Always e
       7 -> do
         e <- get
-        castSer (Next e)
+        return $ Next e
+      8 -> do
+        c <- get
+        return $ LogicConstant c
+      9 -> do
+        t <- get
+        return $ LogicTerm t
 
 -- | Pushes a negation as far into the formula as possible by applying simplification rules.
 pushNot :: LogicExpr v -> LogicExpr v

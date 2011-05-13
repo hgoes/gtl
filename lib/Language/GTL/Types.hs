@@ -1,6 +1,7 @@
 module Language.GTL.Types where
 
 import Text.Read
+import Data.Binary
 
 data GTLType = GTLInt
              | GTLByte
@@ -58,7 +59,7 @@ lexPunc c = do
 instance Read GTLType where
   readPrec = do
     tp <- readSingle
-    readPow tp    
+    readPow tp
     where
       readPow tp = (do
         tok <- lexP
@@ -96,3 +97,7 @@ instance Read GTLType where
               Punc ")" -> return (GTLTuple tps)
               _ -> pfail
           _ -> pfail
+
+instance Binary GTLType where
+  put = undefined
+  get = undefined
