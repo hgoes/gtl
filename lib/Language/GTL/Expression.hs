@@ -667,59 +667,67 @@ instance (VarType v, Binary v) => Binary (LogicExpr v) where
         return $ LogicTerm t
 
 -- | Pushes a negation as far into the formula as possible by applying simplification rules.
-pushNot :: LogicExpr v -> LogicExpr v
-pushNot (Not x) = pushNot' x
+pushNot :: VarType v => LogicExpr v -> LogicExpr v
+pushNot (Not x) = negateExpr x
   where
-    pushNot' :: Expr v Bool -> Expr v Bool
-    pushNot' (RelExpr rel x y)
-      = RelExpr (case rel of
-                    BinLT -> BinGTEq
-                    BinLTEq -> BinGT
-                    BinGT -> BinLTEq
-                    BinGTEq -> BinLT
-                    BinEq -> BinNEq
-                    BinNEq -> BinEq) x y
-    pushNot' (Not x) = x
-    pushNot' (BinExpr GTLBool op x y) = case op of
-      And -> BinExpr GTLBool Or (pushNot' x) (pushNot' y)
-      Or -> BinExpr GTLBool And (pushNot' x) (pushNot' y)
-      Implies -> BinExpr GTLBool And (pushNot x) (pushNot' y)
-    pushNot' (Always x) = error "always operator must not be negated"
-    pushNot' (Next x) = Next (pushNot' x)
-    pushNot' (ElemExpr n lst neg) = ElemExpr n lst (not neg)
-pushNot (BinExpr GTLBool op x y) = BinExpr GTLBool op (pushNot x) (pushNot y)
+    negateTerm :: VarType v => BoolExpr v -> BoolExpr v
+    negateTerm (RelExpr rel x y) = RelExpr (relNot rel) x y
+    negateTerm (ElemExpr n lst neg) = ElemExpr n lst (not neg)
+    -- negateTerm t = error $ "Can not negate " ++ show t
+
+    negateExpr :: VarType v => LogicExpr v -> LogicExpr v
+    negateExpr (LogicTerm t) = LogicTerm $ negateTerm t
+    negateExpr (Not x) = x
+    negateExpr (BinLogicExpr op x y) = case op of
+      And -> BinLogicExpr Or (negateExpr x) (negateExpr y)
+      Or -> BinLogicExpr And (negateExpr x) (negateExpr y)
+      Implies -> BinLogicExpr And (pushNot x) (negateExpr y)
+    negateExpr (Always x) = error "always operator must not be negated"
+    negateExpr (Next x) = Next (negateExpr x)
+
+pushNot (BinLogicExpr op x y) = BinLogicExpr op (pushNot x) (pushNot y)
 pushNot (Always x) = Always (pushNot x)
 pushNot (Next x) = Next (pushNot x)
 pushNot expr = expr
 
+
+
 -- | Extracts all variables with their level of history from an expression.
-getVars :: Expr v -> [(v,Integer)]
-getVars (VarExpr n lvl) = [(n,lvl)]
-getVars (ConstExpr _) = []
-getVars (BinExpr GTLInt _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (BinExpr GTLBool _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (RelExpr _ lhs rhs) = getVars lhs ++ getVars rhs
-getVars (ElemExpr n _ _) = [(n,0)]
-getVars (Not e) = getVars e
-getVars (Always e) = getVars e
-getVars (Next e) = getVars e
-getVars (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVars (vars st)) (Map.toList aut)
+getVarsTerm (VarExpr v) = [(name v, time v)]
+getVarsTerm (ConstExpr _) = []
+getVarsTerm (BinExpr _ _ lhs rhs) = getVarsTerm lhs ++ getVarsTerm rhs
+getVars :: VarType v => Expr v -> [(v,Integer)]
+getVars (Term t) = getVarsTerm t
+getVars (BoolExpr e) = getVarsBool e
+  where
+    getVarsBool (RelExpr _ lhs rhs) = getVarsTerm lhs ++ getVarsTerm rhs
+    getVarsBool (ElemExpr v _ _) = [(name v, 0)]
+getVars (LogicExpr e) = getVarsLogic e
+  where
+    getVarsLogic (Not e) = getVarsLogic e
+    getVarsLogic (Always e) = getVarsLogic e
+    getVarsLogic (Next e) = getVarsLogic e
+    getVarsLogic (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVarsLogic (vars st)) (Map.toList aut)
 
 -- | Extracts the maximum level of history for each variable in the expression.
-maximumHistory :: Ord v => Expr v -> Map v Integer
+maximumHistory :: VarType v => Expr v -> Map v Integer
 maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 -- | Change the type of the variables in an expression.
-mapVars :: (VarType w, Binary w, Eq w) => (v -> w) -> Expr v -> Expr w
-mapVars f (VarExpr n lvl) = VarExpr (f n) lvl
-mapVars f (ConstExpr c) = ConstExpr c
-mapVars f (BinExpr GTLInt op lhs rhs) = BinExpr GTLInt op (mapVars f lhs) (mapVars f rhs)
-mapVars f (BinExpr GTLBool op lhs rhs) = BinExpr GTLBool op (mapVars f lhs) (mapVars f rhs)
-mapVars f (RelExpr rel lhs rhs) = RelExpr rel (mapVars f lhs) (mapVars f rhs)
-mapVars f (ElemExpr n vals b) = ElemExpr (f n) vals b
-mapVars f (Not e) = Not (mapVars f e)
-mapVars f (Always e) = Always (mapVars f e)
-mapVars f (Next e) = Next (mapVars f e)
+mapVarsTerm :: (VarType v, VarType w) => (v -> w) -> Term v -> Term w
+mapVarsTerm f (VarExpr v) = VarExpr $ v {name = f (name v)}
+mapVarsTerm _ (ConstExpr c) = ConstExpr c
+mapVarsTerm f (BinExpr t op lhs rhs) = BinExpr t op (mapVarsTerm f lhs) (mapVarsTerm f rhs)
+
+mapVars :: (VarType v, VarType w) => (v -> w) -> Expr v -> Expr w
+mapVars f (Term t) = Term $ mapVarsTerm f t
+mapVars f (BoolExpr (RelExpr rel lhs rhs)) = BoolExpr $ RelExpr rel (mapVarsTerm f lhs) (mapVarsTerm f rhs)
+mapVars f (BoolExpr (ElemExpr v vals b)) = BoolExpr $ ElemExpr (v {name = f (name v)}) vals b
+mapVars f (LogicExpr e) = LogicExpr $ mapVarsLogic f e
+  where
+    mapVarsLogic f (Not e) = Not (mapVarsLogic f e)
+    mapVarsLogic f (Always e) = Always (mapVarsLogic f e)
+    mapVarsLogic f (Next e) = Next (mapVarsLogic f e)
 
 -- | Binary boolean operators with the traditional semantics.
 data BoolOp = And     -- ^ &#8896;
