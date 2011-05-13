@@ -54,11 +54,12 @@ data VarType v => Term v
 data VarType v => BoolExpr v
   = RelExpr Relation (Term v) (Term v)
   | ElemExpr (Variable v) [Constant] Bool
+  | BoolConst Bool
+  | BoolVar (Variable v) -- TODO: type inference should lift boolean variables and constants!
 
 -- | Statically typed
 data VarType v => LogicExpr v
-  = LogicConstant Bool
-  | LogicTerm (BoolExpr v)
+  = LogicTerm (BoolExpr v)
   | Not (LogicExpr v)
   | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
   | Always (LogicExpr v)
@@ -305,7 +306,7 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
                                            }) nbuchi,ncur,nmp)
   where
     makeVars :: VarType a => [Expr a] -> Either String (LogicExpr a)
-    makeVars [] = Right $ LogicConstant True
+    makeVars [] = Right $ LogicTerm $ BoolConst True
     makeVars rexprs =
       let first = head rexprs
       in case first of
@@ -397,9 +398,10 @@ instance VarType v => Show (BoolExpr v) where
                                (if pos then " in "
                                 else " not in ") ++
                                show ints
+  show (BoolConst c) = show c
+  show (BoolVar v) = show v
 
 instance VarType v => Show (LogicExpr v) where
-  show (LogicConstant c) = show c
   show (LogicTerm t) = show t
   show (BinLogicExpr op lhs rhs) = "(" ++ show lhs ++ ") " ++
                                   (case op of
@@ -464,6 +466,8 @@ instance (VarType v, Binary v) => Binary (Term v) where
 instance (VarType v, Binary v) => Binary (BoolExpr v) where
   put (RelExpr rel lhs rhs) = putWord8 3 >> put rel >> put lhs >> put rhs
   put (ElemExpr n vals b) = putWord8 4 >> put n >> put vals >> put b
+  put (BoolConst c) = putWord8 5 >> put c
+  put (BoolVar v) = putWord8 6 >> put v
   get = do
     which <- getWord8
     case which of
@@ -477,30 +481,32 @@ instance (VarType v, Binary v) => Binary (BoolExpr v) where
         cs <- get
         isIn <- get
         return $ ElemExpr var cs isIn
+      5 -> fmap BoolConst get
+      6 -> do
+        v <- get :: Get (Variable v)
+        -- assert (varType v) == GTLBool
+        return $ BoolVar v
+
 
 instance (VarType v, Binary v) => Binary (LogicExpr v) where
-  put (Not e) = putWord8 5 >> put e
-  put (Always e) = putWord8 6 >> put e
-  put (Next e) = putWord8 7 >> put e
-  put (LogicConstant c) = putWord8 8 >> put c
-  put (LogicTerm t) = putWord8 9 >> put t
+  put (Not e) = putWord8 7 >> put e
+  put (Always e) = putWord8 8 >> put e
+  put (Next e) = putWord8 9 >> put e
+  put (LogicTerm t) = putWord8 10 >> put t
   put (ExprAutomaton _ ) = undefined
   get = do
     i <- getWord8
     case i of
-      5 -> do
-        e <- get
-        return $ Not e
-      6 -> do
-        e <- get
-        return $ Always e
       7 -> do
         e <- get
-        return $ Next e
+        return $ Not e
       8 -> do
-        c <- get
-        return $ LogicConstant c
+        e <- get
+        return $ Always e
       9 -> do
+        e <- get
+        return $ Next e
+      10 -> do
         t <- get
         return $ LogicTerm t
 
