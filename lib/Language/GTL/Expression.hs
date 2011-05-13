@@ -25,6 +25,45 @@ import Data.Either
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat)
 
+-- | GTL variables associated with their
+-- name, time reference and type.
+data Variable v = Variable
+                  { name :: v
+                  , time :: Integer
+                  , gltType :: GTLType
+                  } deriving Show
+
+-- | Representation of typed constants
+data Constant = Constant
+                  { value :: String   -- maybe change to sum type
+                  , gtlType :: GTLType
+                  }
+                  deriving Show
+
+-- We split the expression typing in 'static' and 'dynamic' typing.
+-- This is because we have expressions which types are fixed (e.g. bool)
+-- and terms which get a type that is determined by the user in the formula.
+-- And then there are things which have dynamically typed 'parameters' and
+-- a fixed 'return' type (e.g. relations).
+
+-- | Dynamically typed
+data VarType v => Term v
+  = Var GTLType (Variable v)
+  | Const GTLType Constant
+  | BinExpr GTLType BinOp (Term v) (Term v)
+
+-- | In between
+data VarType v => RelExpr v
+  = RelExpr Relation (Term v) (Term v)
+  | ElemExpr (Variable v) [Constant] Bool
+
+-- | Statically typed
+data VarType v => LogicExpr v
+  = Not (LogicExpr v)
+  | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
+  | Always (LogicExpr v)
+  | Next (LogicExpr v)
+
 instance Ord TypeRep where
     compare t1 t2 =
         compare
