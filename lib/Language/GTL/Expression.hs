@@ -44,12 +44,6 @@ data Constant = Constant
 
 data GTLOp = IntOp IntOp deriving (Eq, Ord)
 
--- We split the expression typing in 'static' and 'dynamic' typing.
--- This is because we have expressions which types are fixed (e.g. bool)
--- and terms which get a type that is determined by the user in the formula.
--- And then there are things which have dynamically typed 'parameters' and
--- a fixed 'return' type (e.g. relations).
-
 -- | Dynamically typed
 data VarType v => Term v
   = VarExpr (Variable v)
@@ -71,6 +65,14 @@ data VarType v => LogicExpr v
   | Next (LogicExpr v)
   | ExprAutomaton (GBuchi Integer (LogicExpr v) Bool)
 
+-- | A typed expression type.
+--   /v/ is the type of variables description (for example `String' or `(String, String)'
+--  for unqualified or qualified names).
+-- We split the expression typing in 'static' and 'dynamic' typing.
+-- This is because we have expressions which types are fixed (e.g. bool)
+-- and terms which get a type that is determined by the user in the formula.
+-- And then there are things which have dynamically typed 'parameters' and
+-- a fixed 'return' type (e.g. relations).
 data VarType v => Expr v
   = Term (Term v)
   | BoolExpr (BoolExpr v)
@@ -116,165 +118,11 @@ unsafeFromDyn x = case fromDynamic x of
   where
     c = undefined
 
-{-
--- | A type-safe expression type.
---   /v/ is the type of variables description (for example `String' or `(String, String)'
---  for unqualified or qualified names) and /a/ is the type of the expression.
-data Expr v a where
-  ExprVar :: BaseType a => v -> Integer -> Expr v a -- A variable. Can have any type.
-  ConstExpr :: BaseType a => a -> Expr v a -- A constant. Has the type of the constant.
-  ExprBinInt :: IntOp -> Expr v Int -> Expr v Int -> Expr v Int -- A binary integer operation that takes two integer expressions and returns an integer expression.
-  ExprBinBool :: BoolOp -> Expr v Bool -> Expr v Bool -> Expr v Bool -- A binary boolean operation.
-  ExprRel ::
-    forall v t. BaseType t => Relation -> Expr v t -> Expr v t -> Expr v Bool -- A relation between expressions of an arbitrary type.
-  ExprElem :: v -> [Integer] -> Bool -> Expr v Bool -- `ExprElem' /x/ /xs/ `True' means: "/x/ is element of the list /xs/".
-  ExprNot :: Expr v Bool -> Expr v Bool
-  ExprAlways :: Expr v Bool -> Expr v Bool
-  ExprNext :: Expr v Bool -> Expr v Bool
-  ExprAutomaton :: GBuchi Integer (Expr v Bool) Bool -> Expr v Bool
-  deriving Typeable
-
-
-castEqual :: (Eq v, Eq a1, BaseType a1, Eq a2, BaseType a2) => (Expr v a1) -> (Expr v a2) -> Bool
-castEqual e1 e2 =
-  let testCasted p v = maybe False p (gcast v) -- testCasted :: (Typeable a, Typeable b) => ((Expr v a) -> Bool) -> (Expr v b) -> Bool
-  in  (testCasted ((==) e1) e2)
-
-castCompare e1 e2 =
-  let testCasted p v = maybe LT p (gcast v)
-  in  testCasted (compare e1) e2
-
-data TypeErasedExpr v = forall t. BaseType t => TypeErasedExpr GTLType (Expr v t)
-
-instance VarType v => Show (TypeErasedExpr v) where
-  show (TypeErasedExpr t e) = show e ++ " :: " ++ show t
-
--- | Erases the type of the given expression but saving the corresponding
--- TypeRep.
-makeTypeErasedExpr :: BaseType t => Expr v t -> TypeErasedExpr v
-makeTypeErasedExpr (e :: Expr v t) = TypeErasedExpr (gtlTypeOf (undefined::t)) e
-
--}
-
 gtlTypeOf :: Typeable a => a -> GTLType
 gtlTypeOf x
   | typeOf x == (typeOf (undefined::Int)) = GTLInt
   | typeOf x == (typeOf (undefined::Bool)) = GTLBool
   | typeOf x == (typeOf (undefined::Float)) = GTLFloat
-
-{-
-exprType :: VarType v => TypeErasedExpr v -> GTLType
-exprType (TypeErasedExpr t e) = t
-
-castExpr :: (VarType v, BaseType t) => TypeErasedExpr v -> Either String (Expr v t)
-castExpr e = castExpr' e undefined
-  where
-    castExpr' :: (VarType v, BaseType t) => TypeErasedExpr v -> t -> Either String (Expr v t)
-    castExpr' (TypeErasedExpr t expr) t' =
-      if t == gtlTypeOf t' then
-        Right (unsafeCoerce expr)
-      else
-        Left $ "Expected expression of type " ++ show t' ++ " but got type " ++ show t ++ "."
-
--}
-
--- | Compose a function of one argument with a function of two
--- arguments. The resulting function has again two arguments.
-comp12 :: (c -> d) -> (a -> b -> c) -> a -> b -> d
-comp12 = (.).(.)
---comp12 g f a b = g(f a b)
-
--- | Compose a function of two arguments with a function of two
--- arguments. The resulting function has then three arguments.
-comp22 :: (c -> d -> e) -> (a -> b -> c) -> a -> b -> d -> e
-comp22 g f a b d = g (f a b) d
-
-{-
--- | Checks if both given types are equal and else fails with a corresponding
--- error message involving the given extra information. If Right is returned,
--- the value is undefined.
-checkType :: GTLType -> GTLType -> String -> Either String (TypeErasedExpr v)
-checkType expected t what =
-  if expected == t then
-    Right undefined
-  else
-     Left $ "Expected type " ++ show expected ++ " for " ++ what ++ " but got type " ++ show t ++ "."
--}
-
--- Factory functions for runtime typed expressions.
-{-
-makeExprVar :: VarType v => v -> Integer -> GTLType -> Either String (TypeErasedExpr v)
-makeExprVar name time t =
-  let
-    varConstructors :: Map GTLType (v -> Integer -> TypeErasedExpr v)
-    varConstructors = Map.fromList [
-        (GTLInt, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Int))
-        , (GTLBool, makeTypeErasedExpr `comp12` (ExprVar :: v -> Integer -> Expr v Bool))]
-    c' = Map.lookup t varConstructors
-  in case c' of
-    Nothing -> Left $ "Type error for variable " ++ show name ++ ": unknown type " ++ show t
-    Just c -> Right (c name time)
-
-makeConstExpr :: (BaseType t, VarType v) => t -> (TypeErasedExpr v)
-makeConstExpr v = makeTypeErasedExpr (ConstExpr v)
-
-makeExprBinInt :: VarType v => IntOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprBinInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
-  if tr == tl then do
-    checkType GTLInt tl ("operator " ++ show op)
-    return $ makeTypeErasedExpr (ExprBinInt op (unsafeCoerce lhs) (unsafeCoerce rhs))
-  else
-    error "Types in makeExprBinInt not equal!"
-
-makeExprRel :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprRel op (lhs :: TypeErasedExpr v) (rhs :: TypeErasedExpr v) =
-  let
-    makeExprRelInt :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
-    makeExprRelInt op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs)
-      = makeTypeErasedExpr $ ExprRel op ((unsafeCoerce lhs) :: Expr v Int) ((unsafeCoerce rhs) :: Expr v Int)
-
-    makeExprRelBool :: VarType v => Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v)
-    makeExprRelBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs)
-      = makeTypeErasedExpr $ ExprRel op ((unsafeCoerce lhs) :: Expr v Bool) ((unsafeCoerce rhs) :: Expr v Bool)
-
-    constructors :: VarType v => Map GTLType (Relation -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> (TypeErasedExpr v))
-    constructors = Map.fromList [
-        (GTLInt, makeExprRelInt)
-        , (GTLBool, makeExprRelBool)]
-
-    tl = exprType lhs
-    tr = exprType rhs
-  in if tl == tr then
-    case Map.lookup tl constructors of
-      Nothing -> Left $ "Relation " ++ show op ++ " not defined on type " ++ show tl ++ "."
-      Just c -> Right (c op lhs rhs)
-  else
-    error "Types in makeExprRel not equal!"
-
-makeExprBinBool :: VarType v => BoolOp -> (TypeErasedExpr v) -> (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprBinBool op (TypeErasedExpr tl lhs) (TypeErasedExpr tr rhs) =
-  if tr == tl then do
-    checkType GTLBool tl ("operator " ++ show op)
-    return $ makeTypeErasedExpr (ExprBinBool op (unsafeCoerce lhs) (unsafeCoerce rhs))
-  else
-    error "Types in makeExprBinBool not equal!"
-
-makeExprNot :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprNot (TypeErasedExpr tl lhs) = do
-  checkType GTLBool tl "operator not"
-  return $ makeTypeErasedExpr (ExprNot (unsafeCoerce lhs))
-
-makeExprAlways :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprAlways (TypeErasedExpr tl lhs) = do
-  checkType GTLBool tl "operator always"
-  return $ makeTypeErasedExpr (ExprAlways (unsafeCoerce lhs))
-
-makeExprNext :: VarType v => (TypeErasedExpr v) -> Either String (TypeErasedExpr v)
-makeExprNext (TypeErasedExpr tl lhs) = do
-  checkType GTLBool tl "operator next"
-  return (makeTypeErasedExpr (ExprNext (unsafeCoerce lhs)))
-
--}
 
 getLogicExpr :: VarType v => Expr v -> Either String (LogicExpr v)
 getLogicExpr (LogicExpr e) = Right e
@@ -594,18 +442,8 @@ instance Binary Constant where
     return $ Constant c t
 
 instance Binary GTLOp where
-  put (IntOp o) = case o of
-    OpPlus -> putWord8 0
-    OpMinus -> putWord8 1
-    OpMult -> putWord8 2
-    OpDiv -> putWord8 3
-  get = do
-    which <- getWord8
-    return $ IntOp (case which of
-      0 -> OpPlus
-      1 -> OpMinus
-      2 -> OpMult
-      3 -> OpDiv)
+  put (IntOp o) = put o
+  get = fmap IntOp $ get
 
 instance (VarType v, Binary v) => Binary (Term v) where
   put (VarExpr v) = putWord8 0 >> put v
