@@ -69,11 +69,24 @@ readBDDTraces fp = do
 atomToC :: CNameGen -- ^ Function to generate C-names
            -> GTLAtom (String,String) -- ^ GTL atom to convert
            -> String
-atomToC f (GTLRel rel lhs rhs) = (exprToC f lhs) ++ (relToC rel) ++ (exprToC f rhs)
-atomToC f (GTLElem (q,n) vals b) = (if b then "(" else "!(") ++
-                                   (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "("++(f q n 0) ++ "=="++show v ++ ")") vals)) ++
-                                   ")"
-atomToC f (GTLVar (q,n) h b) = (if b then "" else "!") ++ (f q n h)
+atomToC f (GTLBoolExpr e p) = (if p then "(" else "!(") ++ (boolExprToC f e) ++ ")"
+
+termToC :: CNameGen -- ^ Function to generate C-names
+           -> GTL.Term (String,String) -- ^ GTL atom to convert
+           -> String
+termToC = undefined
+
+boolExprToC :: CNameGen -- ^ Function to generate C-names
+           -> GTL.BoolExpr (String,String) -- ^ GTL atom to convert
+           -> String
+boolExprToC f (GTL.RelExpr rel lhs rhs) = (termToC f lhs) ++ (relToC rel) ++ (termToC f rhs)
+boolExprToC f (GTL.ElemExpr v vals b) =
+  let name = case GTL.name v of (q,n) -> f q n 0
+  in (if b then "(" else "!(")
+    ++ (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "(" ++ name ++ "=="++show v ++ ")") vals))
+    ++ ")"
+boolExprToC f (GTL.BoolConst c) = if c then "true" else "false"
+boolExprToC f (GTL.BoolVar v) = case GTL.name v of (q,n) -> f q n 0
 
 -- | Convert a GTL relation to a C operator
 relToC :: GTL.Relation -> String
@@ -84,11 +97,13 @@ relToC GTL.BinGTEq = ">="
 relToC GTL.BinEq = "=="
 relToC GTL.BinNEq = "!="
 
+{-
 -- | Convert a GTL expression to a C-expression
 exprToC :: Show t => CNameGen -> GTL.Expr (String,String) t -> String
 exprToC f (GTL.ExprVar (q,n) h) = f q n h
 exprToC f (GTL.ExprConst c) = show c
 exprToC f (GTL.ExprBinInt op lhs rhs) = "("++(exprToC f lhs)++(intOpToC op)++(exprToC f rhs)++")"
+-}
 
 -- | Convert a GTL integer operator to a C-operator
 intOpToC :: GTL.IntOp -> String
