@@ -15,7 +15,7 @@ import Data.Map as Map
 import Control.Exception
 import Control.Monad (foldM)
 import Data.Set as Set
-import Data.List as List (find)
+import Data.List as List (find,genericLength,genericIndex)
 import Data.Either
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat)
@@ -41,6 +41,7 @@ data Term v
   = VarExpr (Variable v)
   | ConstExpr Constant
   | BinExpr GTLType GTLOp (Term v) (Term v)
+  | IndexExpr GTLType (Term v) Integer
 
 -- | In between
 data BoolExpr v
@@ -75,6 +76,7 @@ exprType :: Expr v -> GTLType
 exprType (Term (VarExpr v)) = varType v
 exprType (Term (ConstExpr c)) = constType c
 exprType (Term (BinExpr t _ _ _)) = t
+exprType (Term (IndexExpr t _ _)) = t
 exprType (BoolExpr _) = GTLBool
 exprType (LogicExpr _) = GTLBool
 
@@ -99,8 +101,9 @@ typeCheckLogicExpr :: (Ord v,Show v)
 typeCheckLogicExpr tp f bind expr = do
     expr <- inferType tp f bind expr
     case expr of
-      LogicExpr (e) -> return e
-      _ -> Left $ "Error"
+      LogicExpr e -> return e
+      Term (ConstExpr (Constant (GTLBoolVal x) _)) -> return $ LogicTerm (BoolConst x)
+      _ -> Left $ show expr ++ " is not a logic expression"
 
 -- | Traverses the untyped expression tree and converts it into a typed one
 -- while calculating the types bottom up.
@@ -131,6 +134,21 @@ inferType tp f bind (GExists v q n expr) = do
   r <- f q n
   inferType tp f (Map.insert v (r,0) bind) expr
 inferType tp f bind (GAutomaton states) = fmap LogicExpr (inferTypeAutomaton tp f bind states)
+inferType tp f bind (GIndex expr idx) = do
+  rexpr <- inferType tp f bind expr
+  ridx <- inferType tp f bind idx
+  rridx <- case ridx of
+    Term (ConstExpr (Constant (GTLIntVal x) _)) -> return x
+    _ -> Left $ (show ridx) ++ " is not a constant index"
+  case rexpr of
+    Term term -> case exprType rexpr of
+      GTLArray sz t -> if rridx < sz
+                       then return $ Term (IndexExpr t term rridx)
+                       else Left $ "Index "++show rridx++" out of bounds ("++show sz++")"
+      GTLTuple args -> if rridx < (genericLength args)
+                       then return $ Term (IndexExpr (args `genericIndex` rridx) term rridx)
+                       else Left $ "Index "++show rridx++" out of bounds ("++show (genericLength args)++")"
+      _ -> Left $ "Expression "++show rexpr++" isn't indexable"
 
 -- | Infers the type for binary expressions. The type of the two arguments
 -- must be equal as all binary operations and relations require that

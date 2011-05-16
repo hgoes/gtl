@@ -49,6 +49,7 @@ data GExpr = GBin BinOp GExpr GExpr
            | GExists String (Maybe String) String GExpr
            | GAutomaton [State]
            | GTuple [GExpr]
+           | GIndex GExpr GExpr
            deriving (Show,Eq,Ord)
 
 data State = State

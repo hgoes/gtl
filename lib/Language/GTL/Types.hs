@@ -42,6 +42,7 @@ intersperseS i (x:xs) = x . i . (intersperseS i xs)
 instance Show GTLType where
   showsPrec _ GTLInt = showString "int"
   showsPrec _ GTLByte = showString "byte"
+  showsPrec _ GTLBool = showString "bool"
   showsPrec _ GTLFloat = showString "float"
   showsPrec p (GTLEnum constr) = showParen (p > 5) $
                                  showString "enum { " .

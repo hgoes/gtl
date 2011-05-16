@@ -168,7 +168,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "*" expr                { GBin GOpMult $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
-     | expr "[" expr "]"            { GBin GOpIndex $1 $3 }
+     | expr "[" expr "]"            { GIndex $1 $3 }
 
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }
