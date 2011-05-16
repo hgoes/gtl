@@ -13,7 +13,6 @@ import Data.Binary
 import Data.Typeable
 import Data.Array
 import Data.Dynamic
-import System.IO.Unsafe
 import Data.Maybe
 import Data.Map as Map
 import Unsafe.Coerce
@@ -89,12 +88,6 @@ exprType (Term (ConstExpr c)) = constType c
 exprType (Term (BinExpr t _ _ _)) = t
 exprType (BoolExpr _) = GTLBool
 exprType (LogicExpr _) = GTLBool
-
-instance Ord TypeRep where
-    compare t1 t2 =
-        compare
-            (unsafePerformIO $ typeRepKey t1)
-            (unsafePerformIO $ typeRepKey t2)
 
 class (Show v, Ord v, Eq v) => VarType v where
 instance VarType String where
