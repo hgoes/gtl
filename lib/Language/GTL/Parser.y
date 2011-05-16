@@ -64,7 +64,6 @@ import qualified Data.Map as Map
   "*"               { Binary GOpMult }
   "/"               { Binary GOpDiv }
   "^"               { Binary GOpPow }
-  "!"               { Binary GOpBang }
   id                { Identifier $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
@@ -81,7 +80,7 @@ import qualified Data.Map as Map
 %left "-"
 %left "*"
 %left "/"
-%left "!"
+%left "["
 %left "^"
 %left "in"
 
@@ -169,7 +168,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | expr "*" expr                { GBin GOpMult $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
-     | expr "!" expr                { GBin GOpBang $1 $3 }
+     | expr "[" expr "]"            { GBin GOpIndex $1 $3 }
 
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }

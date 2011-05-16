@@ -66,7 +66,6 @@ tokens:-
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
   "^"                            { bin GOpPow }
-  "!"                            { bin GOpBang }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }
   $digit10+                      { \s -> ConstInt (read s) }
