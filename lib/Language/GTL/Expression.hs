@@ -10,12 +10,8 @@ import Language.GTL.Buchi
 import Language.GTL.Types
 
 import Data.Binary
-import Data.Typeable
-import Data.Array
-import Data.Dynamic
 import Data.Maybe
 import Data.Map as Map
-import Unsafe.Coerce
 import Control.Exception
 import Control.Monad (foldM)
 import Data.Set as Set
@@ -88,34 +84,6 @@ exprType (Term (ConstExpr c)) = constType c
 exprType (Term (BinExpr t _ _ _)) = t
 exprType (BoolExpr _) = GTLBool
 exprType (LogicExpr _) = GTLBool
-
-class (Show a, Eq a, Ord a, Typeable a, Binary a) => BaseType a where
-instance BaseType Bool where
-instance BaseType Int where
-instance BaseType (Array Integer Integer) where
-
--- | Constructs a value of type b by appliying the constructor
--- to the value castet from type a into its correct type.
-construct :: BaseType a => a -> (Map GTLType (Dynamic -> b)) -> Maybe b
-construct x constructors =
-  let c' = Map.lookup (gtlTypeOf x) constructors
-  in case c' of
-    Nothing -> Nothing
-    Just c -> Just (c (toDyn x))
-
-unsafeFromDyn :: Typeable a => Dynamic -> a
-unsafeFromDyn x = case fromDynamic x of
-  Nothing -> error $ "Can't convert dynamic"++show x++" to "++show (typeOf c)
-  Just p -> p
-  _ -> c
-  where
-    c = undefined
-
-gtlTypeOf :: Typeable a => a -> GTLType
-gtlTypeOf x
-  | typeOf x == (typeOf (undefined::Int)) = GTLInt
-  | typeOf x == (typeOf (undefined::Bool)) = GTLBool
-  | typeOf x == (typeOf (undefined::Float)) = GTLFloat
 
 getLogicExpr :: Expr v -> Either String (LogicExpr v)
 getLogicExpr (LogicExpr e) = Right e
@@ -615,11 +583,6 @@ instance Show Relation where
   show BinGTEq = ">="
   show BinEq = "="
   show BinNEq = "!="
-
--- | Lift `gcast' in a monad and fail with an error if the cast fails
-castSer :: (Typeable a,Typeable b,Monad m) => c a -> m (c b)
-castSer = maybe (error "Internal serialization error") return . gcast
-
 
 -- | Cast a binary operator into a boolean operator. Returns `Nothing' if the cast fails.
 toBoolOp :: BinOp -> Maybe BoolOp
