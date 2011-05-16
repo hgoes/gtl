@@ -504,7 +504,9 @@ getVars (Term t) = getVarsTerm t
 getVars (BoolExpr e) = getVarsBoolExpr e
 getVars (LogicExpr e) = getVarsLogic e
   where
+    getVarsLogic (LogicTerm e) = getVarsBoolExpr e
     getVarsLogic (Not e) = getVarsLogic e
+    getVarsLogic (BinLogicExpr _ l r) = getVarsLogic l ++ getVarsLogic r
     getVarsLogic (Always e) = getVarsLogic e
     getVarsLogic (Next e) = getVarsLogic e
     getVarsLogic (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVarsLogic (vars st)) (Map.toList aut)
