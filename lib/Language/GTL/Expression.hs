@@ -26,7 +26,11 @@ import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat)
 
 data GTLTypeVal = IntVal Int | BoolVal Bool
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
+
+instance Show GTLTypeVal where
+  show (IntVal x) = show x
+  show (BoolVal x) = show x
 
 -- | GTL variables associated with their
 -- name, time reference and type.

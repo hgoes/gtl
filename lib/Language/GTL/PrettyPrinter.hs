@@ -263,32 +263,35 @@ splinePoints (x:xs) = splinePoints' x xs
 
 -- | Render a GTL atom to LaTeX.
 atomToLatex :: GTLAtom String -> String
-atomToLatex (GTLRel rel lhs rhs) = (exprToLatex lhs)++(case rel of
-                                                          BinLT -> "<"
-                                                          BinLTEq -> "\\leq "
-                                                          BinGT -> ">"
-                                                          BinGTEq -> "\\geq "
-                                                          BinEq -> "="
-                                                          BinNEq -> "\neq ")++(exprToLatex rhs)
+atomToLatex (GTLBoolExpr (RelExpr rel l r) p) = (exprToLatex l)++(case (if p then rel else relNot rel) of
+                                                                       BinLT -> "<"
+                                                                       BinLTEq -> "\\leq "
+                                                                       BinGT -> ">"
+                                                                       BinGTEq -> "\\geq "
+                                                                       BinEq -> "="
+                                                                       BinNEq -> "\neq ")++(exprToLatex r)
   where
-    exprToLatex :: Expr String t -> String
-    exprToLatex (ExprVar v h) = v++(if h==0 then "" else "["++show h++"]")
-    exprToLatex (ExprConst x) = show x
-    exprToLatex (ExprBinInt rel lhs rhs) = (exprToLatex lhs)++(case rel of
-                                                                  OpPlus -> "+"
-                                                                  OpMinus -> "-"
-                                                                  OpMult -> "\\cdot "
-                                                                  OpDiv -> "/")++(exprToLatex rhs)
-atomToLatex (GTLElem v vals t) = "\\mathit{"++v++"}"++(if t then "" else "\\not")++"\\in"++show vals
-atomToLatex (GTLVar v h t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
+    exprToLatex :: Term String -> String
+    exprToLatex (VarExpr (Variable v h _)) = v++(if h==0 then "" else "["++show h++"]")
+    exprToLatex (ConstExpr (Constant v _)) = case v of
+      IntVal x -> show x
+      BoolVal x -> show x
+    exprToLatex (BinExpr _ rel lhs rhs) = (exprToLatex lhs)++(case rel of
+                                                                 IntOp OpPlus -> "+"
+                                                                 IntOp OpMinus -> "-"
+                                                                 IntOp OpMult -> "\\cdot "
+                                                                 IntOp OpDiv -> "/")++(exprToLatex rhs)
+atomToLatex (GTLBoolExpr (ElemExpr v vals t) p) = "\\mathit{"++(name v)++"}"++(if (t && p) || (not t && not p) then "" else "\\not")++"\\in"++show vals
+atomToLatex (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
 estimateWidth :: GTLAtom String -> Int
-estimateWidth (GTLRel _ lhs rhs) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
+estimateWidth (GTLBoolExpr (RelExpr _ lhs rhs) _) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
   where
-    estimateWidth' :: Expr String t -> Int
-    estimateWidth' (ExprVar v h) = (length v)+(if h==0 then 0 else 2+(length (show h)))
-    estimateWidth' (ExprConst x) = length (show x)
-    estimateWidth' (ExprBinInt _ lhs rhs) = (estimateWidth' lhs)+(estimateWidth' rhs)
-estimateWidth (GTLElem v vals t) = (if t then 3 else 7)+(length v)+(length (show vals))
-estimateWidth (GTLVar v h t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))
+    estimateWidth' :: Term String -> Int
+    estimateWidth' (VarExpr (Variable v h _)) = (length v)+(if h==0 then 0 else 2+(length (show h)))
+    estimateWidth' (ConstExpr (Constant (IntVal x) _)) = length (show x)
+    estimateWidth' (ConstExpr (Constant (BoolVal x) _)) = length (show x)
+    estimateWidth' (BinExpr _ _ lhs rhs) = (estimateWidth' lhs)+(estimateWidth' rhs)
+estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
+estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))
