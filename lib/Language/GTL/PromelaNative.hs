@@ -20,7 +20,6 @@ import Prelude hiding (foldl,concat,foldl1)
 import Control.Monad.Identity
 import Data.Monoid
 import Data.Maybe
-import Foreign.Marshal.Utils
 
 type OutputMap = Map (String,String) (Set (String,String),Maybe Integer)
 type InputMap = Map (String,String) Integer
@@ -72,11 +71,11 @@ convertType :: GTLType -> Pr.Typename
 convertType GTLInt = Pr.TypeInt
 convertType GTLBool = Pr.TypeBool
 
-translateNever :: Expr (String,String) Bool -> InputMap -> OutputMap -> Pr.Module
+translateNever :: LogicExpr (String,String) -> InputMap -> OutputMap -> Pr.Module
 translateNever expr inmp outmp
   = let buchi = runIdentity (gtlToBuchi
                              (return.(translateAtoms Nothing (\Nothing (mdl,var) -> varName mdl var)))
-                             (ExprNot expr))
+                             (GTL.Not expr))
     in Pr.Never $ fmap Pr.toStep (translateBuchi Nothing id buchi inmp outmp)
 
 buildOutputMap :: GTLSpec String -> OutputMap
@@ -91,7 +90,7 @@ buildOutputMap spec
                                                                                          Nothing -> lvl
                                                                                          Just olvl -> max lvl olvl)
                                                                            )
-                                                ) var mp) mp1 (getVars $ gtlSpecVerify spec)
+                                                ) var mp) mp1 (getVars $ LogicExpr $ gtlSpecVerify spec)
     in mp2
 
 buildInputMap :: GTLSpec String -> InputMap
@@ -101,7 +100,7 @@ buildInputMap spec
                                 -> if Map.member var (gtlModelInput mdl)
                                    then Map.insertWith max (name,var) lvl mp'
                                    else mp'
-                               ) mp (getVars $ gtlModelContract mdl)
+                               ) mp (getVars $ LogicExpr $ gtlModelContract mdl)
                      ) Map.empty (gtlSpecModels spec)
 
 varName :: String -> String -> Integer -> Pr.VarRef
@@ -183,7 +182,7 @@ instance Monoid IntRestriction where
                   , unequals = (unequals r1)++(unequals r2)
                   }
 
-translateAtoms :: Ord a => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression)
+translateAtoms :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression)
 translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
                                   Left (name,restr) -> (Map.insertWith mappend name restr mp,expr)
                                   Right cond -> case expr of
@@ -194,16 +193,17 @@ translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
 completeRestrictions :: Ord a => Map a GTLType -> Map a IntRestriction -> Map a IntRestriction
 completeRestrictions tp mp = Map.union mp (fmap (const mempty) tp)
 
-translateAtom :: Ord a => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> GTLAtom a -> Either (a,IntRestriction) Pr.AnyExpression
-translateAtom mmdl f (GTLRel rel lhs rhs)
+translateAtom :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> GTLAtom a -> Either (a,IntRestriction) Pr.AnyExpression
+translateAtom mmdl f (GTLBoolExpr (RelExpr rel lhs rhs) p)
   = case translateExpr mmdl f lhs of
   Left trg -> case translateExpr mmdl f rhs of
     Left _ -> error "Can't relate more than one output var (yet)"
-    Right src -> Left $ buildAssign rel trg src
+    Right src -> Left $ buildAssign rrel trg src
   Right src -> case translateExpr mmdl f rhs of
-    Left trg -> Left $ buildAssign (relTurn rel) trg src
-    Right src2 -> Right $ buildComp rel src src2
+    Left trg -> Left $ buildAssign (relTurn rrel) trg src
+    Right src2 -> Right $ buildComp rrel src src2
   where
+    rrel = if p then rel else relNot rel
     buildAssign GTL.BinLT trg src = (trg,mempty { upperLimits = [(False,src)] })
     buildAssign GTL.BinLTEq trg src = (trg,mempty { upperLimits = [(True,src)] })
     buildAssign GTL.BinGT trg src = (trg,mempty { lowerLimits = [(False,src)] })
@@ -218,20 +218,22 @@ translateAtom mmdl f (GTLRel rel lhs rhs)
                                         GTL.BinGTEq -> Pr.BinGTE
                                         GTL.BinEq -> Pr.BinEquals
                                         GTL.BinNEq -> Pr.BinNotEquals) s1 s2
-translateAtom mmdl f (GTLElem var lits eq)
+translateAtom mmdl f (GTLBoolExpr (ElemExpr var lits eq) p)
   = let chk = foldl1 (\expr trg
-                      -> Pr.BinExpr (if eq then Pr.BinOr else Pr.BinAnd)
-                         expr (Pr.BinExpr (if eq then Pr.BinEquals else Pr.BinNotEquals)
-                               (Pr.RefExpr (f (fmap fst mmdl) var 0))
-                               trg)) (fmap (\i -> ConstExpr $ ConstInt $ fromIntegral i) lits)
+                      -> Pr.BinExpr (if c then Pr.BinOr else Pr.BinAnd)
+                         expr (Pr.BinExpr (if c then Pr.BinEquals else Pr.BinNotEquals)
+                               (Pr.RefExpr (f (fmap fst mmdl) (name var) (time var)))
+                               trg)) (fmap (\i -> Pr.ConstExpr $ ConstInt $ fromIntegral i) ints)
+        c = (eq && p) || (not eq && not p)
+        ints = fmap (\(Constant (IntVal i) _) -> fromIntegral i) lits
     in case mmdl of
       Nothing -> Right chk
-      Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                         then Right chk
-                         else Left (var,if eq
-                                        then mempty { allowedValues = Just $ Set.fromList lits }
-                                        else mempty { forbiddenValues = Set.fromList lits })
-translateAtom mmdl f (GTLVar var lvl t)
+      Just (_,mdl) -> if Map.member (name var) (gtlModelInput mdl)
+                      then Right chk
+                      else Left (name var,if c
+                                          then mempty { allowedValues = Just $ Set.fromList ints }
+                                          else mempty { forbiddenValues = Set.fromList ints })
+translateAtom mmdl f (GTLBoolExpr (BoolVar (Variable var lvl _)) t)
   = let chk = (if t then id
                else Pr.UnExpr Pr.UnLNot) (Pr.RefExpr (f (fmap fst mmdl) var lvl))
     in case mmdl of
@@ -240,8 +242,8 @@ translateAtom mmdl f (GTLVar var lvl t)
                          then Right chk
                          else Left (var,mempty { allowedValues = Just (Set.singleton (if t then 1 else 0)) })
 
-translateExpr :: (Ord a, BaseType t) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Expr a t -> Either a Pr.AnyExpression
-translateExpr mmdl f expr@(ExprVar var 0)
+translateExpr :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Either a Pr.AnyExpression
+translateExpr mmdl f expr@(VarExpr (Variable var 0 _))
   = case mmdl of
   Nothing -> Right $ translateCheckExpr Nothing f expr
   Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
@@ -249,29 +251,23 @@ translateExpr mmdl f expr@(ExprVar var 0)
                      else Right $ translateCheckExpr mmdl f expr
 translateExpr mmdl f expr = Right $ translateCheckExpr mmdl f expr
 
--- Constructors for base types
-baseConstr :: Map GTLType (Dynamic -> Pr.AnyExpression)
-baseConstr = Map.fromList [
-    (GTLBool, (\c -> ConstExpr (ConstInt $ fromBool $ unsafeFromDyn c))),
-    (GTLInt, (\c -> ConstExpr (ConstInt $ fromIntegral $ (unsafeFromDyn c::Int))))
-  ]
-
-translateCheckExpr :: (Ord a, BaseType t) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Expr a t -> Pr.AnyExpression
-translateCheckExpr mmdl f (ExprVar var lvl) = case mmdl of
+translateCheckExpr :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Pr.AnyExpression
+translateCheckExpr mmdl f (VarExpr (Variable var lvl _)) = case mmdl of
   Nothing -> RefExpr (f Nothing var lvl)
   Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
                      then RefExpr (f (Just name) var lvl)
                      else error "Can't relate more than one output var (yet)"
-translateCheckExpr mmdl f (ExprConst i) = case construct i  baseConstr of
-  Nothing -> error $ "Can't construct constant of type "++show (typeOf i)
-  Just p -> p
-translateCheckExpr mmdl f (ExprBinInt op lhs rhs) = BinExpr (case op of
-                                                                OpPlus -> Pr.BinPlus
-                                                                OpMinus -> Pr.BinMinus
-                                                                OpMult -> Pr.BinMult
-                                                                OpDiv -> Pr.BinDiv)
-                                                    (translateCheckExpr mmdl f lhs)
-                                                    (translateCheckExpr mmdl f rhs)
+translateCheckExpr mmdl f (GTL.ConstExpr (Constant i _)) = case i of
+  IntVal x -> Pr.ConstExpr $ ConstInt $ fromIntegral x
+  BoolVal x -> Pr.ConstExpr $ ConstInt $ (if x then 1 else 0)
+translateCheckExpr mmdl f (GTL.BinExpr _ op lhs rhs)
+  = Pr.BinExpr (case op of
+                   IntOp OpPlus -> Pr.BinPlus
+                   IntOp OpMinus -> Pr.BinMinus
+                   IntOp OpMult -> Pr.BinMult
+                   IntOp OpDiv -> Pr.BinDiv)
+    (translateCheckExpr mmdl f lhs)
+    (translateCheckExpr mmdl f rhs)
 
 translateRestriction :: String -> String -> OutputMap -> InputMap -> IntRestriction -> Pr.Statement
 translateRestriction mdl var outmp inmp restr
