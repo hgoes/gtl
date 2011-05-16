@@ -20,13 +20,6 @@ import Data.Either
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat)
 
-data GTLTypeVal = IntVal Int | BoolVal Bool
-  deriving (Eq, Ord)
-
-instance Show GTLTypeVal where
-  show (IntVal x) = show x
-  show (BoolVal x) = show x
-
 -- | GTL variables associated with their
 -- name, time reference and type.
 data Variable v = Variable
@@ -37,7 +30,7 @@ data Variable v = Variable
 
 -- | Representation of typed constants
 data Constant = Constant
-                  { value :: GTLTypeVal   -- maybe change to sum type
+                  { value :: GTLValue
                   , constType :: GTLType
                   } deriving (Show, Eq, Ord)
 
@@ -129,8 +122,8 @@ inferType tp f bind (GVar q n) = do
   case Map.lookup rv tp of
     Nothing -> Left $ "Unknown variable " ++ show rv
     Just t -> return $ Term $ VarExpr $ Variable rv lvl t
-inferType _ _ _ (GConst c) = Right $ Term $ ConstExpr $ Constant (IntVal c) GTLInt
-inferType _ _ _ (GConstBool c) =  Right $ Term $ ConstExpr $ Constant (BoolVal c) GTLBool
+inferType _ _ _ (GConst c) = Right $ Term $ ConstExpr $ Constant (GTLIntVal (fromIntegral c)) GTLInt
+inferType _ _ _ (GConstBool c) =  Right $ Term $ ConstExpr $ Constant (GTLBoolVal c) GTLBool
 inferType _ _ _ (GSet c) = Left $ "Type error for set constant " ++ show c ++ ": unknown type." -- Right (TypeErasedExpr (ConstExpr c))
 inferType tp f bind (GBin op l r) = inferTypeBinary tp f bind op l r
 inferType tp f bind (GUn op expr) = inferTypeUnary tp f bind op expr
@@ -388,13 +381,13 @@ instance (Binary v) => Binary (Variable v) where
     time <- get
     return $ Variable name time varType
 
-putBinaryGTLTypeVal :: GTLTypeVal -> Put
-putBinaryGTLTypeVal (IntVal c) = put c
-putBinaryGTLTypeVal (BoolVal c) = put c
+putBinaryGTLTypeVal :: GTLValue -> Put
+putBinaryGTLTypeVal (GTLIntVal c) = put c
+putBinaryGTLTypeVal (GTLBoolVal c) = put c
 
-getBinaryGTLTypeVal :: GTLType -> Get GTLTypeVal
-getBinaryGTLTypeVal GTLInt = fmap IntVal $ (get :: Get Int)
-getBinaryGTLTypeVal GTLBool = fmap BoolVal $ (get :: Get Bool)
+getBinaryGTLTypeVal :: GTLType -> Get GTLValue
+getBinaryGTLTypeVal GTLInt = fmap GTLIntVal (get :: Get Integer)
+getBinaryGTLTypeVal GTLBool = fmap GTLBoolVal (get :: Get Bool)
 
 instance Binary Constant where
   put c = put (constType c) >> putBinaryGTLTypeVal (value c)

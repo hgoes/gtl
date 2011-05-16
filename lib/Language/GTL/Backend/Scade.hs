@@ -223,8 +223,8 @@ stateToTransition name st
 termToExpr :: Term String -> Sc.Expr
 termToExpr (VarExpr var) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [GTL.name var]) [1..(time var)]
 termToExpr (ConstExpr c) = case value c of
-  IntVal x -> ConstIntExpr (fromIntegral x)
-  BoolVal x -> ConstBoolExpr x
+  GTLIntVal x -> ConstIntExpr (fromIntegral x)
+  GTLBoolVal x -> ConstBoolExpr x
 termToExpr (BinExpr tp (IntOp op) l r) = BinaryExpr (case op of
                                                         OpPlus -> BinPlus
                                                         OpMinus -> BinMinus

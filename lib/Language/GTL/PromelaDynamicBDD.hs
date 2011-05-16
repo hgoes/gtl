@@ -270,7 +270,7 @@ parseGTLBoolExpr :: AtomCache
                     -> Bool
                     -> (Integer,Bool,String)
 parseGTLBoolExpr mp arg (RelExpr rel l r) p = parseGTLRelation mp arg (if p then rel else relNot rel) l r
-parseGTLBoolExpr mp arg (BoolVar var) p = parseGTLRelation mp arg BinEq (VarExpr var) (GTL.ConstExpr (Constant (BoolVal p) GTLBool))
+parseGTLBoolExpr mp arg (BoolVar var) p = parseGTLRelation mp arg BinEq (VarExpr var) (GTL.ConstExpr (Constant (GTLBoolVal p) GTLBool))
 
 -- | Parse a GTL relation into a C-Function.
 --   Returns a unique number for the resulting function, whether its a test- or assignment function and
@@ -421,8 +421,8 @@ instance BDDConst Bool where
 
 constrBddConst :: GTL.Constant -> String
 constrBddConst x = case value x of
-  IntVal x -> bddConst x
-  BoolVal x -> bddConst x
+  GTLIntVal x -> bddConst (fromIntegral x::Int)
+  GTLBoolVal x -> bddConst x
 
 
 -- | Convert a GTL expression into a C-expression.

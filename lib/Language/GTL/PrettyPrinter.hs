@@ -274,8 +274,8 @@ atomToLatex (GTLBoolExpr (RelExpr rel l r) p) = (exprToLatex l)++(case (if p the
     exprToLatex :: Term String -> String
     exprToLatex (VarExpr (Variable v h _)) = v++(if h==0 then "" else "["++show h++"]")
     exprToLatex (ConstExpr (Constant v _)) = case v of
-      IntVal x -> show x
-      BoolVal x -> show x
+      GTLIntVal x -> show x
+      GTLBoolVal x -> show x
     exprToLatex (BinExpr _ rel lhs rhs) = (exprToLatex lhs)++(case rel of
                                                                  IntOp OpPlus -> "+"
                                                                  IntOp OpMinus -> "-"
@@ -290,8 +290,8 @@ estimateWidth (GTLBoolExpr (RelExpr _ lhs rhs) _) = 3+(estimateWidth' lhs)+(esti
   where
     estimateWidth' :: Term String -> Int
     estimateWidth' (VarExpr (Variable v h _)) = (length v)+(if h==0 then 0 else 2+(length (show h)))
-    estimateWidth' (ConstExpr (Constant (IntVal x) _)) = length (show x)
-    estimateWidth' (ConstExpr (Constant (BoolVal x) _)) = length (show x)
+    estimateWidth' (ConstExpr (Constant (GTLIntVal x) _)) = length (show x)
+    estimateWidth' (ConstExpr (Constant (GTLBoolVal x) _)) = length (show x)
     estimateWidth' (BinExpr _ _ lhs rhs) = (estimateWidth' lhs)+(estimateWidth' rhs)
 estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
 estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))

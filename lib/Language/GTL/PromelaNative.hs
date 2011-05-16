@@ -225,7 +225,7 @@ translateAtom mmdl f (GTLBoolExpr (ElemExpr var lits eq) p)
                                (Pr.RefExpr (f (fmap fst mmdl) (name var) (time var)))
                                trg)) (fmap (\i -> Pr.ConstExpr $ ConstInt $ fromIntegral i) ints)
         c = (eq && p) || (not eq && not p)
-        ints = fmap (\(Constant (IntVal i) _) -> fromIntegral i) lits
+        ints = fmap (\(Constant (GTLIntVal i) _) -> fromIntegral i) lits
     in case mmdl of
       Nothing -> Right chk
       Just (_,mdl) -> if Map.member (name var) (gtlModelInput mdl)
@@ -258,8 +258,8 @@ translateCheckExpr mmdl f (VarExpr (Variable var lvl _)) = case mmdl of
                      then RefExpr (f (Just name) var lvl)
                      else error "Can't relate more than one output var (yet)"
 translateCheckExpr mmdl f (GTL.ConstExpr (Constant i _)) = case i of
-  IntVal x -> Pr.ConstExpr $ ConstInt $ fromIntegral x
-  BoolVal x -> Pr.ConstExpr $ ConstInt $ (if x then 1 else 0)
+  GTLIntVal x -> Pr.ConstExpr $ ConstInt $ fromIntegral x
+  GTLBoolVal x -> Pr.ConstExpr $ ConstInt $ (if x then 1 else 0)
 translateCheckExpr mmdl f (GTL.BinExpr _ op lhs rhs)
   = Pr.BinExpr (case op of
                    IntOp OpPlus -> Pr.BinPlus
