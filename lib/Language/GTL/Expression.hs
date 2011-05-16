@@ -48,20 +48,20 @@ data Constant = Constant
 data GTLOp = IntOp IntOp deriving (Eq, Ord)
 
 -- | Dynamically typed
-data VarType v => Term v
+data Term v
   = VarExpr (Variable v)
   | ConstExpr Constant
   | BinExpr GTLType GTLOp (Term v) (Term v)
 
 -- | In between
-data VarType v => BoolExpr v
+data BoolExpr v
   = RelExpr Relation (Term v) (Term v)
   | ElemExpr (Variable v) [Constant] Bool
   | BoolConst Bool
   | BoolVar (Variable v) -- TODO: type inference should lift boolean variables and constants!
 
 -- | Statically typed
-data VarType v => LogicExpr v
+data LogicExpr v
   = LogicTerm (BoolExpr v)
   | Not (LogicExpr v)
   | BinLogicExpr BoolOp (LogicExpr v) (LogicExpr v)
@@ -77,22 +77,17 @@ data VarType v => LogicExpr v
 -- and terms which get a type that is determined by the user in the formula.
 -- And then there are things which have dynamically typed 'parameters' and
 -- a fixed 'return' type (e.g. relations).
-data VarType v => Expr v
+data Expr v
   = Term (Term v)
   | BoolExpr (BoolExpr v)
   | LogicExpr (LogicExpr v)
 
-exprType :: VarType v => Expr v -> GTLType
+exprType :: Expr v -> GTLType
 exprType (Term (VarExpr v)) = varType v
 exprType (Term (ConstExpr c)) = constType c
 exprType (Term (BinExpr t _ _ _)) = t
 exprType (BoolExpr _) = GTLBool
 exprType (LogicExpr _) = GTLBool
-
-class (Show v, Ord v, Eq v) => VarType v where
-instance VarType String where
-instance VarType (String, String) where
-instance VarType (Maybe String, String)
 
 class (Show a, Eq a, Ord a, Typeable a, Binary a) => BaseType a where
 instance BaseType Bool where
@@ -122,24 +117,24 @@ gtlTypeOf x
   | typeOf x == (typeOf (undefined::Bool)) = GTLBool
   | typeOf x == (typeOf (undefined::Float)) = GTLFloat
 
-getLogicExpr :: VarType v => Expr v -> Either String (LogicExpr v)
+getLogicExpr :: Expr v -> Either String (LogicExpr v)
 getLogicExpr (LogicExpr e) = Right e
 getLogicExpr (BoolExpr e) = Right $ LogicTerm e
 getLogicExpr _ = Left ""
 
-makeUnaryLogicExpr :: VarType v => (LogicExpr v -> LogicExpr v) -> String -> Expr v -> Either String (LogicExpr v)
+makeUnaryLogicExpr :: (LogicExpr v -> LogicExpr v) -> String -> Expr v -> Either String (LogicExpr v)
 makeUnaryLogicExpr constructor _ (LogicExpr e) = Right $ constructor e
 makeUnaryLogicExpr constructor _ (BoolExpr e) = Right $ constructor $ LogicTerm e
 makeUnaryLogicExpr _ opName _ = Left $ "Expected boolean expression or logical term as argument for operator " ++ opName ++ "."
 
 -- | Typecheck an untyped expression. Converts it into the `Expr' type which is strongly typed.
 --   Returns either an error message or the resulting expression of type /t/.
-typeCheckLogicExpr :: (VarType v)
-             => Map v GTLType -- ^ Type mapping
-             -> (Maybe String -> String -> Either String v) -- ^ Function to convert variable names
-             -> ExistsBinding v
-             -> GExpr -- ^ The expression to convert
-             -> Either String (LogicExpr v) -- ^ Typed expression
+typeCheckLogicExpr :: (Ord v,Show v)
+                      => Map v GTLType -- ^ Type mapping
+                      -> (Maybe String -> String -> Either String v) -- ^ Function to convert variable names
+                      -> ExistsBinding v
+                      -> GExpr -- ^ The expression to convert
+                      -> Either String (LogicExpr v) -- ^ Typed expression
 typeCheckLogicExpr tp f bind expr = do
     expr <- inferType tp f bind expr
     case expr of
@@ -148,7 +143,7 @@ typeCheckLogicExpr tp f bind expr = do
 
 -- | Traverses the untyped expression tree and converts it into a typed one
 -- while calculating the types bottom up.
-inferType :: VarType a
+inferType :: (Ord a,Show a)
              => Map a GTLType -- ^ Type mapping
              -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
              -> ExistsBinding a
@@ -179,14 +174,14 @@ inferType tp f bind (GAutomaton states) = fmap LogicExpr (inferTypeAutomaton tp 
 -- | Infers the type for binary expressions. The type of the two arguments
 -- must be equal as all binary operations and relations require that
 -- for now.
-inferTypeBinary :: VarType a
-             => Map a GTLType -- ^ Type mapping
-             -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
-             -> ExistsBinding a
-             -> BinOp -- ^ The operator to type check
-             -> GExpr -- ^ The left hand side of the operator
-             -> GExpr -- ^ The right hand side of the operator
-             -> Either String (Expr a)
+inferTypeBinary :: (Ord a,Show a)
+                   => Map a GTLType -- ^ Type mapping
+                   -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
+                   -> ExistsBinding a
+                   -> BinOp -- ^ The operator to type check
+                   -> GExpr -- ^ The left hand side of the operator
+                   -> GExpr -- ^ The right hand side of the operator
+                   -> Either String (Expr a)
 inferTypeBinary tp f bind op lhs rhs = do
   le <- inferType tp f bind lhs
   re <- inferType tp f bind rhs
@@ -219,13 +214,13 @@ inferTypeBinary tp f bind op lhs rhs = do
           _ -> Left $ "Expected boolean term or logical expression on rhs of logical operator " ++ show boolOp ++ "."
         return $ LogicExpr $ BinLogicExpr boolOp tl tr
 
-inferTypeUnary :: VarType a
-             => Map a GTLType -- ^ Type mapping
-             -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
-             -> ExistsBinding a
-             -> UnOp -- ^ The operator to type check
-             -> GExpr -- ^ The left hand side of the operator
-             -> Either String (Expr a)
+inferTypeUnary :: (Show a,Ord a)
+                  => Map a GTLType -- ^ Type mapping
+                  -> (Maybe String -> String -> Either String a) -- ^ Function to convert variable names
+                  -> ExistsBinding a
+                  -> UnOp -- ^ The operator to type check
+                  -> GExpr -- ^ The left hand side of the operator
+                  -> Either String (Expr a)
 inferTypeUnary tp f bind op expr =
   case op of
     GOpAlways -> do
@@ -248,7 +243,7 @@ inferTypeUnary tp f bind op expr =
         else
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
 
-inferTypeAutomaton :: (VarType a)
+inferTypeAutomaton :: (Ord a,Show a)
                       => Map a GTLType
                       -> (Maybe String -> String -> Either String a)
                       -> ExistsBinding a
@@ -261,7 +256,7 @@ inferTypeAutomaton tp f bind states = do
                         ) (Map.empty,0,Map.empty) [ state | state <- states, stateInitial state ]
   return $ ExprAutomaton buchi
 
-typeCheckState :: (VarType a)
+typeCheckState :: (Show a,Ord a)
                   => Map a GTLType
                   -> (Maybe String -> String -> Either String a)
                   -> ExistsBinding a
@@ -302,7 +297,7 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
                                            , successors = succ
                                            }) nbuchi,ncur,nmp)
   where
-    makeVars :: VarType a => [Expr a] -> Either String (LogicExpr a)
+    makeVars :: [Expr a] -> Either String (LogicExpr a)
     makeVars [] = Right $ LogicTerm $ BoolConst True
     makeVars rexprs =
       let first = head rexprs
@@ -321,21 +316,21 @@ typeCheckState tp f bind all st cond cur mp buchi = case Map.lookup (stateName s
           Left $ "Expected type Bool for operator finally but got type " ++ show t ++ "."
 -}
 
-instance VarType v => Eq (Term v) where
+instance Eq v => Eq (Term v) where
   (VarExpr v1) == (VarExpr v2) = v1 == v2
   (ConstExpr c1) == (ConstExpr c2) = c1 == c2
   (BinExpr t1 op1 l1 r1) == (BinExpr t2 op2 l2 r2) = t1 == t2 && op1==op2 && l1==l2 && r1==r2
 
-instance VarType v => Eq (BoolExpr v) where
+instance Eq v => Eq (BoolExpr v) where
   (RelExpr rel1 lhs1 rhs1) == (RelExpr rel2 lhs2 rhs2) = rel1 == rel2 && lhs1 == lhs2 && rhs1 == rhs1
   (ElemExpr n1 s1 p1) == (ElemExpr n2 s2 p2) = n1 == n2 && s1 == s2 && p1 == p2
 
-instance VarType v => Eq (LogicExpr v) where
+instance Eq v => Eq (LogicExpr v) where
   (Not e1) == (Not e2) = e1 == e2
   (Always e1) == (Always e2) = e1 == e2
   (Next e1) == (Next e2) = e1 == e2
 
-instance VarType v => Ord (Term v) where
+instance Ord v => Ord (Term v) where
   compare (VarExpr v1) (VarExpr v2) = compare v1 v2
   compare (ConstExpr c1) (ConstExpr c2) = compare c1 c2
   compare (BinExpr t1 op1 l1 r1) (BinExpr t2 op2 l2 r2) = case compare t1 t2 of
@@ -346,7 +341,7 @@ instance VarType v => Ord (Term v) where
       r -> r
     r -> r
 
-instance VarType v => Ord (BoolExpr v) where
+instance Ord v => Ord (BoolExpr v) where
   compare (RelExpr rel1 lhs1 rhs1) (RelExpr rel2 lhs2 rhs2) = case compare rel1 rel2 of
     EQ -> case compare lhs1 lhs2 of
       EQ -> compare rhs1 rhs1
@@ -359,7 +354,7 @@ instance VarType v => Ord (BoolExpr v) where
     r -> r
   compare (ElemExpr _ _ _) _ = LT
 
-instance VarType v => Ord (LogicExpr v) where
+instance Ord v => Ord (LogicExpr v) where
   compare (Not e1) (Not e2) = compare e1 e2
   compare (Not _) _ = LT
   compare (Always e1) (Always e2) = compare e1 e2
@@ -374,20 +369,20 @@ instance Show GTLOp where
                      OpMult -> "*"
                      OpDiv -> "/"
 
-instance VarType v => Show (Variable v) where
+instance Show v => Show (Variable v) where
   show v = let suff = case time v of
                         0 -> ""
                         _ -> "#" ++ (show $ time v)
             in (show $ name v) ++ suff
 
-instance VarType v => Show (Term v) where
+instance Show v => Show (Term v) where
   show (VarExpr v) = show v
   show (ConstExpr i) = show i
   show (BinExpr _ op lhs rhs) = "(" ++ show lhs ++ ")"
                                  ++ show op
                                  ++ "(" ++ show rhs ++ ")"
 
-instance VarType v => Show (BoolExpr v) where
+instance Show v => Show (BoolExpr v) where
   show (RelExpr rel lhs rhs) = "(" ++ show lhs ++ ") " ++
                                show rel ++
                                " (" ++ show rhs ++ ")"
@@ -398,7 +393,7 @@ instance VarType v => Show (BoolExpr v) where
   show (BoolConst c) = show c
   show (BoolVar v) = show v
 
-instance VarType v => Show (LogicExpr v) where
+instance Show v => Show (LogicExpr v) where
   show (LogicTerm t) = show t
   show (BinLogicExpr op lhs rhs) = "(" ++ show lhs ++ ") " ++
                                   (case op of
@@ -412,12 +407,12 @@ instance VarType v => Show (LogicExpr v) where
   show (Next e) = "next (" ++ show e ++ ")"
   show (ExprAutomaton a) = "Automaton"
 
-instance VarType v => Show (Expr v) where
+instance Show v => Show (Expr v) where
   show (Term e) = show e
   show (BoolExpr e) = show e
   show (LogicExpr e) = show e
 
-instance (VarType v, Binary v) => Binary (Variable v) where
+instance (Binary v) => Binary (Variable v) where
   put v = put (varType v) >> put (name v) >> put (time v)
   get = do
     varType <- get
@@ -444,7 +439,7 @@ instance Binary GTLOp where
   put (IntOp o) = put o
   get = fmap IntOp $ get
 
-instance (VarType v, Binary v) => Binary (Term v) where
+instance (Binary v) => Binary (Term v) where
   put (VarExpr v) = putWord8 0 >> put v
   put (ConstExpr c) = putWord8 1 >> put c
   put (BinExpr t op lhs rhs) = putWord8 2 >> put t >> put op >> put lhs >> put rhs
@@ -460,7 +455,7 @@ instance (VarType v, Binary v) => Binary (Term v) where
         rhs <- get
         return $ BinExpr t op lhs rhs
 
-instance (VarType v, Binary v) => Binary (BoolExpr v) where
+instance (Binary v) => Binary (BoolExpr v) where
   put (RelExpr rel lhs rhs) = putWord8 3 >> put rel >> put lhs >> put rhs
   put (ElemExpr n vals b) = putWord8 4 >> put n >> put vals >> put b
   put (BoolConst c) = putWord8 5 >> put c
@@ -485,7 +480,7 @@ instance (VarType v, Binary v) => Binary (BoolExpr v) where
         return $ BoolVar v
 
 
-instance (VarType v, Binary v) => Binary (LogicExpr v) where
+instance (Binary v) => Binary (LogicExpr v) where
   put (Not e) = putWord8 7 >> put e
   put (Always e) = putWord8 8 >> put e
   put (Next e) = putWord8 9 >> put e
@@ -508,15 +503,15 @@ instance (VarType v, Binary v) => Binary (LogicExpr v) where
         return $ LogicTerm t
 
 -- | Pushes a negation as far into the formula as possible by applying simplification rules.
-pushNot :: VarType v => LogicExpr v -> LogicExpr v
+pushNot :: LogicExpr v -> LogicExpr v
 pushNot (Not x) = negateExpr x
   where
-    negateTerm :: VarType v => BoolExpr v -> BoolExpr v
+    negateTerm :: BoolExpr v -> BoolExpr v
     negateTerm (RelExpr rel x y) = RelExpr (relNot rel) x y
     negateTerm (ElemExpr n lst neg) = ElemExpr n lst (not neg)
     -- negateTerm t = error $ "Can not negate " ++ show t
 
-    negateExpr :: VarType v => LogicExpr v -> LogicExpr v
+    negateExpr :: LogicExpr v -> LogicExpr v
     negateExpr (LogicTerm t) = LogicTerm $ negateTerm t
     negateExpr (Not x) = x
     negateExpr (BinLogicExpr op x y) = case op of
@@ -543,7 +538,7 @@ getVarsBoolExpr (ElemExpr v _ _) = [(name v, 0)]
 getVarsBoolExpr (BoolConst _) = []
 getVarsBoolExpr (BoolVar v) = [(name v, time v)]
 
-getVars :: VarType v => Expr v -> [(v,Integer)]
+getVars :: Expr v -> [(v,Integer)]
 getVars (Term t) = getVarsTerm t
 getVars (BoolExpr e) = getVarsBoolExpr e
 getVars (LogicExpr e) = getVarsLogic e
@@ -554,22 +549,22 @@ getVars (LogicExpr e) = getVarsLogic e
     getVarsLogic (ExprAutomaton aut) = concat $ fmap (\(_,st) -> getVarsLogic (vars st)) (Map.toList aut)
 
 -- | Extracts the maximum level of history for each variable in the expression.
-maximumHistory :: VarType v => Expr v -> Map v Integer
+maximumHistory :: Ord v => Expr v -> Map v Integer
 maximumHistory exprs = foldl (\mp (n,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 -- | Change the type of the variables in an expression.
-mapVarsTerm :: (VarType v, VarType w) => (v -> w) -> Term v -> Term w
+mapVarsTerm :: (v -> w) -> Term v -> Term w
 mapVarsTerm f (VarExpr v) = VarExpr $ v {name = f (name v)}
 mapVarsTerm _ (ConstExpr c) = ConstExpr c
 mapVarsTerm f (BinExpr t op lhs rhs) = BinExpr t op (mapVarsTerm f lhs) (mapVarsTerm f rhs)
 
-mapVarsBoolExpr :: (VarType v, VarType w) => (v -> w) -> BoolExpr v -> BoolExpr w
+mapVarsBoolExpr :: (v -> w) -> BoolExpr v -> BoolExpr w
 mapVarsBoolExpr f (RelExpr rel lhs rhs) = RelExpr rel (mapVarsTerm f lhs) (mapVarsTerm f rhs)
 mapVarsBoolExpr f (ElemExpr v vals b) = ElemExpr (v {name = f (name v)}) vals b
 mapVarsBoolExpr f (BoolConst c) = BoolConst c
 mapVarsBoolExpr f (BoolVar v) = BoolVar $ v {name = f (name v)}
 
-mapVars :: (VarType v, VarType w) => (v -> w) -> Expr v -> Expr w
+mapVars :: (v -> w) -> Expr v -> Expr w
 mapVars f (Term t) = Term $ mapVarsTerm f t
 mapVars f (BoolExpr e) = BoolExpr $ mapVarsBoolExpr f e
 mapVars f (LogicExpr e) = LogicExpr $ mapVarsLogic f e

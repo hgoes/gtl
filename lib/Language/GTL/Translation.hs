@@ -30,10 +30,10 @@ import Data.Map as Map
 data GTLAtom v = GTLBoolExpr (GTL.BoolExpr v) Bool
                deriving (Eq, Ord)
 
-instance VarType v => Show (GTLAtom v) where
+instance Show v => Show (GTLAtom v) where
   show (GTLBoolExpr e _) = show e
 
-instance (VarType v, Binary v) => Binary (GTLAtom v) where
+instance Binary v => Binary (GTLAtom v) where
   put (GTLBoolExpr e n) = put e >> put n
   get = do
     e <- get
@@ -41,7 +41,7 @@ instance (VarType v, Binary v) => Binary (GTLAtom v) where
     return $ GTLBoolExpr e n
 
 -- | Applies a function to every variable in the atom.
-mapGTLVars :: (VarType v, VarType w) => (v -> w) -> GTLAtom v -> GTLAtom w
+mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
 mapGTLVars f (GTLBoolExpr e p) = GTLBoolExpr (mapVarsBoolExpr f e) p
 
 -- | Negate a GTL atom.
@@ -51,13 +51,13 @@ gtlAtomNot (GTLBoolExpr e p) = GTLBoolExpr e (not p) -- TODO: be more intelligen
 --gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
 
 -- | Like `gtlToBuchi' but takes more than one formula.
-gtlsToBuchi :: (Monad m, VarType v) => ([GTLAtom v] -> m a) -> [GTL.LogicExpr v] -> m (Buchi a)
+gtlsToBuchi :: (Monad m,Show v,Ord v) => ([GTLAtom v] -> m a) -> [GTL.LogicExpr v] -> m (Buchi a)
 gtlsToBuchi f = (gtlToBuchi f) . foldl1 (BinLogicExpr GTL.And)
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtlToBuchi :: (Monad m, VarType v) => ([GTLAtom v] -> m a) -> GTL.LogicExpr v -> m (Buchi a)
+gtlToBuchi :: (Monad m,Show v,Ord v) => ([GTLAtom v] -> m a) -> GTL.LogicExpr v -> m (Buchi a)
 gtlToBuchi f expr = mapM (\co -> do
                              nvars <- f (fmap (\(at,p) -> if p
                                                           then at
@@ -68,11 +68,11 @@ gtlToBuchi f expr = mapM (\co -> do
                     ltlToBuchi (gtlToLTL expr)
 
 -- | Extract all variables with their history level from an atom.
-getAtomVars :: VarType v => GTLAtom v -> [(v,Integer)]
+getAtomVars :: GTLAtom v -> [(v,Integer)]
 getAtomVars (GTLBoolExpr e _) = getVarsBoolExpr e
 
 -- | Translate a GTL expression into a LTL formula.
-gtlToLTL :: VarType v => LogicExpr v -> LTL (GTLAtom v)
+gtlToLTL :: Ord v => LogicExpr v -> LTL (GTLAtom v)
 gtlToLTL (GTL.LogicTerm t) = LTL.Atom $ GTLBoolExpr t True
 gtlToLTL (GTL.BinLogicExpr op l r) = case op of
   GTL.And -> LTL.Bin LTL.And (gtlToLTL l) (gtlToLTL r)
@@ -85,7 +85,7 @@ gtlToLTL (GTL.Next x) = LTL.Un LTL.Next (gtlToLTL x)
 gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLSimpleAutomaton (simpleAutomaton buchi)
 --gtlToLTL (GTL.ExprAutomaton buchi) = LTL.LTLAutomaton (fmap (\co -> co { vars = gtlToLTL (vars co) }) (buchiSwitch buchi))
 
-expandExpr :: VarType v => LogicExpr v -> [Set (GTLAtom v)]
+expandExpr :: Ord v => LogicExpr v -> [Set (GTLAtom v)]
 expandExpr (GTL.LogicTerm t) = [Set.singleton (GTLBoolExpr t True)]
 expandExpr (GTL.BinLogicExpr op l r) = case op of
   GTL.And -> [ Set.union lm rm | lm <- expandExpr l, rm <- expandExpr r ]
@@ -101,7 +101,7 @@ expandExpr (GTL.Always x) = error "Can't use always in state formulas yet"
 expandExpr (GTL.Next x) = error "Can't use next in state formulas yet"
 expandExpr (GTL.ExprAutomaton buchi) = error "Can't use automata in state formulas yet"
 
-simpleAutomaton :: VarType v => GBuchi Integer (LogicExpr v) f -> GBuchi Integer (Set (GTLAtom v)) f
+simpleAutomaton :: Ord  v => GBuchi Integer (LogicExpr v) f -> GBuchi Integer (Set (GTLAtom v)) f
 simpleAutomaton buchi
   = let expandState st = [ BuchiState { isStart = isStart st
                                       , vars = nvar

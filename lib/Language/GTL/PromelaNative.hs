@@ -182,7 +182,7 @@ instance Monoid IntRestriction where
                   , unequals = (unequals r1)++(unequals r2)
                   }
 
-translateAtoms :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression)
+translateAtoms :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression)
 translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
                                   Left (name,restr) -> (Map.insertWith mappend name restr mp,expr)
                                   Right cond -> case expr of
@@ -193,7 +193,7 @@ translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
 completeRestrictions :: Ord a => Map a GTLType -> Map a IntRestriction -> Map a IntRestriction
 completeRestrictions tp mp = Map.union mp (fmap (const mempty) tp)
 
-translateAtom :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> GTLAtom a -> Either (a,IntRestriction) Pr.AnyExpression
+translateAtom :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> GTLAtom a -> Either (a,IntRestriction) Pr.AnyExpression
 translateAtom mmdl f (GTLBoolExpr (RelExpr rel lhs rhs) p)
   = case translateExpr mmdl f lhs of
   Left trg -> case translateExpr mmdl f rhs of
@@ -242,7 +242,7 @@ translateAtom mmdl f (GTLBoolExpr (BoolVar (Variable var lvl _)) t)
                          then Right chk
                          else Left (var,mempty { allowedValues = Just (Set.singleton (if t then 1 else 0)) })
 
-translateExpr :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Either a Pr.AnyExpression
+translateExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Either a Pr.AnyExpression
 translateExpr mmdl f expr@(VarExpr (Variable var 0 _))
   = case mmdl of
   Nothing -> Right $ translateCheckExpr Nothing f expr
@@ -251,7 +251,7 @@ translateExpr mmdl f expr@(VarExpr (Variable var 0 _))
                      else Right $ translateCheckExpr mmdl f expr
 translateExpr mmdl f expr = Right $ translateCheckExpr mmdl f expr
 
-translateCheckExpr :: (Ord a,VarType a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Pr.AnyExpression
+translateCheckExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> Term a -> Pr.AnyExpression
 translateCheckExpr mmdl f (VarExpr (Variable var lvl _)) = case mmdl of
   Nothing -> RefExpr (f Nothing var lvl)
   Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
