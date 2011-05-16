@@ -16,7 +16,7 @@ import Data.Traversable (mapM)
 
 -- | A parsed and typechecked GTL model.
 data GTLModel a = GTLModel
-                  { gtlModelContract :: Expr a Bool -- ^ The contract of the model as a boolean formula.
+                  { gtlModelContract :: LogicExpr a -- ^ The contract of the model as a boolean formula.
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
@@ -26,7 +26,7 @@ data GTLModel a = GTLModel
 -- | A GTL specification represents a type checked GTL file.
 data GTLSpec a = GTLSpec
                { gtlSpecModels :: Map String (GTLModel a) -- ^ All models in the specification.
-               , gtlSpecVerify :: Expr (String,a) Bool -- ^ A formula to verify.
+               , gtlSpecVerify :: LogicExpr (String,a) -- ^ A formula to verify.
                , gtlSpecConnections :: [(String,a,String,a)] -- ^ Connections between models.
                }
 
@@ -45,7 +45,7 @@ gtlParseModel mdl = do
                        Just rtp -> return rtp) (modelOutputs mdl)-}
       (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
       let allType = Map.union inp outp
-      expr <- typeCheck allType
+      expr <- typeCheckLogicExpr allType
               (\q n -> case q of
                   Nothing -> Right n
                   _ -> Left "Contract may not contain qualified variables") Map.empty (case modelContract mdl of
@@ -78,7 +78,7 @@ gtlParseSpec decls = do
                              , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
                              ]
 
-    vexpr <- typeCheck alltp (\q n -> case q of
+    vexpr <- typeCheckLogicExpr alltp (\q n -> case q of
                                  Nothing -> Left "No unqualified variables allowed in verify clause"
                                  Just rq -> Right (rq,n)
                              ) Map.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of

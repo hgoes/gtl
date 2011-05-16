@@ -14,7 +14,7 @@ import Data.Map as Map
 data AllBackend = AllBackend
                   { allTypecheck :: ModelInterface -> Either String ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: Expr String Bool -> IO (Maybe Bool)
+                  , allVerifyLocal :: LogicExpr String -> IO (Maybe Bool)
                   }
 
 tryInit :: GTLBackend b => b -> String -> [String] -> IO (Maybe AllBackend)

@@ -106,10 +106,10 @@ buildTest opname ins outs = UserOpDecl
   , userOpName = opname++"_test"
   , userOpSize = Nothing
   , userOpParams = ins
-  , userOpReturns = [ VarDecl { varNames = [VarId "test_result" False False]
-                              , varType = TypeBool
-                              , varDefault = Nothing
-                              , varLast = Nothing
+  , userOpReturns = [ VarDecl { Sc.varNames = [VarId "test_result" False False]
+                              , Sc.varType = TypeBool
+                              , Sc.varDefault = Nothing
+                              , Sc.varLast = Nothing
                               } ]
   , userOpNumerics = []
   , userOpContent = DataDef { dataSignals = []
@@ -140,10 +140,10 @@ buchiToScade name ins outs buchi
     , userOpSize = Nothing
     , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
                      | (n,tp) <- Map.toList ins ++ Map.toList outs ]
-    , userOpReturns = [VarDecl { varNames = [VarId "test_result" False False]
-                               , varType = TypeBool
-                               , varDefault = Nothing
-                               , varLast = Nothing
+    , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
+                               , Sc.varType = TypeBool
+                               , Sc.varDefault = Nothing
+                               , Sc.varLast = Nothing
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
@@ -220,31 +220,31 @@ stateToTransition name st
     Nothing
     (TargetFork Restart ("st"++show name))
 
-baseConstr :: Map GTLType (Dynamic -> Sc.Expr)
-baseConstr = Map.fromList [
-    (GTLBool, (\c -> ConstBoolExpr (unsafeFromDyn c))),
-    (GTLInt, (\c -> ConstIntExpr (unsafeFromDyn c)))
-  ]
-
-litToExpr :: GTL.BaseType a => GTL.Expr String a -> Sc.Expr
-litToExpr (ExprConst n) = fromJust (construct n baseConstr) -- FIXME: unsafe
-litToExpr (ExprVar x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
-litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
-                                               OpPlus -> BinPlus
-                                               OpMinus -> BinMinus
-                                               OpMult -> BinTimes
-                                               OpDiv -> BinDiv) (litToExpr l) (litToExpr r)
+termToExpr :: Term String -> Sc.Expr
+termToExpr (VarExpr var) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [GTL.name var]) [1..(time var)]
+termToExpr (ConstExpr c) = case value c of
+  IntVal x -> ConstIntExpr (fromIntegral x)
+  BoolVal x -> ConstBoolExpr x
+termToExpr (BinExpr tp (IntOp op) l r) = BinaryExpr (case op of
+                                                        OpPlus -> BinPlus
+                                                        OpMinus -> BinMinus
+                                                        OpMult -> BinTimes
+                                                        OpDiv -> BinDiv) (termToExpr l) (termToExpr r)
 
 relToExpr :: GTLAtom String -> Sc.Expr
-relToExpr (GTLRel rel l r)
-  = BinaryExpr (case rel of
-                   BinLT -> BinLesser
-                   BinLTEq -> BinLessEq
-                   BinGT -> BinGreater
-                   BinGTEq -> BinGreaterEq
-                   BinEq -> BinEquals
-                   BinNEq -> BinDifferent
-               ) (litToExpr l) (litToExpr r)
+relToExpr (GTLBoolExpr expr p)
+  = case expr of
+  RelExpr rel l r
+    -> BinaryExpr (case (if p then id else relNot) rel of
+                      BinLT -> BinLesser
+                      BinLTEq -> BinLessEq
+                      BinGT -> BinGreater
+                      BinGTEq -> BinGreaterEq
+                      BinEq -> BinEquals
+                      BinNEq -> BinDifferent
+                  ) (termToExpr l) (termToExpr r)
+  BoolConst x -> (if p then id else UnaryExpr UnNot) (ConstBoolExpr x)
+  BoolVar var -> (if p then id else UnaryExpr UnNot) (termToExpr (VarExpr var))
 
 relsToExpr :: [GTLAtom String] -> Sc.Expr
 relsToExpr [] = ConstBoolExpr True
