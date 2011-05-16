@@ -38,7 +38,7 @@ translateGTL traces gtlcode
     let claims = [neverClaim (case rtr of
                                  [] -> []
                                  x:_ -> x) (gtlSpecVerify gtlcode) (gtlSpecModels gtlcode)]
-    return $ show $ prettyPromela $ (generatePromelaCode gtlcode (maximumHistory (gtlSpecVerify gtlcode)))++claims
+    return $ show $ prettyPromela $ (generatePromelaCode gtlcode (maximumHistory $ LogicExpr (gtlSpecVerify gtlcode)))++claims
 
 -- | Convert a GTL name into a C-name.
 varName :: CInterface
@@ -63,13 +63,13 @@ inputVars mdl iface = zipWith (\i _ -> "input_"++mdl++show i) [0..] (cIFaceInput
 -- | Convert a trace and a verify expression into a promela never claim.
 --   If you don't want to include a trace, give an empty one `[]'.
 neverClaim :: Trace -- ^ The trace
-              -> Expr (String,String) Bool -- ^ The verify expression
+              -> LogicExpr (String,String) -- ^ The verify expression
               -> Map String (GTLModel String) -- ^ All models
               -> Pr.Module
 neverClaim trace f mdls
   = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                            in varName iface q v l) trace
-        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL $ ExprNot f) traceAut
+        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL $ GTL.Not f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
         steps = [ Pr.StmtLabel ("st"++showSt i)
