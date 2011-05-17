@@ -21,8 +21,66 @@ import Data.Monoid
 import Data.Typeable
 import Data.Maybe
 
+import System.FilePath
+import Language.Promela.Pretty
+import System.Cmd
+import System.Directory
+import System.Process
+import Language.GTL.ErrorRefiner
+
+import Misc.ProgramOptions as Opts
+
 type OutputMap = Map (String,String) (Set (String,String),Maybe Integer)
 type InputMap = Map (String,String) Integer
+
+generatePan fileName outputDir = do
+  createDirectoryIfMissing True outputDir
+  currentDir <- getCurrentDirectory
+  setCurrentDirectory outputDir
+  rawSystem "spin" ["-a", fileName]
+  setCurrentDirectory currentDir
+
+-- | Do a complete verification of a given GTL file
+verifyModel :: Opts.Options -- ^ Options
+               -> String -- ^ Name of the GTL file without extension
+               -> GTLSpec String -- ^ The GTL file contents
+               -> IO ()
+verifyModel opts name decls = do
+  let --prog = buildTransProgram decls
+      pr = translateSpec decls
+  writeFile ((outputPath opts) </> name <.> "pr") (show $ prettyPromela pr)
+  generatePan (name <.> "pr") (outputPath opts)
+  let verifier = (outputPath opts) </> (name ++ "-verifier")
+  rawSystem (ccBinary opts) ([(outputPath opts) </> "pan.c", "-o" ++ verifier] ++ (ccFlags opts))
+  {-
+  unless keep $ do
+    deleteTmp "pan.c"
+    deleteTmp "pan.h"
+    deleteTmp "pan.m"
+    deleteTmp "pan.t"
+    deleteTmp "pan.b"
+  -}
+  outp <- readProcess verifier ["-a","-e"] ""
+  putStrLn outp
+  {- unless keep $ deleteTmp verifier -}
+  let traceFiles = filterTraces outp
+  putStrLn $ show traceFiles
+  {-
+  runBDDM $ do
+    traces <- mapM (\trace -> lift $ do
+                       res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
+                       unless keep $ deleteTmp trace
+                       return res
+                   ) trace_files
+    case traces of
+      [] -> lift $ putStrLn "No errors found."
+      _  -> lift $ do
+        putStrLn $ show (length traces) ++ " errors found"
+        writeTraces (name <.> "gtltrace") traces
+        putStrLn $ "Written to "++(name <.> "gtltrace")
+  unless keep $ deleteTmp (name <.> "pr")
+  -}
+  return ()
 
 translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = let outmp = buildOutputMap spec
@@ -73,7 +131,7 @@ convertType rep
   | rep == (typeOf (undefined::Bool)) = Pr.TypeBool
 
 translateNever :: Expr (String,String) Bool -> InputMap -> OutputMap -> Pr.Module
-translateNever expr inmp outmp 
+translateNever expr inmp outmp
   = let buchi = runIdentity (gtlToBuchi
                              (return.(translateAtoms Nothing (\Nothing (mdl,var) -> varName mdl var)))
                              (ExprNot expr))
@@ -113,8 +171,8 @@ outputAssign mdl var expr outmp inmp = case Map.lookup (mdl,var) outmp of
   Just (tos,nvr) -> let rest = fmap (\(mt,vt) -> assign mt vt (inmp!(mt,vt)) expr) (Set.toList tos)
                     in concat $ case nvr of
                       Nothing -> rest
-                      Just lvl -> assign mdl var lvl expr : rest                      
-  
+                      Just lvl -> assign mdl var lvl expr : rest
+
 firstAssignTarget :: String -> String -> OutputMap -> InputMap -> Maybe Pr.VarRef
 firstAssignTarget mdl var outmp inmp = case Map.lookup (mdl,var) outmp of
   Nothing -> Nothing
@@ -151,7 +209,7 @@ translateModel name model inmp outmp
 translateBuchi :: Maybe String -> (a -> (String,String)) -> Buchi (Map a IntRestriction,Maybe Pr.AnyExpression) -> InputMap -> OutputMap -> [Pr.Statement]
 translateBuchi mmdl f buchi inmp outmp
   = let rbuchi = translateGBA buchi
-    in [ prIf [ (case snd $ vars st of 
+    in [ prIf [ (case snd $ vars st of
                     Nothing -> []
                     Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                 [ Pr.StmtGoto $ "st_"++show s1++"_"++show s2 ]
@@ -210,7 +268,7 @@ translateAtom mmdl f (GTLRel rel lhs rhs)
     buildAssign GTL.BinGTEq trg src = (trg,mempty { lowerLimits = [(True,src)] })
     buildAssign GTL.BinEq trg src = (trg,mempty { equals = [src] })
     buildAssign GTL.BinNEq trg src = (trg,mempty { unequals = [src] })
-    
+
     buildComp op s1 s2 = Pr.BinExpr (case op of
                                         GTL.BinLT -> Pr.BinLT
                                         GTL.BinLTEq -> Pr.BinLTE
@@ -232,7 +290,7 @@ translateAtom mmdl f (GTLElem var lits eq)
                                         then mempty { allowedValues = Just $ Set.fromList lits }
                                         else mempty { forbiddenValues = Set.fromList lits })
 translateAtom mmdl f (GTLVar var lvl t)
-  = let chk = (if t then id 
+  = let chk = (if t then id
                else Pr.UnExpr Pr.UnLNot) (Pr.RefExpr (f (fmap fst mmdl) var lvl))
     in case mmdl of
       Nothing -> Right chk
@@ -263,11 +321,11 @@ translateCheckExpr mmdl f (ExprBinInt op lhs rhs) = BinExpr (case op of
                                                                 OpDiv -> Pr.BinDiv)
                                                     (translateCheckExpr mmdl f lhs)
                                                     (translateCheckExpr mmdl f rhs)
-  
+
 translateRestriction :: String -> String -> OutputMap -> InputMap -> IntRestriction -> Pr.Statement
 translateRestriction mdl var outmp inmp restr
   = let checkNEquals to = case unequals restr of
-          [] -> Nothing 
+          [] -> Nothing
           _ -> Just $ foldl1 (Pr.BinExpr Pr.BinAnd) (fmap (Pr.BinExpr Pr.BinNotEquals to) (unequals restr))
         checkEquals to = case equals restr of
           [] -> Nothing
@@ -321,7 +379,7 @@ buildGenerator :: [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.
 buildGenerator upper lower check mdl var outmp inmp
   = let rupper e = case upper of
           [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (maxBound::Int)))
-          _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $ 
+          _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $
                fmap (\(inc,expr) -> Pr.BinExpr Pr.BinLT e (if inc
                                                            then expr
                                                            else Pr.BinExpr Pr.BinMinus expr (Pr.ConstExpr $ Pr.ConstInt 1))

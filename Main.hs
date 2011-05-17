@@ -85,5 +85,5 @@ main = do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str
     Pretty -> putStrLn (simplePrettyPrint rgtl)
-    Native -> print (prettyPromela $ PrNat.translateSpec rgtl)
+    Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
   return ()
