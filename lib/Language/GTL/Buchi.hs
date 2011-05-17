@@ -4,6 +4,7 @@ import Data.Map as Map
 import Data.Set as Set
 import Data.Foldable
 import Prelude hiding (foldl)
+import Data.Binary
 
 -- | A simple generalized buchi automaton.
 type Buchi a = GBuchi Integer a (Set Integer)
@@ -18,6 +19,15 @@ data BuchiState st a f = BuchiState
                          , finalSets :: f -- ^ In which final sets is this state a member?
                          , successors :: Set st -- ^ All following states
                          } deriving (Show,Eq,Ord)
+
+instance (Ord st,Binary st,Binary a,Binary f) => Binary (BuchiState st a f) where
+  put st = put (isStart st) >> put (vars st) >> put (finalSets st) >> put (successors st)
+  get = do
+    is <- get
+    va <- get
+    fi <- get
+    suc <- get
+    return (BuchiState is va fi suc)
 
 -- | Transforms a generalized buchi automaton into a regular one.
 translateGBA :: (Ord st,Ord f) => GBuchi st a (Set f) -> GBuchi (st,Int) a Bool
