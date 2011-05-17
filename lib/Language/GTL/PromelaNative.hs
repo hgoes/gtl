@@ -357,19 +357,27 @@ minimumAssignment _   f (x:xs) = minimumAssignment' x xs
                                          ]
                                        ]
 
-translateState :: Maybe String -> (a -> (String,String)) -> OutputMap -> InputMap -> (Integer,Int) -> BuchiState (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool -> GBuchi (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool -> Pr.Statement
-translateState mmdl f outmp inmp (n1,n2) st buchi
+translateState
+  :: Maybe String
+  -> (a -> (String,String))
+  -> OutputMap
+  -> InputMap
+  -> (Integer,Int)
+  -> BuchiState (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool
+  -> GBuchi (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool
+    -> Pr.Statement
+translateState mmdl f outmp inmp n@(n1,n2) st buchi
   = (if finalSets st && isNothing mmdl
      then Pr.StmtLabel ("accept_"++show n1++"_"++show n2)
      else id) $
     Pr.StmtLabel ("st_"++show n1++"_"++show n2)
     (prAtomic $ (case mmdl of
                     Nothing -> []
-                    Just mdl -> [Pr.StmtPrintf ("ENTER "++mdl++" "++show n1++" "++show n2++"\n") []]
+                    Just mdl -> [Pr.StmtPrintf ("ENTER " ++ mdl ++ " " ++ show n ++ "\n") []]
                 )++
      [ translateRestriction mdl rvar outmp inmp restr
      | (var,restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
-     [prIf [ (case snd $ vars (buchi!(s1,s2)) of 
+     [prIf [ (case snd $ vars (buchi!(s1,s2)) of
                  Nothing -> []
                  Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
              [Pr.StmtGoto $ "st_"++show s1++"_"++show s2]
