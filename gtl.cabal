@@ -30,6 +30,7 @@ Library
     Language.GTL.Expression
     Language.GTL.Buchi
     Language.GTL.PromelaNative
+    Misc.ProgramOptions
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath
