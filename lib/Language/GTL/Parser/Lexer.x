@@ -13,7 +13,7 @@ $digit10 = [0-9]
 
 tokens:-
   $white+                        ;
-  "//" .* \n                     ;
+  "//".*                         ;
   all                            { key KeyAll }
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
