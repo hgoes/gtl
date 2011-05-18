@@ -23,6 +23,26 @@ data GTLValue r = GTLIntVal Integer
                 | GTLTupleVal [r]
                 deriving (Eq,Ord)
 
+class ToGTL t where
+  toGTL :: t -> GTLValue a
+  gtlTypeOf :: t -> GTLType
+
+instance ToGTL Integer where
+  toGTL = GTLIntVal
+  gtlTypeOf _ = GTLInt
+
+instance ToGTL Word8 where
+  toGTL = GTLByteVal
+  gtlTypeOf _ = GTLByte
+
+instance ToGTL Bool where
+  toGTL = GTLBoolVal
+  gtlTypeOf _ = GTLBool
+
+instance ToGTL Float where
+  toGTL = GTLFloatVal
+  gtlTypeOf _ = GTLFloat
+
 instance Functor GTLValue where
   fmap _ (GTLIntVal i) = GTLIntVal i
   fmap _ (GTLByteVal i) = GTLByteVal i
