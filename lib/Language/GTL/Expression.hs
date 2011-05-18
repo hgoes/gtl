@@ -211,8 +211,12 @@ typeCheck' mu mutp mus varmp enums (BinBoolExpr op l r) = do
 typeCheck' mu mutp mus varmp enums (BinRelExpr rel l r) = do
   ll <- mu l
   rr <- mu r
-  enforceType (mus ll) (mutp ll) GTLInt
-  enforceType (mus rr) (mutp rr) GTLInt
+  if rel==BinEq || rel==BinNEq
+    then (do
+             enforceType (mus rr) (mutp rr) (mutp ll))
+    else (do
+             enforceType (mus ll) (mutp ll) GTLInt
+             enforceType (mus rr) (mutp rr) GTLInt)
   return $ Typed GTLBool (BinRelExpr rel ll rr)
 typeCheck' mu mutp mus varmp enums (BinIntExpr op l r) = do
   ll <- mu l
@@ -271,6 +275,7 @@ parseTerm' mu f ex (GUn op p) = do
                       ) rec
 parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
 parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
+parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
 parseTerm' mu f ex (GVar q n) = case q of
   Nothing -> case Map.lookup n ex of
     Nothing -> do

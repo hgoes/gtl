@@ -118,7 +118,7 @@ gtlToTikz spec = do
                                                                            ]]
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape Record
-                                                                              ,FontSize 9.0
+                                                                              ,FontSize 10.0
                                                                               ,Label $ RecordLabel $ (if Map.null inp
                                                                                                       then []
                                                                                                       else [FlipFields [ LabelledTarget (PN name) name
@@ -281,6 +281,7 @@ exprToLatex expr = case getValue expr of
   Value v -> case v of
     GTLIntVal x -> show x
     GTLBoolVal x -> show x
+    GTLEnumVal x -> "\\textrm{"++x++"}"
   BinIntExpr rel lhs rhs -> (exprToLatex $ unfix lhs)
                             ++(case rel of
                                   OpPlus -> "+"
@@ -299,6 +300,7 @@ estimateWidth expr = case getValue expr of
   Var v h -> (length v)+(if h==0 then 0 else 2+(length (show h)))
   Value (GTLBoolVal x) -> length (show x)
   Value (GTLIntVal x) -> length (show x)
+  Value (GTLEnumVal x) -> 1+(length x)
   BinIntExpr _ lhs rhs -> 1+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
 --estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
 --estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))

@@ -50,6 +50,7 @@ data GExpr = GBin BinOp GExpr GExpr
            | GAutomaton [State]
            | GTuple [GExpr]
            | GIndex GExpr GExpr
+           | GEnum String
            deriving (Show,Eq,Ord)
 
 data State = State

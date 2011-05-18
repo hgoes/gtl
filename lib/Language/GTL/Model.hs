@@ -32,7 +32,7 @@ data GTLSpec a = GTLSpec
                }
 
 -- | Parse a GTL model from a unchecked model declaration.
-gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String))
+gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
 gtlParseModel mdl = do
   mback <- initAllBackend (modelType mdl) (modelArgs mdl)
   case mback of
@@ -46,13 +46,14 @@ gtlParseModel mdl = do
                        Just rtp -> return rtp) (modelOutputs mdl)-}
       (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
       let allType = Map.union inp outp
+          enums = getEnums allType
       expr <- makeTypedExpr
               (\q n -> case q of
                   Nothing -> Right n
                   _ -> Left "Contract may not contain qualified variables") 
-              allType Set.empty (case modelContract mdl of
-                                    [] -> GConstBool True
-                                    c -> foldl1 (GBin GOpAnd) c)
+              allType enums (case modelContract mdl of
+                                [] -> GConstBool True
+                                c -> foldl1 (GBin GOpAnd) c)
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
                       InitOne c -> case Map.lookup var allType of
@@ -65,7 +66,10 @@ gtlParseModel mdl = do
                                      , gtlModelInput = inp
                                      , gtlModelOutput = outp
                                      , gtlModelDefaults = Map.fromList lst
-                                     })
+                                     },enums)
+
+getEnums :: Map a GTLType -> Set [String]
+getEnums mp = Set.fromList [ xs | GTLEnum xs <- Map.elems mp ]
 
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
@@ -76,17 +80,17 @@ gtlParseSpec decls = do
   return $ do
     rmdls <- mdls
     let alltp = Map.fromList [ ((q,n),tp)
-                             | (q,mdl) <- rmdls
+                             | (q,mdl,_) <- rmdls
                              , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
                              ]
-
+        enums = Set.unions [ enum | (_,_,enum) <- rmdls ]
     vexpr <- makeTypedExpr (\q n -> case q of
                                Nothing -> Left "No unqualified variables allowed in verify clause"
                                Just rq -> Right (rq,n)
-                             ) alltp Set.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
-                                                   [] -> GConstBool True
-                                                   x -> foldl1 (GBin GOpAnd) x)
-    let mdl_mp = Map.fromList rmdls
+                             ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of
+                                               [] -> GConstBool True
+                                               x -> foldl1 (GBin GOpAnd) x)
+    let mdl_mp = Map.fromList [ (q,mdl) | (q,mdl,_) <- rmdls ]
     sequence_ [ do
                    fmdl <- case Map.lookup f mdl_mp of
                      Nothing -> Left $ "Model "++f++" not found."

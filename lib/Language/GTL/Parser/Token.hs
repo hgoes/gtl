@@ -1,6 +1,7 @@
 module Language.GTL.Parser.Token where
 
 data Token = Identifier String
+           | ConstEnum String
            | Key KeyWord
            | Bracket BracketType Bool
            | Dot

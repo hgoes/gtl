@@ -65,6 +65,7 @@ import qualified Data.Map as Map
   "/"               { Binary GOpDiv }
   "^"               { Binary GOpPow }
   id                { Identifier $$ }
+  enum              { ConstEnum $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
 
@@ -169,6 +170,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
      | expr "[" expr "]"            { GIndex $1 $3 }
+     | enum                         { GEnum $1 }
 
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }
