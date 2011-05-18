@@ -1,6 +1,7 @@
 Name:           gtl
 Version:        0.1
-Author:         Henning Günther
+Author:         Henning Günther <guenther@iti.cs.tu-bs.de>
+		Henning Basold <h.basold@tu-braunschweig.de>
 Build-Type:     Custom
 Cabal-Version:  >= 1.10
 Description:
