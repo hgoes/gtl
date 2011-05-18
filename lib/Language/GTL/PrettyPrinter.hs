@@ -102,6 +102,34 @@ buchiToDot buchi
              }
   where nd x = "nd"++show x
 
+generatePorts :: Bool -> Map String GTLType -> RecordFields
+generatePorts left mp
+  | Map.null mp = []
+  | otherwise = [FlipFields
+                 [ generateTypePorts name [] tp
+                 | (name,tp) <- Map.toList mp ]
+                ]
+    where
+      generateTypePorts :: String -> [Integer] -> GTLType -> RecordField
+      generateTypePorts name pos (GTLArray sz tp) 
+        = let f1 = FieldLabel (case pos of
+                                  [] -> name
+                                  x:xs -> show x)
+              f2 = FlipFields [ generateTypePorts name (p:pos) tp
+                              | p <- [0..(sz-1)] ]
+          in FlipFields $ if left then [f2,f1] else [f1,f2]
+      generateTypePorts name pos (GTLTuple tps)
+        = let f1 = FieldLabel (case pos of
+                                  [] -> name
+                                  x:xs -> show x)
+              f2 = FlipFields [ generateTypePorts name (p:pos) tp
+                              | (p,tp) <- zip [0..] tps ]
+          in FlipFields $ if left then [f2,f1] else [f1,f2]
+      generateTypePorts name pos _ = LabelledTarget (PN $ genPortName name (reverse pos))
+                                     (case pos of
+                                         [] -> name
+                                         x:xs -> show x)
+
 -- | Convert a GTL specification to Tikz drawing commands.
 --   This needs to be IO because it calls graphviz programs to preprocess the picture.
 gtlToTikz :: GTLSpec String -> IO String
@@ -119,38 +147,32 @@ gtlToTikz spec = do
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape Record
                                                                               ,FontSize 10.0
-                                                                              ,Label $ RecordLabel $ (if Map.null inp
-                                                                                                      then []
-                                                                                                      else [FlipFields [ LabelledTarget (PN name) name
-                                                                                                                       | name <- Map.keys inp
-                                                                                                                       ]])++
+                                                                              ,Label $ RecordLabel $ (generatePorts True inp)++
                                                                                [FieldLabel (unlines $
                                                                                             replicate (ceiling $ h / 12)
                                                                                             (replicate (ceiling $ w / 5.8) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
-                                                                               (if Map.null outp
-                                                                                then []
-                                                                                else [FlipFields [ LabelledTarget (PN name) name
-                                                                                                 | name <- Map.keys outp
-                                                                                                 ]
-                                                                                     ])
+                                                                               (generatePorts False outp)
                                                                               ]
                                                                | (name,(inp,outp,repr,w,h)) <- Map.toList mp
                                                                ]
                                                  , edgeStmts = [DotEdge { edgeFromNodeID = f
                                                                         , edgeToNodeID = t
                                                                         , directedEdge = True
-                                                                        , edgeAttributes = [TailPort (LabelledPort (PN fv) (Just East))
-                                                                                           ,HeadPort (LabelledPort (PN tv) (Just West))
+                                                                        , edgeAttributes = [TailPort (LabelledPort (PN $ genPortName fv fi) (Just East))
+                                                                                           ,HeadPort (LabelledPort (PN $ genPortName tv ti) (Just West))
                                                                                            ]
                                                                         }
-                                                               | (GTLConnPt f fv [],GTLConnPt t tv []) <- gtlSpecConnections spec
+                                                               | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
                                                                ]
                                                  }
                     }
-  outp <- readProcess "sfdp" ["-Tdot"] (printIt gr)
+  outp <- readProcess "neato" ["-Tdot"] (printIt gr)
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
+
+genPortName :: String -> [Integer] -> String
+genPortName var ind = var ++ concat (fmap (\i -> "_"++show i) ind)
 
 -- | Convert a single model into Tikz drawing commands.
 --   Also returns the width and height of the bounding box for the rendered picture.
@@ -168,6 +190,41 @@ modelToTikz m = do
 pointToTikz :: Point -> String
 pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
 
+layoutRects :: Bool -> [Rect] -> [(String,GTLType)] -> ([String],[Rect])
+layoutRects left rects [] = ([],rects)
+layoutRects left rects ((name,tp):rest) = let (out,rbox) = layoutRectsType rects name [] tp
+                                              (outs,res) = layoutRects left rbox rest
+                                          in (out++outs,res)
+  where
+    drawLabel :: Rect -> String -> String
+    drawLabel (Rect p1 p2) lbl = "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++lbl++"};"
+    
+    layoutRectsType :: [Rect] -> String -> [Integer] -> GTLType -> ([String],[Rect])
+    layoutRectsType (r1:rest) name pos (GTLArray sz tp)
+      = let f q = foldl (\(strs,(r:rs)) i -> ((drawBox r):(drawLabel r (show i)):strs,rs)) q [0..(sz-1)]
+            (mbox,(out,rects')) = if left 
+                                  then (let (o,r2:r3) = f ([],(r1:rest)) in (r2,(o,r3)))
+                                  else (r1,f ([],rest))
+        in ((drawBox mbox):(drawLabel mbox (case pos of
+                                               [] -> name
+                                               x:xs -> show x)):out,rects')
+    layoutRectsType (r1:rest) name pos (GTLTuple tps)
+      = let f q = foldl (\(strs,(r:rs)) (i,tp) -> ((drawBox r):(drawLabel r (show i)):strs,rs)) q (zip [0..] tps)
+            (mbox,(out,rects')) = if left 
+                                  then (let (o,r2:r3) = f ([],(r1:rest)) in (r2,(o,r3)))
+                                  else (r1,f ([],rest))
+        in ((drawBox mbox):(drawLabel mbox (case pos of
+                                               [] -> name
+                                               x:xs -> show x)):out,rects')
+    layoutRectsType (r1:rest) name pos _ = ([drawBox r1,drawLabel r1 (case pos of
+                                                                         [] -> name
+                                                                         x:xs -> show x)],rest)
+
+drawBox :: Rect -> String
+drawBox (Rect p1 p2) = "\\draw[color=red!50,fill=red!20,thick] "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
+                       " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
+                       " -- "++pointToTikz p1++";"
+
 -- | Convert a graphviz graph to Tikz drawing commands.
 dotToTikz :: (Show a,Ord a)
              => Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
@@ -178,22 +235,13 @@ dotToTikz mtp gr
     ([case shape of
          Ellipse -> "\\draw [color=blue!50,very thick,fill=blue!20]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
                     "\\draw "++pointToTikz pos++" node {$"++lbl++"$};"
-         Record -> unlines ([ "\\draw[color=red!50,fill=red!20,thick] "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
-                              " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
-                              " -- "++pointToTikz p1++";"
-                            | Rect p1 p2 <- rects
-                            ]++
-                            [ "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++name++"};"
-                            | (Rect p1 p2,name) <- zip rects (Map.keys inp)
-                            ]++
-                            [ "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++name++"};"
-                            | (Rect p1 p2,name) <- zip (drop ((Map.size inp)+1) rects) (Map.keys outp)
-                            ]++
-                            [ "\\begin{scope}[shift={("++show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++show ((yCoord m1 + yCoord m2 - rh)/2)++"bp)}]\n"
-                              ++repr++
-                              "\\end{scope}"
-                            ]
-                           )
+         Record -> let (out1,mrect@(Rect m1 m2):rect1) = layoutRects True rects (Map.toList inp)
+                       (out2,rect2) = layoutRects False rect1 (Map.toList outp)
+                   in unlines ([drawBox mrect]++out1++out2
+                               ++[ "\\begin{scope}[shift={("++show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++show ((yCoord m1 + yCoord m2 - rh)/2)++"bp)}]\n"
+                                   ++repr++
+                                   "\\end{scope}"
+                                 ])
          PointShape -> "\\draw [fill]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);"
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
@@ -233,7 +281,6 @@ dotToTikz mtp gr
                     _ -> error "No rects given"
            Just reprs = mtp
            (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
-           Rect m1 m2 = head (drop (Map.size inp) rects)
      ] ++
      [ "\\draw [-,thick] "++pointToTikz spl1++" .. controls "
        ++pointToTikz spl2++" and "++pointToTikz spl3
