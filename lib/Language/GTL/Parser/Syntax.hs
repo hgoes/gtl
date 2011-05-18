@@ -29,8 +29,10 @@ data ModelDecl = ModelDecl
 data ConnectDecl = ConnectDecl
                    { connectFromModel :: String -- ^ Model of the source variable
                    , connectFromVariable :: String -- ^ Name of the source variable
+                   , connectFromIndices :: [Integer]
                    , connectToModel :: String -- ^ Model of the target variable
                    , connectToVariable :: String -- ^ Name of the target variable
+                   , connectToIndices :: [Integer]
                    } deriving Show
 
 -- | A list of formulas to verify.

@@ -493,10 +493,11 @@ buildTransProgram gtl
                                             return c
                                         ) (GTL.gnot (gtlSpecVerify gtl)))
                             Map.empty
-        tmodels2 = foldl (\cmdls (f,fv,t,tv) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union) fv
-                                                                                    (Map.singleton (Just (t,tv)) (Set.singleton 0))
-                                                                                    (varsOut mdl)
-                                                                        }) f cmdls) tmodels1 (gtlSpecConnections gtl)
+        tmodels2 = foldl (\cmdls (GTLConnPt f fv [],GTLConnPt t tv [])
+                          -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union) fv
+                                                                 (Map.singleton (Just (t,tv)) (Set.singleton 0))
+                                                                 (varsOut mdl)
+                                                     }) f cmdls) tmodels1 (gtlSpecConnections gtl)
         tmodels3 = foldl (\cmdls' ((q,n),lvl) ->
                            Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                n (Map.singleton Nothing (Set.singleton lvl))

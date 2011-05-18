@@ -144,7 +144,7 @@ gtlToTikz spec = do
                                                                                            ,HeadPort (LabelledPort (PN tv) (Just West))
                                                                                            ]
                                                                         }
-                                                               | (f,fv,t,tv) <- gtlSpecConnections spec
+                                                               | (GTLConnPt f fv [],GTLConnPt t tv []) <- gtlSpecConnections spec
                                                                ]
                                                  }
                     }

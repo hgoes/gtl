@@ -82,10 +82,11 @@ translateNever expr inmp outmp
 
 buildOutputMap :: GTLSpec String -> OutputMap
 buildOutputMap spec
-  = let mp1 = foldl (\mp (mf,vf,mt,vt) -> Map.alter (\mentr -> case mentr of
-                                                        Nothing -> Just (Set.singleton (mt,vt),Nothing)
-                                                        Just (tos,nvr) -> Just (Set.insert (mt,vt) tos,nvr)
-                                                    ) (mf,vf) mp) Map.empty (gtlSpecConnections spec)
+  = let mp1 = foldl (\mp (GTLConnPt mf vf [],GTLConnPt mt vt []) 
+                     -> Map.alter (\mentr -> case mentr of
+                                      Nothing -> Just (Set.singleton (mt,vt),Nothing)
+                                      Just (tos,nvr) -> Just (Set.insert (mt,vt) tos,nvr)
+                                  ) (mf,vf) mp) Map.empty (gtlSpecConnections spec)
         mp2 = foldl (\mp (var,lvl) -> Map.alter (\mentr -> case mentr of
                                                     Nothing -> Just (Set.empty,Just lvl)
                                                     Just (tos,nvr) -> Just (tos,Just (case nvr of

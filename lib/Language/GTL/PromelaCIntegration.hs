@@ -109,7 +109,7 @@ generatePromelaCode spec history
                                                                          ]++
                                                                          [ cIFaceGetInputVar iface (inputVars name iface) tvar ++ " = " ++
                                                                            source ++ ";"
-                                                                         | (fmod,fvar,tmod,tvar) <- gtlSpecConnections spec
+                                                                         | (GTLConnPt fmod fvar [],GTLConnPt tmod tvar []) <- gtlSpecConnections spec
                                                                          , tmod == name
                                                                          , let siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!fmod
                                                                                source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar

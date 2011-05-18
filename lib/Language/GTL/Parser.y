@@ -187,7 +187,10 @@ ints : int comma_ints { $1:$2 }
 comma_ints : "," int comma_ints { $2:$3 }
            |                    { [] }
 
-connect_decl : "connect" id "." id id "." id ";" { ConnectDecl $2 $4 $5 $7 }
+connect_decl : "connect" id "." id indices id "." id indices ";" { ConnectDecl $2 $4 $5 $6 $8 $9 }
+
+indices : "[" int "]" indices { $2:$4 }
+        |                     { [] }
 
 verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 

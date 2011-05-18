@@ -11,6 +11,7 @@ import Data.Typeable
 import Data.Dynamic
 import Data.Map as Map
 import Data.Set as Set
+import Data.List (genericIndex,genericLength)
 import Data.Binary
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
@@ -24,11 +25,13 @@ data GTLModel a = GTLModel
                   , gtlModelDefaults :: Map a (Maybe Dynamic) -- ^ Default values for inputs. `Nothing' means any value.
                   }
 
+data GTLConnectionPoint a = GTLConnPt String a [Integer]
+
 -- | A GTL specification represents a type checked GTL file.
 data GTLSpec a = GTLSpec
                { gtlSpecModels :: Map String (GTLModel a) -- ^ All models in the specification.
                , gtlSpecVerify :: TypedExpr (String,a) -- ^ A formula to verify.
-               , gtlSpecConnections :: [(String,a,String,a)] -- ^ Connections between models.
+               , gtlSpecConnections :: [(GTLConnectionPoint a,GTLConnectionPoint a)] -- ^ Connections between models.
                }
 
 -- | Parse a GTL model from a unchecked model declaration.
@@ -77,6 +80,16 @@ getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
     getEnums' (GTLTuple xs) = Set.unions (fmap getEnums' xs)
     getEnums' _ = Set.empty
 
+resolveIndices :: GTLType -> [Integer] -> Either String GTLType
+resolveIndices tp [] = return tp
+resolveIndices (GTLArray sz tp) (x:xs) = if x < sz
+                                         then resolveIndices tp xs
+                                         else Left $ "Index "++show x++" is out of array bounds ("++show sz++")"
+resolveIndices (GTLTuple tps) (x:xs) = if x < (genericLength tps)
+                                       then resolveIndices (tps `genericIndex` x) xs
+                                       else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
+resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
+
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
 gtlParseSpec decls = do
@@ -110,11 +123,13 @@ gtlParseSpec decls = do
                    tvar <- case Map.lookup tv (gtlModelInput tmdl) of
                      Nothing -> Left $ "Variable "++t++"."++tv++" not found or not an input variable."
                      Just x -> return x
-                   if fvar==tvar then return ()
-                     else Left $ "Type mismatch between "++f++"."++fv++" and "++t++"."++tv++"."
-              |  Connect (ConnectDecl f fv t tv) <- decls ]
+                   ftp <- resolveIndices fvar fi
+                   ttp <- resolveIndices tvar ti
+                   if ftp==ttp then return ()
+                     else Left $ "Type mismatch between "++f++"."++fv++show fi++" and "++t++"."++tv++show ti++"."
+              |  Connect (ConnectDecl f fv fi t tv ti) <- decls ]
     return $ GTLSpec { gtlSpecModels = mdl_mp
                      , gtlSpecVerify = vexpr
-                     , gtlSpecConnections = [ (f,fv,t,tv)
-                                            | Connect (ConnectDecl f fv t tv) <- decls ]
+                     , gtlSpecConnections = [ (GTLConnPt f fv fi,GTLConnPt t tv ti)
+                                            | Connect (ConnectDecl f fv fi t tv ti) <- decls ]
                      }
