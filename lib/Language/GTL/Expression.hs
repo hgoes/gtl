@@ -322,6 +322,12 @@ parseTerm' mu f ex (GAutomaton sts) = do
                                                  , finalSets = stateFinal st
                                                  , successors = succ
                                                  }) nbuchi,ncur,nmp)
+parseTerm' mu f ex (GIndex expr ind) = do
+  rind <- case ind of
+    GConst x -> return x
+    _ -> Left $ "Index must be an integer"
+  rexpr <- mu ex expr
+  return $ IndexExpr rexpr (fromIntegral rind)
 
 distributeNot :: TypedExpr v -> TypedExpr v
 distributeNot expr

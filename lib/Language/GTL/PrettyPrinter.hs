@@ -290,6 +290,7 @@ exprToLatex expr = case getValue expr of
                                   OpDiv -> "/")
                             ++(exprToLatex $ unfix rhs)
   UnBoolExpr GTL.Not p -> "\\lnot "++(exprToLatex $ unfix p)
+  IndexExpr expr idx -> exprToLatex (unfix expr) ++ "_{"++show idx++"}"
 --atomToLatex (GTLBoolExpr (ElemExpr v vals t) p) = "\\mathit{"++(name v)++"}"++(if (t && p) || (not t && not p) then "" else "\\not")++"\\in"++show vals
 --atomToLatex (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
 
@@ -302,5 +303,6 @@ estimateWidth expr = case getValue expr of
   Value (GTLIntVal x) -> length (show x)
   Value (GTLEnumVal x) -> 1+(length x)
   BinIntExpr _ lhs rhs -> 1+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
+  IndexExpr expr idx -> estimateWidth (unfix expr) + ((length (show idx) + 1) `div` 2)
 --estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
 --estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))

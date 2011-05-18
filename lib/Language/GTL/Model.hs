@@ -69,7 +69,13 @@ gtlParseModel mdl = do
                                      },enums)
 
 getEnums :: Map a GTLType -> Set [String]
-getEnums mp = Set.fromList [ xs | GTLEnum xs <- Map.elems mp ]
+getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
+  where
+    getEnums' :: GTLType -> Set [String]
+    getEnums' (GTLEnum xs) = Set.singleton xs
+    getEnums' (GTLArray sz tp) = getEnums' tp
+    getEnums' (GTLTuple xs) = Set.unions (fmap getEnums' xs)
+    getEnums' _ = Set.empty
 
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
