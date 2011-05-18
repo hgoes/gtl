@@ -10,13 +10,14 @@ import Language.GTL.Types
 import Data.Typeable
 import Data.Dynamic
 import Data.Map as Map
+import Data.Set as Set
 import Data.Binary
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
 
 -- | A parsed and typechecked GTL model.
 data GTLModel a = GTLModel
-                  { gtlModelContract :: LogicExpr a -- ^ The contract of the model as a boolean formula.
+                  { gtlModelContract :: TypedExpr a -- ^ The contract of the model as a boolean formula.
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
@@ -26,7 +27,7 @@ data GTLModel a = GTLModel
 -- | A GTL specification represents a type checked GTL file.
 data GTLSpec a = GTLSpec
                { gtlSpecModels :: Map String (GTLModel a) -- ^ All models in the specification.
-               , gtlSpecVerify :: LogicExpr (String,a) -- ^ A formula to verify.
+               , gtlSpecVerify :: TypedExpr (String,a) -- ^ A formula to verify.
                , gtlSpecConnections :: [(String,a,String,a)] -- ^ Connections between models.
                }
 
@@ -45,12 +46,13 @@ gtlParseModel mdl = do
                        Just rtp -> return rtp) (modelOutputs mdl)-}
       (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
       let allType = Map.union inp outp
-      expr <- typeCheckLogicExpr allType
+      expr <- makeTypedExpr
               (\q n -> case q of
                   Nothing -> Right n
-                  _ -> Left "Contract may not contain qualified variables") Map.empty (case modelContract mdl of
-                                                                                          [] -> GConstBool True
-                                                                                          c -> foldl1 (GBin GOpAnd) c)
+                  _ -> Left "Contract may not contain qualified variables") 
+              allType Set.empty (case modelContract mdl of
+                                    [] -> GConstBool True
+                                    c -> foldl1 (GBin GOpAnd) c)
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
                       InitOne c -> case Map.lookup var allType of
@@ -78,12 +80,12 @@ gtlParseSpec decls = do
                              , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
                              ]
 
-    vexpr <- typeCheckLogicExpr alltp (\q n -> case q of
-                                 Nothing -> Left "No unqualified variables allowed in verify clause"
-                                 Just rq -> Right (rq,n)
-                             ) Map.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
-                                             [] -> GConstBool True
-                                             x -> foldl1 (GBin GOpAnd) x)
+    vexpr <- makeTypedExpr (\q n -> case q of
+                               Nothing -> Left "No unqualified variables allowed in verify clause"
+                               Just rq -> Right (rq,n)
+                             ) alltp Set.empty (case concat [ v | Verify (VerifyDecl v) <- decls ] of
+                                                   [] -> GConstBool True
+                                                   x -> foldl1 (GBin GOpAnd) x)
     let mdl_mp = Map.fromList rmdls
     sequence_ [ do
                    fmdl <- case Map.lookup f mdl_mp of

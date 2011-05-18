@@ -129,7 +129,7 @@ buildTest opname ins outs = UserOpDecl
 buchiToScade :: String -- ^ Name of the resulting SCADE node
                 -> Map String TypeExpr -- ^ Input variables
                 -> Map String TypeExpr -- ^ Output variables
-                -> Buchi (Set (GTLAtom String)) -- ^ The buchi automaton
+                -> Buchi (Set (TypedExpr String)) -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
   = UserOpDecl
@@ -156,7 +156,7 @@ buchiToScade name ins outs buchi
     }
 
 -- | The starting state for a contract automaton.
-startState :: Buchi (Set (GTLAtom String)) -> Sc.State
+startState :: Buchi (Set (TypedExpr String)) -> Sc.State
 startState buchi = Sc.State
   { stateInitial = True
   , stateFinal = False
@@ -193,7 +193,7 @@ failState = Sc.State
   }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-buchiToStates :: Buchi (Set (GTLAtom String)) -> [Sc.State]
+buchiToStates :: Buchi (Set (TypedExpr String)) -> [Sc.State]
 buchiToStates buchi = startState buchi :
                       failState :
                       [ Sc.State
@@ -213,39 +213,41 @@ buchiToStates buchi = startState buchi :
                      | (num,st) <- Map.toList buchi ]
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: Integer -> BuchiState st (Set (GTLAtom String)) f -> Sc.Transition
+stateToTransition :: Integer -> BuchiState st (Set (TypedExpr String)) f -> Sc.Transition
 stateToTransition name st
   = Transition
     (relsToExpr $ Set.toList (vars st))
     Nothing
     (TargetFork Restart ("st"++show name))
 
-termToExpr :: Term String -> Sc.Expr
-termToExpr (VarExpr var) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [GTL.name var]) [1..(time var)]
-termToExpr (ConstExpr c) = case value c of
-  GTLIntVal x -> ConstIntExpr (fromIntegral x)
-  GTLBoolVal x -> ConstBoolExpr x
-termToExpr (BinExpr tp (IntOp op) l r) = BinaryExpr (case op of
-                                                        OpPlus -> BinPlus
-                                                        OpMinus -> BinMinus
-                                                        OpMult -> BinTimes
-                                                        OpDiv -> BinDiv) (termToExpr l) (termToExpr r)
+exprToScade :: TypedExpr String -> Sc.Expr
+exprToScade expr = case getValue expr of
+  Var name lvl -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
+  Value val -> valueToScade (getType expr) val
+  BinIntExpr op l r -> Sc.BinaryExpr (case op of
+                                         OpPlus -> BinPlus
+                                         OpMinus -> BinMinus
+                                         OpMult -> BinTimes
+                                         OpDiv -> BinDiv
+                                     ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  BinRelExpr rel l r -> BinaryExpr (case rel of
+                                      BinLT -> BinLesser
+                                      BinLTEq -> BinLessEq
+                                      BinGT -> BinGreater
+                                      BinGTEq -> BinGreaterEq
+                                      BinEq -> BinEquals
+                                      BinNEq -> BinDifferent
+                                   ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
 
-relToExpr :: GTLAtom String -> Sc.Expr
-relToExpr (GTLBoolExpr expr p)
-  = case expr of
-  RelExpr rel l r
-    -> BinaryExpr (case (if p then id else relNot) rel of
-                      BinLT -> BinLesser
-                      BinLTEq -> BinLessEq
-                      BinGT -> BinGreater
-                      BinGTEq -> BinGreaterEq
-                      BinEq -> BinEquals
-                      BinNEq -> BinDifferent
-                  ) (termToExpr l) (termToExpr r)
-  BoolConst x -> (if p then id else UnaryExpr UnNot) (ConstBoolExpr x)
-  BoolVar var -> (if p then id else UnaryExpr UnNot) (termToExpr (VarExpr var))
+valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
+valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
+valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
+valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
+valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
+valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
+valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
 
-relsToExpr :: [GTLAtom String] -> Sc.Expr
-relsToExpr [] = ConstBoolExpr True
-relsToExpr xs = foldl1 (BinaryExpr BinAnd) (fmap relToExpr xs)
+relsToExpr :: [TypedExpr String] -> Sc.Expr
+relsToExpr [] = Sc.ConstBoolExpr True
+relsToExpr xs = foldl1 (Sc.BinaryExpr Sc.BinAnd) (fmap exprToScade xs)

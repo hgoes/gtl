@@ -5,7 +5,7 @@
 module Language.GTL.PrettyPrinter where
 
 import Language.GTL.Model
-import Language.GTL.Expression
+import Language.GTL.Expression as GTL
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
 import Language.GTL.Types
@@ -30,7 +30,7 @@ simplePrettyPrint spec
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
 
-simplePrettyPrintBuchi :: GBuchi Integer (Set (GTLAtom String,Bool)) (Set Integer) -> [String]
+simplePrettyPrintBuchi :: GBuchi Integer (Set (TypedExpr String,Bool)) (Set Integer) -> [String]
 simplePrettyPrintBuchi buchi = concat
                                [ [(if isStart co then "initial " else "")++"state "++show st++" {"]++
                                  [ "  "++(if p then "" else "not ") ++ show at | (at,p) <- Set.toList (vars co) ]++
@@ -52,7 +52,7 @@ getDotBoundingBox gr
       (x:xs) -> x
 
 -- | Convert a Buchi automaton into a Dot graph.
-buchiToDot :: GBuchi Integer (Set (GTLAtom String,Bool)) f -> DotGraph String
+buchiToDot :: GBuchi Integer (Set (TypedExpr String,Bool)) f -> DotGraph String
 buchiToDot buchi
   = DotGraph { strictGraph = False
              , directedGraph = True
@@ -65,12 +65,12 @@ buchiToDot buchi
                                                                          ,Label $ StrLabel $
                                                                           unlines [replicate (estimateWidth (if tr
                                                                                                              then at
-                                                                                                             else gtlAtomNot at)) ' '
+                                                                                                             else distributeNot at)) ' '
                                                                                   | (at,tr) <- Set.toList (vars st)]
                                                                          ,Comment $ "\\begin{array}{c}" ++
-                                                                          (concat $ intersperse "\\\\" [ atomToLatex (if tr
+                                                                          (concat $ intersperse "\\\\" [ exprToLatex (if tr
                                                                                                                       then at
-                                                                                                                      else gtlAtomNot at)
+                                                                                                                      else distributeNot at)
                                                                                                        | (at,tr) <- Set.toList (vars st)]) ++
                                                                           "\\end{array}"
                                                                          ,Height 0.5,Width 0.5,Margin (DVal 0)
@@ -262,36 +262,39 @@ splinePoints (x:xs) = splinePoints' x xs
     splinePoints' p (x:y:z:xs) = (p,x,y,z):splinePoints' z xs
 
 -- | Render a GTL atom to LaTeX.
-atomToLatex :: GTLAtom String -> String
-atomToLatex (GTLBoolExpr (RelExpr rel l r) p) = (exprToLatex l)++(case (if p then rel else relNot rel) of
-                                                                       BinLT -> "<"
-                                                                       BinLTEq -> "\\leq "
-                                                                       BinGT -> ">"
-                                                                       BinGTEq -> "\\geq "
-                                                                       BinEq -> "="
-                                                                       BinNEq -> "\neq ")++(exprToLatex r)
-  where
-    exprToLatex :: Term String -> String
-    exprToLatex (VarExpr (Variable v h _)) = v++(if h==0 then "" else "["++show h++"]")
-    exprToLatex (ConstExpr (Constant v _)) = case v of
-      GTLIntVal x -> show x
-      GTLBoolVal x -> show x
-    exprToLatex (BinExpr _ rel lhs rhs) = (exprToLatex lhs)++(case rel of
-                                                                 IntOp OpPlus -> "+"
-                                                                 IntOp OpMinus -> "-"
-                                                                 IntOp OpMult -> "\\cdot "
-                                                                 IntOp OpDiv -> "/")++(exprToLatex rhs)
-atomToLatex (GTLBoolExpr (ElemExpr v vals t) p) = "\\mathit{"++(name v)++"}"++(if (t && p) || (not t && not p) then "" else "\\not")++"\\in"++show vals
-atomToLatex (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
+exprToLatex :: TypedExpr String -> String
+exprToLatex expr = case getValue expr of
+  BinRelExpr rel l r -> (exprToLatex $ unfix l)
+                        ++(case rel of
+                              BinLT -> "<"
+                              BinLTEq -> "\\leq "
+                              BinGT -> ">"
+                              BinGTEq -> "\\geq "
+                              BinEq -> "="
+                              BinNEq -> "\neq ")
+                        ++(exprToLatex $ unfix r)
+  Var v h -> v++(if h==0 then "" else "["++show h++"]")
+  Value v -> case v of
+    GTLIntVal x -> show x
+    GTLBoolVal x -> show x
+  BinIntExpr rel lhs rhs -> (exprToLatex $ unfix lhs)
+                            ++(case rel of
+                                  OpPlus -> "+"
+                                  OpMinus -> "-"
+                                  OpMult -> "\\cdot "
+                                  OpDiv -> "/")
+                            ++(exprToLatex $ unfix rhs)
+  UnBoolExpr GTL.Not p -> "\\lnot "++(exprToLatex $ unfix p)
+--atomToLatex (GTLBoolExpr (ElemExpr v vals t) p) = "\\mathit{"++(name v)++"}"++(if (t && p) || (not t && not p) then "" else "\\not")++"\\in"++show vals
+--atomToLatex (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
-estimateWidth :: GTLAtom String -> Int
-estimateWidth (GTLBoolExpr (RelExpr _ lhs rhs) _) = 3+(estimateWidth' lhs)+(estimateWidth' rhs)
-  where
-    estimateWidth' :: Term String -> Int
-    estimateWidth' (VarExpr (Variable v h _)) = (length v)+(if h==0 then 0 else 2+(length (show h)))
-    estimateWidth' (ConstExpr (Constant (GTLIntVal x) _)) = length (show x)
-    estimateWidth' (ConstExpr (Constant (GTLBoolVal x) _)) = length (show x)
-    estimateWidth' (BinExpr _ _ lhs rhs) = (estimateWidth' lhs)+(estimateWidth' rhs)
-estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
-estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))
+estimateWidth :: TypedExpr String -> Int
+estimateWidth expr = case getValue expr of
+  BinRelExpr _ lhs rhs -> 3+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
+  Var v h -> (length v)+(if h==0 then 0 else 2+(length (show h)))
+  Value (GTLBoolVal x) -> length (show x)
+  Value (GTLIntVal x) -> length (show x)
+  BinIntExpr _ lhs rhs -> 1+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
+--estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
+--estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))

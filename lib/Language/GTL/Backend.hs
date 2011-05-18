@@ -31,7 +31,7 @@ class GTLBackend b where
                 -> CInterface
   -- | Perform a backend-specific model checking algorithm.
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
-  backendVerify :: b -> GTLBackendModel b -> LogicExpr String -> IO (Maybe Bool)
+  backendVerify :: b -> GTLBackendModel b -> TypedExpr String -> IO (Maybe Bool)
 
 -- | A C-interface is information that is needed to integrate a C-state machine.
 data CInterface = CInterface

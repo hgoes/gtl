@@ -20,17 +20,18 @@ import Control.Monad
 import Control.Monad.Trans
 import qualified Data.ByteString.Lazy as LBS
 import Codec.Compression.BZip
-import Data.List (genericLength)
+import Data.List (genericLength,elemIndex)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
-import qualified Language.GTL.Expression as GTL
+import Language.GTL.Expression as GTL
 import Language.GTL.Translation
+import Language.GTL.Types
 
 -- | A trace is a list of requirements.
 --   Each requirement corresponds to a step in the model.
 --   Each requirement is a list of atoms that have to be true in the corresponding step.
-type Trace = [[GTLAtom (String,String)]]
+type Trace = [[TypedExpr (String,String)]]
 
 -- | Converts GTL variables to C-names.
 --   Takes the component name, the variable name and the history level of the variable.
@@ -67,26 +68,22 @@ readBDDTraces fp = do
 
 -- | Given a function to generate names, this function converts a GTL atom into a C-expression.
 atomToC :: CNameGen -- ^ Function to generate C-names
-           -> GTLAtom (String,String) -- ^ GTL atom to convert
+           -> TypedExpr (String,String) -- ^ GTL atom to convert
            -> String
-atomToC f (GTLBoolExpr e p) = (if p then "(" else "!(") ++ (boolExprToC f e) ++ ")"
+atomToC f expr = case getValue expr of
+  Var (q,n) l -> f q n l
+  Value val -> valueToC (getType expr) val
+  BinRelExpr rel l r -> "("++atomToC f (unfix l)++relToC rel++atomToC f (unfix r)++")"
+  BinIntExpr op l r -> "("++atomToC f (unfix l)++intOpToC op++atomToC f (unfix r)++")"
+  UnBoolExpr GTL.Not p -> "!"++atomToC f (unfix p)
 
-termToC :: CNameGen -- ^ Function to generate C-names
-           -> GTL.Term (String,String) -- ^ GTL atom to convert
-           -> String
-termToC = undefined
-
-boolExprToC :: CNameGen -- ^ Function to generate C-names
-           -> GTL.BoolExpr (String,String) -- ^ GTL atom to convert
-           -> String
-boolExprToC f (GTL.RelExpr rel lhs rhs) = (termToC f lhs) ++ (relToC rel) ++ (termToC f rhs)
-boolExprToC f (GTL.ElemExpr v vals b) =
-  let name = case GTL.name v of (q,n) -> f q n 0
-  in (if b then "(" else "!(")
-    ++ (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "(" ++ name ++ "=="++show v ++ ")") vals))
-    ++ ")"
-boolExprToC f (GTL.BoolConst c) = if c then "true" else "false"
-boolExprToC f (GTL.BoolVar v) = case GTL.name v of (q,n) -> f q n 0
+valueToC :: GTLType -> GTLValue a -> String      
+valueToC _ (GTLBoolVal x) = if x then "1" else "0"
+valueToC _ (GTLIntVal x) = show x
+valueToC _ (GTLByteVal x) = show x
+valueToC _ (GTLFloatVal x) = show x
+valueToC (GTLEnum vals) (GTLEnumVal x) = let Just i = elemIndex x vals
+                                         in show i
 
 -- | Convert a GTL relation to a C operator
 relToC :: GTL.Relation -> String
@@ -122,7 +119,7 @@ traceToPromela f trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
 
 -- | Convert a element from a trace into a C-expression.
-traceElemToC :: CNameGen -> [GTLAtom (String,String)] -> String
+traceElemToC :: CNameGen -> [TypedExpr (String,String)] -> String
 traceElemToC f [] = "1"
 traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats)
 
