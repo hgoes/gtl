@@ -26,6 +26,8 @@ simplePrettyPrint :: GTLSpec String -> String
 simplePrettyPrint spec
   = unlines $ concat [
      [name ++ "{"]++
+     ["  input "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelInput mdl) ]++
+     ["  output "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelOutput mdl) ]++
      (fmap ("  "++) (simplePrettyPrintBuchi (ltlToBuchi (gtlToLTL (gtlModelContract mdl)))))++
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]

@@ -12,7 +12,6 @@
   (list
    (cons "//.*" 'font-lock-comment-face)
    (cons (concat "\\<" (regexp-opt '("automaton" "state" "transition" "connect" "verify" "contract" "init") t) "\\>") 'font-lock-keyword-face)
-   (cons (concat "\\<" (regexp-opt '("int" "bool" "input" "output") t) "\\>") 'font-lock-type-face)
    (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies") t) "\\>") 'font-lock-builtin-face)
    )
   "Highlighting expressions for GTL mode")
@@ -32,6 +31,11 @@
 	     )
 	   '("\\<\\([a-z][a-z0-9]*\\)\\.\\([a-z][a-z0-9]*\\)"
 	     (1 'font-lock-variable-name-face nil t)
+	     )
+	   '("\\<\\(input\\|output\\) *\\([a-zA-Z0-9^{}(), ]+?\\) *\\([a-zA-Z]+\\);"
+	     (1 'font-lock-keyword-face nil t)
+	     (2 'font-lock-type-face nil t)
+	     (3 'font-lock-variable-name-face nil t)
 	     )
 	   )))
 	   
