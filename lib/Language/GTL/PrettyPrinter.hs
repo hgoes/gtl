@@ -114,17 +114,19 @@ gtlToTikz spec = do
                     , directedGraph = True
                     , graphID = Nothing
                     , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
-                                                                           ,Splines SplineEdges]]
+                                                                           ,Splines SplineEdges
+                                                                           ]]
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape Record
+                                                                              ,FontSize 9.0
                                                                               ,Label $ RecordLabel $ (if Map.null inp
                                                                                                       then []
                                                                                                       else [FlipFields [ LabelledTarget (PN name) name
                                                                                                                        | name <- Map.keys inp
                                                                                                                        ]])++
                                                                                [FieldLabel (unlines $
-                                                                                            replicate (ceiling $ h / 20)
-                                                                                            (replicate (ceiling $ w / 9) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+                                                                                            replicate (ceiling $ h / 12)
+                                                                                            (replicate (ceiling $ w / 5.8) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (if Map.null outp
                                                                                 then []
