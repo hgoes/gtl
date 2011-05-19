@@ -51,6 +51,7 @@ data GExpr = GBin BinOp GExpr GExpr
            | GExists String (Maybe String) String GExpr
            | GAutomaton [State]
            | GTuple [GExpr]
+           | GArray [GExpr]
            | GIndex GExpr GExpr
            | GEnum String
            deriving (Show,Eq,Ord)

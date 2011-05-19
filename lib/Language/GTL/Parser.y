@@ -163,6 +163,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
                                          [x] -> x
                                          xs -> GTuple xs
                                     }
+     | "[" expr_list "]"            { GArray $2 }
      | var                          { GVar (fst $1) (snd $1) }
      | int                          { GConst $ fromIntegral $1 }
      | expr "+" expr                { GBin GOpPlus $1 $3 }

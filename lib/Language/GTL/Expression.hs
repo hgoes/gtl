@@ -290,6 +290,9 @@ parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
 parseTerm' mu f ex (GTuple args) = do
   res <- mapM (mu ex) args
   return $ Value (GTLTupleVal res)
+parseTerm' mu f ex (GArray args) = do
+  res <- mapM (mu ex) args
+  return $ Value (GTLArrayVal res)
 parseTerm' mu f ex (GVar q n) = case q of
   Nothing -> case Map.lookup n ex of
     Nothing -> do
