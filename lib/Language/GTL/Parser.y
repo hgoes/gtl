@@ -39,6 +39,7 @@ import qualified Data.Map as Map
   "in"              { Binary GOpIn }
   "init"            { Key KeyInit }
   "input"           { Key KeyInput }
+  "instance"        { Key KeyInstance }
   "output"          { Key KeyOutput }
   "state"           { Key KeyState }
   "transition"      { Key KeyTransition }
@@ -95,6 +96,7 @@ declarations : declaration declarations { $1:$2 }
 declaration : model_decl    { Model $1 }
             | connect_decl  { Connect $1 }
             | verify_decl   { Verify $1 }
+            | instance_decl { Instance $1 }
 
 model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                { modelName = $5
@@ -107,6 +109,13 @@ model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                })
                                                              }
 
+instance_decl : "instance" id id instance_contract { $4 (InstanceDecl
+                                                         { instanceModel = $2
+                                                         , instanceName = $3
+                                                         , instanceContract = []
+                                                         , instanceInits =  []
+                                                         }) }
+
 model_args : "(" model_args1 ")" { $2 }
            |                     { [] }
 
@@ -116,23 +125,31 @@ model_args1 : string model_args2 { $1:$2 }
 model_args2 : "," string model_args2 { $2:$3 }
             |                        { [] }
 
-model_contract : "{" formulas_or_inits "}" { $2 }
-               | ";"                       { id }
+model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
+               | ";"                               { id }
 
-formulas_or_inits : mb_contract formula ";" formulas_or_inits   { \decl -> let ndecl = $4 decl
-                                                                           in ndecl { modelContract = $2:(modelContract ndecl)
-                                                                                    } }
-                  | init_decl ";" formulas_or_inits             { \decl -> let ndecl = $3 decl
-                                                                           in ndecl { modelInits = $1:(modelInits ndecl)
-                                                                                    } }
-                  | "input" type id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                             in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
-                                                                                      } }
-                  | "output" type id ";" formulas_or_inits         { \decl -> let ndecl = $5 decl
-                                                                              in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
-                                                                                       } }
+instance_contract : "{" formulas_or_inits "}" { $2 }
+                  | ";"                       { id }
 
-                  |                                             { id }
+formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
+                                                                                          in ndecl { modelContract = $2:(modelContract ndecl)
+                                                                                                   } }
+                           | init_decl ";" formulas_or_inits_or_vars           { \decl -> let ndecl = $3 decl
+                                                                                          in ndecl { modelInits = $1:(modelInits ndecl)
+                                                                                                   } }
+                           | "input" type id ";" formulas_or_inits_or_vars       { \decl -> let ndecl = $5 decl
+                                                                                          in ndecl { modelInputs = Map.insert $3 $2 (modelInputs ndecl)
+                                                                                                   } }
+                           | "output" type id ";" formulas_or_inits_or_vars      { \decl -> let ndecl = $5 decl
+                                                                                          in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
+                                                                                                   } }
+                           |                                                   { id }
+
+formulas_or_inits : mb_contract formula ";" formulas_or_inits { \decl -> let ndecl = $4 decl
+                                                                         in ndecl { instanceContract = $2:(instanceContract ndecl) } }
+                  | init_decl ";" formulas_or_inits           { \decl -> let ndecl = $3 decl
+                                                                         in ndecl { instanceInits = $1:(instanceInits ndecl) } }
+                  |                                           { id }
 
 mb_contract : "contract" { }
             |            { }

@@ -28,6 +28,7 @@ tokens:-
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
   int                            { key KeyInt }
+  instance                       { key KeyInstance }
   model                          { key KeyModel }
   finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
                                                             [] -> Nothing

@@ -27,6 +27,7 @@ data KeyWord = KeyAll
              | KeyInit
              | KeyInput
              | KeyInt
+             | KeyInstance
              | KeyVerify
              | KeyExists
              | KeyFinal

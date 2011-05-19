@@ -28,7 +28,7 @@ translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = let outmp = buildOutputMap spec
                          inmp = buildInputMap spec
                      in declareVars spec outmp inmp ++
-                        [ translateModel name mdl inmp outmp | (name,mdl) <- Map.toList $ gtlSpecModels spec]++
+                        [ translateInstance name (gtlSpecModels spec) inst inmp outmp | (name,inst) <- Map.toList $ gtlSpecInstances spec]++
                         [ translateNever (gtlSpecVerify spec) inmp outmp
                         , translateInit spec outmp inmp ]
 
@@ -43,7 +43,7 @@ translateInit spec outmp inmp
                               else outputAssign name var (convertValue rdef) outmp inmp
             | (name,mdl) <- Map.toList (gtlSpecModels spec),
               (var,def) <- Map.toList $ gtlModelDefaults mdl ]) ++
-    [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecModels spec) ]
+    [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecInstances spec) ]
 
 declareVars :: GTLSpec String -> OutputMap -> InputMap -> [Pr.Module]
 declareVars spec outmp inmp
@@ -97,13 +97,14 @@ buildOutputMap spec
 
 buildInputMap :: GTLSpec String -> InputMap
 buildInputMap spec
-  = Map.foldlWithKey (\mp name mdl
-                      -> foldl (\mp' (var,lvl)
-                                -> if Map.member var (gtlModelInput mdl)
-                                   then Map.insertWith max (name,var) lvl mp'
-                                   else mp'
-                               ) mp (getVars $ gtlModelContract mdl)
-                     ) Map.empty (gtlSpecModels spec)
+  = Map.foldlWithKey (\mp name inst
+                      -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                         in foldl (\mp' (var,lvl)
+                                   -> if Map.member var (gtlModelInput mdl)
+                                      then Map.insertWith max (name,var) lvl mp'
+                                      else mp'
+                                  ) mp (getVars $ gtlModelContract mdl)
+                     ) Map.empty (gtlSpecInstances spec)
 
 varName :: String -> String -> Integer -> Pr.VarRef
 varName mdl var lvl = VarRef (mdl ++ "_" ++ var) (Just lvl) Nothing
@@ -133,6 +134,16 @@ assign mdl var lvl expr = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var cl)
                                                                                   else RefExpr (varName mdl var (cl-1))):stmts)
                           []
                           [0..lvl]
+
+translateInstance :: String -> Map String (GTLModel String) -> GTLInstance String -> InputMap -> OutputMap -> Pr.Module
+translateInstance name models inst inmp outmp
+  = translateModel name (let mdl = (models!(gtlInstanceModel inst))
+                         in mdl
+                         { gtlModelContract = case gtlInstanceContract inst of
+                              Nothing -> gtlModelContract mdl
+                              Just c -> gtlAnd (gtlModelContract mdl) c
+                         }
+                        ) inmp outmp
 
 translateModel :: String -> GTLModel String -> InputMap -> OutputMap -> Pr.Module
 translateModel name model inmp outmp
