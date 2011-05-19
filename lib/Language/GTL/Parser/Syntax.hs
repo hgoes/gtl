@@ -64,5 +64,5 @@ data State = State
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.
-              | InitOne Integer -- ^ The variable is initialized with a specific value.
+              | InitOne GExpr -- ^ The variable is initialized with a specific value.
               deriving (Show,Eq)

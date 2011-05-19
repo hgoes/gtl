@@ -26,7 +26,6 @@ import Control.Monad.State
 import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
-import Data.Dynamic
 import Data.Maybe
 
 import System.IO.Error (isDoesNotExistError)
@@ -472,9 +471,10 @@ buildTransProgram gtl
                                                hist = maximumHistory (gtlModelContract m)
                                                inits = fmap (\i -> case i of
                                                                 Nothing -> "Cudd_ReadOne(manager)"
-                                                                Just d -> case fromDynamic d of
-                                                                  Nothing -> error "Init expressions must be ints atm"
-                                                                  Just i -> "Cudd_bddSingleton(manager,"++show (i::Int)++",0)"
+                                                                Just d -> case unfix d of
+                                                                  GTLIntVal i -> "Cudd_bddSingleton(manager,"++show i++",0)"
+                                                                  _ -> error "Init expressions must be ints atm"
+                                                                  
                                                             ) (gtlModelDefaults m)
                                            in TransModel { varsInit = inits
                                                          , varsIn = Map.mapWithKey (\k v -> hist!k) (gtlModelInput m)

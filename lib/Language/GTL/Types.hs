@@ -1,9 +1,12 @@
+{-# LANGUAGE DeriveTraversable,DeriveFoldable #-}
 module Language.GTL.Types where
 
 import Text.Read hiding (get)
 import Data.Binary
 import Data.Word
 import Data.List (genericLength)
+import Data.Foldable (Foldable)
+import Data.Traversable
 
 data GTLType = GTLInt
              | GTLByte
@@ -21,7 +24,7 @@ data GTLValue r = GTLIntVal Integer
                 | GTLEnumVal String
                 | GTLArrayVal [r]
                 | GTLTupleVal [r]
-                deriving (Eq,Ord)
+                deriving (Eq,Ord,Foldable,Traversable)
 
 class ToGTL t where
   toGTL :: t -> GTLValue a
@@ -210,3 +213,4 @@ instance Binary r => Binary (GTLValue r) where
       4 -> fmap GTLEnumVal get
       5 -> fmap GTLArrayVal get
       6 -> fmap GTLTupleVal get
+

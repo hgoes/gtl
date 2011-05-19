@@ -62,12 +62,11 @@ lookupType spec mdl var inp = case Map.lookup mdl (gtlSpecModels spec) of
   Just model -> (if inp then gtlModelInput model
                  else gtlModelOutput model)!var
 
-convertValue :: Dynamic -> Pr.AnyExpression
-convertValue dyn = case fromDynamic dyn of
-  Just (v::Int) -> Pr.ConstExpr $ Pr.ConstInt $ fromIntegral v
-  Nothing -> case fromDynamic dyn of
-    Just (v::Bool) -> Pr.ConstExpr $ Pr.ConstInt $ if v then 1 else 0
-    Nothing -> error $ "Unknown value "++show dyn
+convertValue :: GTLConstant -> Pr.AnyExpression
+convertValue c = case unfix c of
+  GTLIntVal v -> Pr.ConstExpr $ Pr.ConstInt v
+  GTLBoolVal v -> Pr.ConstExpr $ Pr.ConstInt $ if v then 1 else 0
+  _ -> error $ "Can't convert value "++show c
 
 convertType :: GTLType -> Pr.Typename
 convertType GTLInt = Pr.TypeInt

@@ -195,7 +195,7 @@ indices : "[" int "]" indices { $2:$4 }
 verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
 init_decl : "init" id "all" { ($2,InitAll) }
-          | "init" id int   { ($2,InitOne $3) }
+          | "init" id expr  { ($2,InitOne $3) }
 
 states : state states { $1:$2 }
        |              { [] }

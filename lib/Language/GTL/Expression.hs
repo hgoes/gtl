@@ -34,6 +34,19 @@ data Term v r = Var v Integer
               | Automaton (GBuchi Integer r Bool)
               deriving (Eq,Ord)
 
+type GTLConstant = Fix GTLValue
+
+type Expr v = Term v (Fix (Term v))
+
+data Typed a r = Typed { getType :: GTLType
+                       , getValue :: a r
+                       } deriving (Eq,Ord)
+
+type TypedExpr v = Typed (Term v) (Fix (Typed (Term v)))
+
+instance Show (Fix GTLValue) where
+  showsPrec p x = showGTLValue show p (unfix x)
+
 instance Functor (Term v) where
   fmap f (Var x lvl) = Var x lvl
   fmap f (Value val) = Value (fmap f val)
@@ -86,14 +99,6 @@ instance (Binary r,Binary v) => Binary (Term v r) where
       7 -> do
         aut <- get
         return $ Automaton aut
-
-type Expr v = Term v (Fix (Term v))
-
-data Typed a r = Typed { getType :: GTLType
-                       , getValue :: a r
-                       } deriving (Eq,Ord)
-
-type TypedExpr v = Typed (Term v) (Fix (Typed (Term v)))
 
 var :: v -> Integer -> TypedExpr v
 var name lvl = Typed GTLBool (Var name lvl)
@@ -171,6 +176,12 @@ enforceType expr ac tp = if ac == tp
 makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String v) -> Map v GTLType -> Set [String] -> GExpr -> Either String (TypedExpr v)
 makeTypedExpr f varmp enums expr = parseTerm f Map.empty expr >>= typeCheck varmp enums
 
+getConstant :: TypedExpr v -> Maybe GTLConstant
+getConstant e = case getValue e of
+  Value p -> do
+    np <- mapM (getConstant.unfix) p
+    return $ Fix np
+  _ -> Nothing
 
 typeCheck :: (Ord v,Show v) => Map v GTLType -> Set [String] -> Expr v -> Either String (TypedExpr v)
 typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) >>= return.Fix) (getType . unfix) (show . untyped . unfix) varmp enums

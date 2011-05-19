@@ -8,7 +8,6 @@ import Language.GTL.Types
 import Data.Map as Map
 import Data.Traversable
 import Prelude hiding (mapM)
-import Data.Dynamic
 
 type ModelInterface = (Map String GTLType,Map String GTLType)
 
@@ -52,7 +51,7 @@ data CInterface = CInterface
                     -- | Translate a haskell type to C
                     cIFaceTranslateType :: GTLType -> String,
                     -- | Translate a haskell value to C
-                    cIFaceTranslateValue :: Dynamic -> String
+                    cIFaceTranslateValue :: GTLConstant -> String
                   }
 
 -- | Merge two type-mappings into one, report conflicting types

@@ -15,7 +15,6 @@ import Data.Set as Set
 import Data.List as List
 import Data.Dynamic
 import Control.Monad.Identity
-import Data.Dynamic
 import Data.Maybe
 
 data Scade = Scade deriving (Show)
@@ -63,12 +62,11 @@ scadeTranslateTypeC GTLInt = "kcg_int"
 scadeTranslateTypeC GTLBool = "kcg_bool"
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
-scadeTranslateValueC :: Dynamic -> String
-scadeTranslateValueC d = case fromDynamic d of
-  Just v -> show (v::Int)
-  Nothing -> case fromDynamic d of
-    Just v -> if v then "1" else "0"
-    Nothing -> error $ "Couldn't translate "++show d++" to C-value"
+scadeTranslateValueC :: GTLConstant -> String
+scadeTranslateValueC d = case unfix d of
+  GTLIntVal v -> show v
+  GTLBoolVal v -> if v then "1" else "0"
+  _ -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
 scadeTypeToGTL _ _ Sc.TypeInt = Just GTLInt

@@ -22,7 +22,7 @@ data GTLModel a = GTLModel
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
-                  , gtlModelDefaults :: Map a (Maybe Dynamic) -- ^ Default values for inputs. `Nothing' means any value.
+                  , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
                   }
 
 data GTLConnectionPoint a = GTLConnPt String a [Integer]
@@ -59,11 +59,16 @@ gtlParseModel mdl = do
                                 c -> foldl1 (GBin GOpAnd) c)
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
-                      InitOne c -> case Map.lookup var allType of
-                        Nothing -> Left $ "Unknown variable: "++show var
-                        Just tp -> if tp == GTLInt
-                                   then return (var,Just $ toDyn (fromIntegral c::Int))
-                                   else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
+                      InitOne c -> do
+                        ce <- makeTypedExpr (\q n -> Left "Init expression may not contain variables"::Either String String) allType enums c
+                        case Map.lookup var allType of
+                          Nothing -> Left $ "Unknown variable: "++show var
+                          Just tp -> if tp == getType ce
+                                     then (case getConstant ce of
+                                              Just p -> return $ (var,Just p)
+                                              Nothing -> Left $ "Init expression must be a constant"
+                                          )
+                                     else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
       return (modelName mdl,GTLModel { gtlModelContract = expr
                                      , gtlModelBackend = back
                                      , gtlModelInput = inp
