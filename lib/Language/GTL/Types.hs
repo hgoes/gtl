@@ -4,7 +4,7 @@ module Language.GTL.Types where
 import Text.Read hiding (get)
 import Data.Binary
 import Data.Word
-import Data.List (genericLength)
+import Data.List (genericLength,genericIndex)
 import Data.Foldable (Foldable)
 import Data.Traversable
 
@@ -54,6 +54,16 @@ instance Functor GTLValue where
   fmap _ (GTLEnumVal i) = GTLEnumVal i
   fmap f (GTLArrayVal i) = GTLArrayVal (fmap f i)
   fmap f (GTLTupleVal i) = GTLTupleVal (fmap f i)
+
+resolveIndices :: GTLType -> [Integer] -> Either String GTLType
+resolveIndices tp [] = return tp
+resolveIndices (GTLArray sz tp) (x:xs) = if x < sz
+                                         then resolveIndices tp xs
+                                         else Left $ "Index "++show x++" is out of array bounds ("++show sz++")"
+resolveIndices (GTLTuple tps) (x:xs) = if x < (genericLength tps)
+                                       then resolveIndices (tps `genericIndex` x) xs
+                                       else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
+resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
 
 isInstanceOf :: GTLType -> (r -> GTLType) -> GTLValue r -> Bool
 isInstanceOf GTLInt _ (GTLIntVal _) = True

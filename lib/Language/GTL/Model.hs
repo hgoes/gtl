@@ -41,6 +41,15 @@ data GTLInstance a = GTLInstance
                      , gtlInstanceDefaults :: Map a (Maybe GTLConstant)
                      }
 
+getInstanceVariableType :: (Ord a,Show a) => GTLSpec a -> Bool -> String -> a -> GTLType
+getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstances spec) of
+  Nothing -> error $ "Internal error: Instance "++show inst++" not found."
+  Just rinst -> case Map.lookup (gtlInstanceModel rinst) (gtlSpecModels spec) of
+    Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel rinst)++" not found"
+    Just mdl -> case Map.lookup var (if inp then gtlModelInput mdl else gtlModelOutput mdl) of
+      Nothing -> error $ "Internal error: Variable "++show var++" not found."
+      Just tp -> tp
+
 -- | Parse a GTL model from a unchecked model declaration.
 gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
 gtlParseModel mdl = do
@@ -69,7 +78,7 @@ gtlParseModel mdl = do
                       InitOne c -> do
                         ce <- makeTypedExpr (\q n -> Left "Init expression may not contain variables"::Either String String) allType enums c
                         case Map.lookup var allType of
-                          Nothing -> Left $ "Unknown variable: "++show var
+                          Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
                           Just tp -> if tp == getType ce
                                      then (case getConstant ce of
                                               Just p -> return $ (var,Just p)
@@ -91,16 +100,6 @@ getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
     getEnums' (GTLArray sz tp) = getEnums' tp
     getEnums' (GTLTuple xs) = Set.unions (fmap getEnums' xs)
     getEnums' _ = Set.empty
-
-resolveIndices :: GTLType -> [Integer] -> Either String GTLType
-resolveIndices tp [] = return tp
-resolveIndices (GTLArray sz tp) (x:xs) = if x < sz
-                                         then resolveIndices tp xs
-                                         else Left $ "Index "++show x++" is out of array bounds ("++show sz++")"
-resolveIndices (GTLTuple tps) (x:xs) = if x < (genericLength tps)
-                                       then resolveIndices (tps `genericIndex` x) xs
-                                       else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
-resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
 
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
@@ -140,29 +139,28 @@ gtlParseSpec decls = do
                              ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of
                                              [] -> GConstBool True
                                              x -> foldl1 (GBin GOpAnd) x)
-    sequence_ [ do
-                   finst <- case Map.lookup f inst_mp of
-                     Nothing -> Left $ "Instance "++f++" not found."
-                     Just x -> return x
-                   let fmdl = mdl_mp!(gtlInstanceModel finst)
-                   tinst <- case Map.lookup t inst_mp of
-                     Nothing -> Left $ "Instance "++t++" not found."
-                     Just x -> return x
-                   let tmdl = mdl_mp!(gtlInstanceModel tinst)
-                   fvar <- case Map.lookup fv (gtlModelOutput fmdl) of
-                     Nothing -> Left $ "Variable "++f++"."++fv++" not found or not an output variable."
-                     Just x -> return x
-                   tvar <- case Map.lookup tv (gtlModelInput tmdl) of
-                     Nothing -> Left $ "Variable "++t++"."++tv++" not found or not an input variable."
-                     Just x -> return x
-                   ftp <- resolveIndices fvar fi
-                   ttp <- resolveIndices tvar ti
-                   if ftp==ttp then return ()
-                     else Left $ "Type mismatch between "++f++"."++fv++show fi++" and "++t++"."++tv++show ti++"."
+    conns <- sequence [ do
+                           finst <- case Map.lookup f inst_mp of
+                             Nothing -> Left $ "Instance "++f++" not found."
+                             Just x -> return x
+                           let fmdl = mdl_mp!(gtlInstanceModel finst)
+                           tinst <- case Map.lookup t inst_mp of
+                             Nothing -> Left $ "Instance "++t++" not found."
+                             Just x -> return x
+                           let tmdl = mdl_mp!(gtlInstanceModel tinst)
+                           fvar <- case Map.lookup fv (gtlModelOutput fmdl) of
+                             Nothing -> Left $ "Variable "++f++"."++fv++" not found or not an output variable."
+                             Just x -> return x
+                           tvar <- case Map.lookup tv (gtlModelInput tmdl) of
+                             Nothing -> Left $ "Variable "++t++"."++tv++" not found or not an input variable."
+                             Just x -> return x
+                           ftp <- resolveIndices fvar fi
+                           ttp <- resolveIndices tvar ti
+                           if ftp==ttp then return (GTLConnPt f fv fi,GTLConnPt t tv ti)
+                             else Left $ "Type mismatch between "++f++"."++fv++show fi++" and "++t++"."++tv++show ti++"."
               |  Connect (ConnectDecl f fv fi t tv ti) <- decls ]
     return $ GTLSpec { gtlSpecModels = mdl_mp
                      , gtlSpecInstances = inst_mp
                      , gtlSpecVerify = vexpr
-                     , gtlSpecConnections = [ (GTLConnPt f fv fi,GTLConnPt t tv ti)
-                                            | Connect (ConnectDecl f fv fi t tv ti) <- decls ]
+                     , gtlSpecConnections = conns
                      }
