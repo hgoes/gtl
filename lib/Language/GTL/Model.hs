@@ -68,7 +68,7 @@ gtlParseModel mdl = do
                                               Just p -> return $ (var,Just p)
                                               Nothing -> Left $ "Init expression must be a constant"
                                           )
-                                     else Left $ show var ++ " has type "++show tp++", but is initialized with Int") (modelInits mdl)
+                                     else Left $ show var ++ " has type "++show tp++", but is initialized with "++show (getType ce)) (modelInits mdl)
       return (modelName mdl,GTLModel { gtlModelContract = expr
                                      , gtlModelBackend = back
                                      , gtlModelInput = inp

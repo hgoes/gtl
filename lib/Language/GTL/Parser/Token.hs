@@ -22,6 +22,7 @@ data KeyWord = KeyAll
              | KeyEnum
              | KeyModel
              | KeyOutput
+             | KeyFalse
              | KeyFloat
              | KeyInit
              | KeyInput
@@ -32,6 +33,7 @@ data KeyWord = KeyAll
              | KeyAutomaton
              | KeyState
              | KeyTransition
+             | KeyTrue
              | KeyUntil
              deriving Show
 

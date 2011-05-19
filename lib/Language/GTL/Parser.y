@@ -26,6 +26,7 @@ import qualified Data.Map as Map
   "contract"        { Key KeyContract }
   "enum"            { Key KeyEnum }
   "exists"          { Key KeyExists }
+  "false"           { Key KeyFalse }
   "final"           { Key KeyFinal }
   "finally"         { Unary (GOpFinally $$) }
   "float"           { Key KeyFloat }
@@ -41,6 +42,7 @@ import qualified Data.Map as Map
   "output"          { Key KeyOutput }
   "state"           { Key KeyState }
   "transition"      { Key KeyTransition }
+  "true"            { Key KeyTrue }
   "until"           { Key KeyUntil }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
@@ -171,6 +173,8 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
      | expr "[" expr "]"            { GIndex $1 $3 }
      | enum                         { GEnum $1 }
+     | "true"                       { GConstBool True }
+     | "false"                      { GConstBool False }
 
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }

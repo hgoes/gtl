@@ -287,6 +287,9 @@ parseTerm' mu f ex (GUn op p) = do
 parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
 parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
 parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
+parseTerm' mu f ex (GTuple args) = do
+  res <- mapM (mu ex) args
+  return $ Value (GTLTupleVal res)
 parseTerm' mu f ex (GVar q n) = case q of
   Nothing -> case Map.lookup n ex of
     Nothing -> do

@@ -23,6 +23,7 @@ tokens:-
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
   enum                           { key KeyEnum }
+  false                          { key KeyFalse }
   float                          { key KeyFloat }
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
@@ -41,6 +42,7 @@ tokens:-
   in                             { bin GOpIn }
   state                          { key KeyState }
   transition                     { key KeyTransition }
+  true                           { key KeyTrue }
   until                          { key KeyUntil }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }
