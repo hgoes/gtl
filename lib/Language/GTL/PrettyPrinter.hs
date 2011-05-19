@@ -10,6 +10,7 @@ import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
 import Language.GTL.Types
 import Data.GraphViz hiding (Model)
+import qualified Data.GraphViz as GV
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
 import Data.Maybe
@@ -143,6 +144,12 @@ gtlToTikz spec = do
                     , graphID = Nothing
                     , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
                                                                            ,Splines SplineEdges
+                                                                           ,GV.Model Circuit
+                                                                           ,Epsilon 0.0000001
+                                                                           ,ESep (DVal 0.1)
+                                                                           ,MaxIter 10000
+                                                                           ,Sep (DVal 0.1)
+                                                                           ,Start (StartStyle RandomStyle)
                                                                            ]]
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape Record
@@ -167,7 +174,7 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  outp <- readProcess "neato" ["-Tdot"] (printIt gr)
+  outp <- readProcess "fdp" ["-Tdot"] (printIt gr)
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
