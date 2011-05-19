@@ -135,10 +135,11 @@ generatePorts left mp
 --   This needs to be IO because it calls graphviz programs to preprocess the picture.
 gtlToTikz :: GTLSpec String -> IO String
 gtlToTikz spec = do
-  mp <- mapM (\m -> do
+  mp <- mapM (\i -> do
+                 let m = (gtlSpecModels spec)!(gtlInstanceModel i)
                  (repr,w,h) <- modelToTikz m
                  return (gtlModelInput m,gtlModelOutput m,repr,w,h)
-             ) (gtlSpecModels spec)
+             ) (gtlSpecInstances spec)
   let gr = DotGraph { strictGraph = False
                     , directedGraph = True
                     , graphID = Nothing

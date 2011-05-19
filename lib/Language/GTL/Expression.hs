@@ -110,6 +110,10 @@ gnot :: TypedExpr v -> TypedExpr v
 gnot expr
   | getType expr == GTLBool = Typed GTLBool (UnBoolExpr Not (Fix expr))
 
+gtlAnd :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gtlAnd x y
+  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
+
 instance Binary (a r) => Binary (Typed a r) where
   put x = put (getType x) >> put (getValue x)
   get = do
