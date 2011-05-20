@@ -46,7 +46,7 @@ data Options = Options
                deriving Show
 
 defaultOptions = Options
-  { mode = PromelaBuddy
+  { mode = Native
   , traceFile = Nothing
   , keepTmpFiles = False
   , showHelp = False
