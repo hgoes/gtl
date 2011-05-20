@@ -14,7 +14,7 @@ import Language.GTL.Types
 
 import Data.Set as Set
 import Data.Map as Map
-import Data.List (genericIndex)
+import Data.List (genericIndex,elemIndex)
 import Data.Dynamic
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1)
@@ -316,21 +316,19 @@ translateAtom mmdl f expr t
                                           else mempty { forbiddenValues = Set.fromList ints })-}
 
 translateExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> TypedExpr a -> Either (a,[Integer]) Pr.AnyExpression
-translateExpr mmdl f expr
-  | getType expr == GTLInt = case getValue expr of
-    Var var 0 -> case mmdl of
-      Nothing -> Right $ translateCheckExpr Nothing f expr
-      Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
-                         then Left (var,[])
-                         else Right $ translateCheckExpr mmdl f expr
-    IndexExpr e i -> case translateExpr mmdl f (unfix e) of
-      Left (v,idx) -> Left (v,i:idx)
-      Right _ -> Right $ translateCheckExpr mmdl f expr
-    _ -> Right $ translateCheckExpr mmdl f expr
+translateExpr mmdl f expr = case getValue expr of
+  Var var 0 -> case mmdl of
+    Nothing -> Right $ translateCheckExpr Nothing f expr
+    Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
+                       then Left (var,[])
+                       else Right $ translateCheckExpr mmdl f expr
+  IndexExpr e i -> case translateExpr mmdl f (unfix e) of
+    Left (v,idx) -> Left (v,i:idx)
+    Right _ -> Right $ translateCheckExpr mmdl f expr
+  _ -> Right $ translateCheckExpr mmdl f expr
 
 translateCheckExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> TypedExpr a -> Pr.AnyExpression
-translateCheckExpr mmdl f expr
-  | getType expr == GTLInt = case getValue expr of
+translateCheckExpr mmdl f expr = case getValue expr of
     Var var lvl -> case mmdl of
       Nothing -> RefExpr (f Nothing var lvl)
       Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
@@ -338,6 +336,9 @@ translateCheckExpr mmdl f expr
                          else error "Can't relate more than one output var (yet)"
     Value (GTLIntVal x) -> Pr.ConstExpr $ ConstInt $ fromIntegral x
     Value (GTLBoolVal x) -> Pr.ConstExpr $ ConstInt (if x then 1 else 0)
+    Value (GTLEnumVal x) -> let GTLEnum enums = getType expr
+                                Just v = elemIndex x enums
+                            in Pr.ConstExpr $ ConstInt $ fromIntegral v
     BinIntExpr op lhs rhs -> Pr.BinExpr (case op of
                                             OpPlus -> Pr.BinPlus
                                             OpMinus -> Pr.BinMinus
