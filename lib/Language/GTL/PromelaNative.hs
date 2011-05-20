@@ -36,15 +36,17 @@ translateSpec spec = let outmp = buildOutputMap spec
 translateInit :: GTLSpec String -> OutputMap -> InputMap -> Pr.Module
 translateInit spec outmp inmp
   = Pr.Init Nothing
-    $ fmap Pr.toStep $
-    (concat [ case def of
-                 Nothing -> []
-                 Just rdef -> if Map.member var (gtlModelInput mdl)
-                              then assign name var [] 0 (convertValue rdef)
-                              else outputAssign name var [] (convertValue rdef) outmp inmp
-            | (name,mdl) <- Map.toList (gtlSpecModels spec),
-              (var,def) <- Map.toList $ gtlModelDefaults mdl ]) ++
-    [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecInstances spec) ]
+    [Pr.toStep $ prAtomic $
+     (concat [ case def of
+                  Nothing -> []
+                  Just rdef -> if Map.member var (gtlModelInput mdl)
+                               then assign iname var [] 0 (convertValue rdef)
+                               else outputAssign iname var [] (convertValue rdef) outmp inmp
+             | (iname,inst) <- Map.toList (gtlSpecInstances spec),
+               let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
+               (var,def) <- Map.toList $ gtlModelDefaults mdl ]) ++
+     [ Pr.StmtRun name [] | (name,_) <- Map.toList (gtlSpecInstances spec) ]
+    ]
 
 declareVars :: GTLSpec String -> OutputMap -> InputMap -> [Pr.Module]
 declareVars spec outmp inmp
@@ -90,7 +92,7 @@ translateNever expr inmp outmp
   = let buchi = runIdentity (gtlToBuchi
                              (return.(translateAtoms Nothing (\Nothing (mdl,var) -> varName mdl var [])))
                              (gnot expr))
-    in Pr.Never $ fmap Pr.toStep (translateBuchi Nothing id buchi inmp outmp)
+    in Pr.Never $ fmap Pr.toStep (Pr.StmtSkip:(translateBuchi Nothing id buchi inmp outmp))
 
 flattenVar :: GTLType -> [Integer] -> [(GTLType,[Integer])]
 flattenVar (GTLArray sz tp) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp is)
