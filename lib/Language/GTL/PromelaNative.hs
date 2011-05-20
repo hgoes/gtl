@@ -93,11 +93,11 @@ translateNever expr inmp outmp
     in Pr.Never $ fmap Pr.toStep (translateBuchi Nothing id buchi inmp outmp)
 
 flattenVar :: GTLType -> [Integer] -> [(GTLType,[Integer])]
-flattenVar tp [] = [(tp,[])]
 flattenVar (GTLArray sz tp) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp is)
 flattenVar (GTLArray sz tp) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
 flattenVar (GTLTuple tps) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
 flattenVar (GTLTuple tps) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
+flattenVar tp [] = [(tp,[])]
 
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
 allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
@@ -132,7 +132,12 @@ buildInputMap spec
                                    -> if Map.member var (gtlModelInput mdl)
                                       then Map.insertWith max (name,var,idx) lvl mp'
                                       else mp'
-                                  ) mp (getVars $ gtlModelContract mdl)
+                                  ) (Map.union mp (Map.fromList
+                                                   [ ((name,var,idx),0)
+                                                   | (var,tp) <- Map.toList $ gtlModelInput mdl, 
+                                                     (t,idx) <- allPossibleIdx tp
+                                                   ]
+                                                  )) (getVars $ gtlModelContract mdl)
                      ) Map.empty (gtlSpecInstances spec)
 
 varName :: String -> String -> [Integer] -> Integer -> Pr.VarRef
@@ -251,10 +256,11 @@ translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at Tru
 
 completeRestrictions :: Ord a => Map a GTLType -> Map (a,[Integer]) Restriction -> Map (a,[Integer]) Restriction
 completeRestrictions tp mp = Map.union mp (Map.fromList
-                                           [ ((v,idx),case t of
+                                           [ ((v,idx),case rtp of
                                                  GTLInt -> IntRestr mempty
-                                                 GTLBool -> IntRestr mempty
-                                                 GTLEnum _ -> EnumRestr Nothing) 
+                                                 GTLBool -> IntRestr $ mempty { allowedValues = Just (Set.fromList [0,1]) }
+                                                 GTLEnum enums -> IntRestr $ mempty { allowedValues = Just (Set.fromList $ fmap fst (zip [0..] enums))
+                                                                                    })
                                            | (v,t) <- Map.toList tp,
                                              (rtp,idx) <- allPossibleIdx t ])
                                            
@@ -408,7 +414,7 @@ buildGenerator upper lower check mdl var idx outmp inmp
                                       then expr
                                       else Pr.BinExpr Pr.BinPlus expr (Pr.ConstExpr $ Pr.ConstInt 1)) lower
     in case firstAssignTarget mdl var idx outmp inmp of
-      Nothing -> []
+      Nothing -> [Pr.StmtSkip]
       Just trg -> [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (minBound::Int)))
                    (\e -> prSequence $ outputAssign mdl var idx e outmp inmp)
                    rlower]++
@@ -435,7 +441,9 @@ minimumAssignment _   f (x:xs) = minimumAssignment' x xs
                                          ]
                                        ]
 
-translateState :: Maybe String -> (a -> (String,String)) -> OutputMap -> InputMap -> (Integer,Int) -> BuchiState (Integer,Int) (Map (a,[Integer]) Restriction,Maybe Pr.AnyExpression) Bool -> GBuchi (Integer,Int) (Map (a,[Integer]) Restriction,Maybe Pr.AnyExpression) Bool -> Pr.Statement
+translateState :: Maybe String -> (a -> (String,String)) -> OutputMap -> InputMap -> (Integer,Int)
+                  -> BuchiState (Integer,Int) (Map (a,[Integer]) Restriction,Maybe Pr.AnyExpression) Bool
+                  -> GBuchi (Integer,Int) (Map (a,[Integer]) Restriction,Maybe Pr.AnyExpression) Bool -> Pr.Statement
 translateState mmdl f outmp inmp (n1,n2) st buchi
   = (if finalSets st && isNothing mmdl
      then Pr.StmtLabel ("accept_"++show n1++"_"++show n2)
