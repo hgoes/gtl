@@ -344,11 +344,11 @@ translateCheckExpr mmdl f expr
                              (translateCheckExpr mmdl f $ unfix lhs)
                              (translateCheckExpr mmdl f $ unfix rhs)
 
-translateRestriction :: String -> String -> [Integer] -> OutputMap -> InputMap -> Restriction -> Pr.Statement
+translateRestriction :: String -> String -> [Integer] -> OutputMap -> InputMap -> Restriction -> Maybe Pr.Statement
 translateRestriction mdl var idx outmp inmp (EnumRestr set)
   = case set of
-  Nothing -> Pr.StmtSkip
-  Just rset -> Pr.StmtSkip
+  Nothing -> Nothing
+  Just rset -> Just Pr.StmtSkip
 translateRestriction mdl var idx outmp inmp (IntRestr restr)
   = let checkNEquals to = case unequals restr of
           [] -> Nothing
@@ -389,17 +389,21 @@ translateRestriction mdl var idx outmp inmp (IntRestr restr)
       [] -> case allowedValues restr of
         Just r -> let rr = Set.difference r (forbiddenValues restr)
                       check v = build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f (Pr.ConstExpr $ ConstInt v)) [checkNEquals,checkUppers,checkLowers])
-                  in prIf [ (case check v of
-                                Nothing -> []
-                                Just chk -> [ Pr.StmtExpr $ Pr.ExprAny chk ])++
-                            (outputAssign mdl var idx (Pr.ConstExpr $ Pr.ConstInt v) outmp inmp)
-                          | v <- Set.toList rr ]
-        Nothing -> prSequence $ buildGenerator (upperLimits restr) (lowerLimits restr) (\v -> build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkNEquals,checkNAllowed])) mdl var idx outmp inmp
-      _ -> prIf [ (case build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkAllowed,checkNEquals,checkNAllowed,checkUppers,checkLowers]) of
-                      Nothing -> []
-                      Just chk -> [Pr.StmtExpr $ Pr.ExprAny chk])++
-                  (outputAssign mdl var idx v outmp inmp)
-                | v <- equals restr ]
+                  in case catMaybes [ case ((case check v of
+                                                Nothing -> []
+                                                Just chk -> [ Pr.StmtExpr $ Pr.ExprAny chk ])++
+                                            (outputAssign mdl var idx (Pr.ConstExpr $ Pr.ConstInt v) outmp inmp)) of
+                                        [] -> Nothing
+                                        p -> Just p
+                                    | v <- Set.toList rr ] of 
+                       [] -> Nothing
+                       p -> Just $ prIf p
+        Nothing -> Just $ prSequence $ buildGenerator (upperLimits restr) (lowerLimits restr) (\v -> build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkNEquals,checkNAllowed])) mdl var idx outmp inmp
+      _ -> Just $ prIf [ (case build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkAllowed,checkNEquals,checkNAllowed,checkUppers,checkLowers]) of
+                             Nothing -> []
+                             Just chk -> [Pr.StmtExpr $ Pr.ExprAny chk])++
+                         (outputAssign mdl var idx v outmp inmp)
+                       | v <- equals restr ]
 
 buildGenerator :: [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.AnyExpression -> Maybe Pr.AnyExpression) -> String -> String -> [Integer] -> OutputMap -> InputMap -> [Pr.Statement]
 buildGenerator upper lower check mdl var idx outmp inmp
@@ -453,8 +457,8 @@ translateState mmdl f outmp inmp (n1,n2) st buchi
                     Nothing -> []
                     Just mdl -> [Pr.StmtPrintf ("ENTER "++mdl++" "++show n1++" "++show n2++"\n") []]
                 )++
-     [ translateRestriction mdl rvar idx outmp inmp restr
-     | ((var,idx),restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
+     catMaybes [ translateRestriction mdl rvar idx outmp inmp restr
+               | ((var,idx),restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
      [prIf [ (case snd $ vars (case Map.lookup (s1,s2) buchi of
                                   Nothing -> error $ "Internal error: Buchi state "++show (s1,s2)++" not found."
                                   Just p -> p
