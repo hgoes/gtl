@@ -85,6 +85,7 @@ gtlToLTL expr
       GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
       GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
       GTL.Next -> LTL.Un LTL.Next (gtlToLTL (unfix p))
+      GTL.Finally Nothing -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLSimpleAutomaton (simpleAutomaton buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
