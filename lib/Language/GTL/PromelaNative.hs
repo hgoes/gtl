@@ -39,9 +39,9 @@ translateInit spec outmp inmp
     [Pr.toStep $ prAtomic $
      (concat [ case def of
                   Nothing -> []
-                  Just rdef -> if Map.member var (gtlModelInput mdl)
-                               then assign iname var [] 0 (convertValue rdef)
-                               else outputAssign iname var [] (convertValue rdef) outmp inmp
+                  Just rdef -> case Map.lookup var (gtlModelInput mdl) of
+                    Just tp -> assign iname var [] 0 (convertValue tp rdef)
+                    Nothing -> outputAssign iname var [] (convertValue ((gtlModelOutput mdl)!var) rdef) outmp inmp
              | (iname,inst) <- Map.toList (gtlSpecInstances spec),
                let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
                (var,def) <- Map.toList $ gtlModelDefaults mdl ]) ++
@@ -76,10 +76,13 @@ lookupType spec inst var idx inp
           _ -> error $ "Internal error: Unable to resolve type "++show ttp
     in tp
 
-convertValue :: GTLConstant -> Pr.AnyExpression
-convertValue c = case unfix c of
+convertValue :: GTLType -> GTLConstant -> Pr.AnyExpression
+convertValue tp c = case unfix c of
   GTLIntVal v -> Pr.ConstExpr $ Pr.ConstInt v
   GTLBoolVal v -> Pr.ConstExpr $ Pr.ConstInt $ if v then 1 else 0
+  GTLEnumVal x -> let GTLEnum xs = tp 
+                      Just i = elemIndex x xs
+                  in Pr.ConstExpr $ Pr.ConstInt $ fromIntegral i
   _ -> error $ "Can't convert value "++show c
 
 convertType :: GTLType -> Pr.Typename
@@ -216,6 +219,7 @@ translateBuchi mmdl f buchi inmp outmp
        [ translateState mmdl f outmp inmp stname st rbuchi | (stname,st) <- Map.toList rbuchi ]
 
 data Restriction = IntRestr IntRestriction
+                 | ArrayRestr ArrayRestriction
                  | EnumRestr (Maybe (Set String))
 
 data IntRestriction = IntRestriction
@@ -226,6 +230,11 @@ data IntRestriction = IntRestriction
                       , equals :: [Pr.AnyExpression]
                       , unequals :: [Pr.AnyExpression]
                       }
+
+data ArrayRestriction = ArrayRestriction
+                        { arrEquals :: [[Pr.AnyExpression]]
+                        , arrUnequals :: [[Pr.AnyExpression]]
+                        }
 
 instance Monoid IntRestriction where
   mempty = IntRestriction [] [] Nothing Set.empty [] []
@@ -242,8 +251,15 @@ instance Monoid IntRestriction where
                   , unequals = (unequals r1)++(unequals r2)
                   }
 
+instance Monoid ArrayRestriction where
+  mempty = ArrayRestriction [] []
+  mappend r1 r2 = ArrayRestriction { arrEquals = (arrEquals r1)++(arrEquals r2)
+                                   , arrUnequals = (arrUnequals r1)++(arrUnequals r2)
+                                   }
+
 mergeRestriction :: Restriction -> Restriction -> Restriction
 mergeRestriction (IntRestr x) (IntRestr y) = IntRestr (mappend x y)
+mergeRestriction (ArrayRestr x) (ArrayRestr y) = ArrayRestr (mappend x y)
 mergeRestriction (EnumRestr x) (EnumRestr y) = case x of
   Nothing -> EnumRestr y
   Just rx -> case y of
@@ -281,19 +297,24 @@ translateAtom mmdl f expr t idx
         Right src2 -> Right $ buildComp rrel src src2
       where
         rrel = if t then rel else relNot rel
-        buildAssign GTL.BinLT trg src = (trg,IntRestr $ mempty { upperLimits = [(False,src)] })
-        buildAssign GTL.BinLTEq trg src = (trg,IntRestr $ mempty { upperLimits = [(True,src)] })
-        buildAssign GTL.BinGT trg src = (trg,IntRestr $ mempty { lowerLimits = [(False,src)] })
-        buildAssign GTL.BinGTEq trg src = (trg,IntRestr $ mempty { lowerLimits = [(True,src)] })
-        buildAssign GTL.BinEq trg src = (trg,IntRestr $ mempty { equals = [src] })
-        buildAssign GTL.BinNEq trg src = (trg,IntRestr $ mempty { unequals = [src] })
-        buildComp op s1 s2 = Pr.BinExpr (case rel of
-                                            GTL.BinLT -> Pr.BinLT
-                                            GTL.BinLTEq -> Pr.BinLTE
-                                            GTL.BinGT -> Pr.BinGT
-                                            GTL.BinGTEq -> Pr.BinGTE
-                                            GTL.BinEq -> Pr.BinEquals
-                                            GTL.BinNEq -> Pr.BinNotEquals) s1 s2
+        buildAssign GTL.BinLT trg [src] = (trg,IntRestr $ mempty { upperLimits = [(False,src)] })
+        buildAssign GTL.BinLTEq trg [src] = (trg,IntRestr $ mempty { upperLimits = [(True,src)] })
+        buildAssign GTL.BinGT trg [src] = (trg,IntRestr $ mempty { lowerLimits = [(False,src)] })
+        buildAssign GTL.BinGTEq trg [src] = (trg,IntRestr $ mempty { lowerLimits = [(True,src)] })
+        buildAssign GTL.BinEq trg [src] = (trg,IntRestr $ mempty { equals = [src] })
+        buildAssign GTL.BinEq trg src = (trg,ArrayRestr $ mempty { arrEquals = [src] })
+        buildAssign GTL.BinNEq trg [src] = (trg,IntRestr $ mempty { unequals = [src] })
+        buildAssign GTL.BinNEq trg src = (trg,ArrayRestr $ mempty { arrUnequals = [src] })
+        buildComp op s1 s2 = case [ Pr.BinExpr (case rel of
+                                                   GTL.BinLT -> Pr.BinLT
+                                                   GTL.BinLTEq -> Pr.BinLTE
+                                                   GTL.BinGT -> Pr.BinGT
+                                                   GTL.BinGTEq -> Pr.BinGTE
+                                                   GTL.BinEq -> Pr.BinEquals
+                                                   GTL.BinNEq -> Pr.BinNotEquals) p1 p2
+                                  | (p1,p2) <- zip s1 s2 ] of
+                               [x] -> x
+                               xs -> foldl1 (Pr.BinExpr Pr.BinAnd) xs
     Var var lvl -> let chk = (if t then id else Pr.UnExpr Pr.UnLNot) (Pr.RefExpr (f (fmap fst mmdl) var idx lvl))
                    in case mmdl of
                      Nothing -> Right chk
@@ -318,7 +339,7 @@ translateAtom mmdl f expr t idx
                                           then mempty { allowedValues = Just $ Set.fromList ints }
                                           else mempty { forbiddenValues = Set.fromList ints })-}
 
-translateExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> [Integer] -> Integer -> Pr.VarRef) -> TypedExpr a -> Either (a,[Integer]) Pr.AnyExpression
+translateExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> [Integer] -> Integer -> Pr.VarRef) -> TypedExpr a -> Either (a,[Integer]) [Pr.AnyExpression]
 translateExpr mmdl f expr = case getValue expr of
   Var var 0 -> case mmdl of
     Nothing -> Right $ translateCheckExpr Nothing f expr []
@@ -331,32 +352,43 @@ translateExpr mmdl f expr = case getValue expr of
   _ -> Right $ translateCheckExpr mmdl f expr []
 
 translateCheckExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> [Integer] -> Integer -> Pr.VarRef)
-                      -> TypedExpr a -> [Integer] -> Pr.AnyExpression
+                      -> TypedExpr a -> [Integer] -> [Pr.AnyExpression]
 translateCheckExpr mmdl f expr idx = case getValue expr of
     Var var lvl -> case mmdl of
-      Nothing -> RefExpr (f Nothing var (reverse idx) lvl)
+      Nothing -> [RefExpr (f Nothing var (reverse idx) lvl)]
       Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                         then RefExpr (f (Just name) var (reverse idx) lvl)
+                         then [RefExpr (f (Just name) var (reverse idx) lvl)]
                          else error "Can't relate more than one output var (yet)"
-    Value (GTLIntVal x) -> Pr.ConstExpr $ ConstInt $ fromIntegral x
-    Value (GTLBoolVal x) -> Pr.ConstExpr $ ConstInt (if x then 1 else 0)
+    Value (GTLIntVal x) -> [Pr.ConstExpr $ ConstInt $ fromIntegral x]
+    Value (GTLBoolVal x) -> [Pr.ConstExpr $ ConstInt (if x then 1 else 0)]
     Value (GTLEnumVal x) -> let GTLEnum enums = getType expr
                                 Just v = elemIndex x enums
-                            in Pr.ConstExpr $ ConstInt $ fromIntegral v
-    BinIntExpr op lhs rhs -> Pr.BinExpr (case op of
-                                            OpPlus -> Pr.BinPlus
-                                            OpMinus -> Pr.BinMinus
-                                            OpMult -> Pr.BinMult
-                                            OpDiv -> Pr.BinDiv)
-                             (translateCheckExpr mmdl f (unfix lhs) idx)
-                             (translateCheckExpr mmdl f (unfix rhs) idx)
+                            in [Pr.ConstExpr $ ConstInt $ fromIntegral v]
+    Value (GTLTupleVal xs) -> case idx of
+      i:is -> translateCheckExpr mmdl f (unfix $ xs `genericIndex` i) is
+      [] -> concat [ translateCheckExpr mmdl f (unfix x) [] | x <- xs ]
+    Value (GTLArrayVal xs) -> case idx of
+      i:is -> translateCheckExpr mmdl f (unfix $ xs `genericIndex` i) is
+      [] -> concat [ translateCheckExpr mmdl f (unfix x) [] | x <- xs ]
+    BinIntExpr op lhs rhs -> [ Pr.BinExpr (case op of
+                                              OpPlus -> Pr.BinPlus
+                                              OpMinus -> Pr.BinMinus
+                                              OpMult -> Pr.BinMult
+                                              OpDiv -> Pr.BinDiv) p1 p2
+                             | (p1,p2) <- zip (translateCheckExpr mmdl f (unfix lhs) idx)
+                                          (translateCheckExpr mmdl f (unfix rhs) idx) ]
     IndexExpr e i -> translateCheckExpr mmdl f (unfix e) (i:idx)
 
 translateRestriction :: String -> String -> [Integer] -> OutputMap -> InputMap -> Restriction -> Maybe Pr.Statement
-translateRestriction mdl var idx outmp inmp (EnumRestr set)
-  = case set of
-  Nothing -> Nothing
-  Just rset -> Just Pr.StmtSkip
+translateRestriction mdl var idx outmp inmp (ArrayRestr restr)
+  = let assignEquals = [ concat [ outputAssign mdl var (i:idx) e outmp inmp | (i,e) <- zip [0..] eq ]
+                       | eq <- arrEquals restr
+                       ]
+    in case assignEquals of
+      [] -> Nothing
+      [[x]] -> Just x
+      [x] -> Just $ prSequence x
+      _ -> Just $ prIf assignEquals
 translateRestriction mdl var idx outmp inmp (IntRestr restr)
   = let checkNEquals to = case unequals restr of
           [] -> Nothing
