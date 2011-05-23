@@ -348,7 +348,7 @@ translateExpr mmdl f expr = case getValue expr of
                        else Right $ translateCheckExpr mmdl f expr []
   IndexExpr e i -> case translateExpr mmdl f (unfix e) of
     Left (v,idx) -> Left (v,i:idx)
-    Right _ -> Right $ translateCheckExpr mmdl f expr [i]
+    Right _ -> Right $ translateCheckExpr mmdl f (unfix e) [i]
   _ -> Right $ translateCheckExpr mmdl f expr []
 
 translateCheckExpr :: (Ord a) => Maybe (String,GTLModel a) -> (Maybe String -> a -> [Integer] -> Integer -> Pr.VarRef)
