@@ -99,7 +99,7 @@ flattenVar (GTLArray sz tp) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp i
 flattenVar (GTLArray sz tp) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
 flattenVar (GTLTuple tps) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
 flattenVar (GTLTuple tps) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
-flattenVar tp [] = [(tp,[])]
+flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
 
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
 allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
@@ -115,13 +115,15 @@ buildOutputMap spec
                             mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing)) | (_,i) <- flattenVar tp_out fi ]
                         in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,nvr1)) mp mp_out
                     ) Map.empty (gtlSpecConnections spec)
-        mp2 = foldl (\mp (var,idx,lvl) -> Map.alter (\mentr -> case mentr of
-                                                        Nothing -> Just (Set.empty,Just lvl)
-                                                        Just (tos,nvr) -> Just (tos,Just (case nvr of
-                                                                                             Nothing -> lvl
-                                                                                             Just olvl -> max lvl olvl)
-                                                                               )
-                                                    ) (fst var,snd var,idx) mp) mp1 (getVars $ gtlSpecVerify spec)
+        mp2 = foldl (\mp (var,idx,lvl)
+                     -> let tp = getInstanceVariableType spec False (fst var) (snd var)
+                        in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,case nvr1 of
+                                                                          Nothing -> nvr2
+                                                                          Just rnvr1 -> case nvr2 of
+                                                                            Nothing -> nvr1
+                                                                            Just rnvr2 -> Just $ max rnvr1 rnvr2))
+                           mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl)) | (_,i) <- flattenVar tp idx ])
+                    ) mp1 (getVars $ gtlSpecVerify spec)
     in mp2
 
 buildInputMap :: GTLSpec String -> InputMap
