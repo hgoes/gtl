@@ -1,0 +1,65 @@
+model[none] client() {
+  input bool proceed;
+  output enum { nc, acq, cs, rel } st;
+  init st 'nc;
+  automaton {
+    init state nc {
+      st = 'nc;
+      transition acq;
+      transition nc;
+    }
+    state acq {
+      st = 'acq;
+      transition[proceed] cs;
+      transition[!proceed] acq;
+    }
+    state cs {
+      st = 'cs;
+      transition rel;
+      transition cs;
+    }
+    state rel {
+      st = 'rel;
+      transition nc;
+    }
+  };
+}
+
+model[none] server() {
+  input enum { nc, acq, cs, rel }^3 procstates;
+  output bool^3 procouts;
+  init procouts [false,false,false];
+  always (procstates[0] = 'acq and procstates[1] != 'cs and procstates[2] != 'cs and procouts = [true,false,false])
+         or (procstates[0] != 'acq and procstates[1] = 'acq and procstates[0] != 'cs and procstates[2] != 'cs and procouts = [false,true,false])
+         or (procstates[0] != 'acq and procstates[1] != 'acq and procstates[2] = 'acq and procstates[0] != 'cs and procstates[1] != 'cs and procouts = [false,false,true])
+         or (procouts = [false,false,false]);
+}
+
+instance client c0;
+instance client c1;
+instance client c2;
+
+instance server s;
+
+connect c0.st s.procstates[0];
+connect c1.st s.procstates[1];
+connect c2.st s.procstates[2];
+
+connect s.procouts[0] c0.proceed;
+connect s.procouts[1] c1.proceed;
+connect s.procouts[2] c2.proceed;
+
+//safety
+verify {
+  always (c0.st = 'cs => !(c1.st = 'cs or c2.st = 'cs));
+  always (c1.st = 'cs => !(c0.st = 'cs or c2.st = 'cs));
+  always (c2.st = 'cs => !(c0.st = 'cs or c1.st = 'cs));
+}
+
+//liveness
+//can't yet be verified because of missing fairness scheduler
+//verify {
+  //always (c0.st = 'acq => finally c0.st = 'rel);
+  //always (c1.st = 'acq => finally c1.st = 'rel);
+  //always (c2.st = 'acq => finally c2.st = 'rel);
+//}
