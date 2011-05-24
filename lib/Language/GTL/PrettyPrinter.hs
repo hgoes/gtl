@@ -54,6 +54,11 @@ getDotBoundingBox gr
       [] -> error "No bounding box defined"
       (x:xs) -> x
 
+removeBreaks :: String -> String
+removeBreaks ('\\':'\n':xs) = removeBreaks xs
+removeBreaks (x:xs) = x:removeBreaks xs
+removeBreaks [] = []
+
 -- | Convert a Buchi automaton into a Dot graph.
 buchiToDot :: GBuchi Integer (Set (TypedExpr String,Bool)) f -> DotGraph String
 buchiToDot buchi
@@ -270,7 +275,7 @@ dotToTikz mtp gr
            lbl = case List.find (\attr -> case attr of
                                   Comment _ -> True
                                   _ -> False) (nodeAttributes nd) of
-                 Just (Comment x) -> x
+                 Just (Comment x) -> removeBreaks x
                  _ -> "none" --error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
@@ -346,8 +351,6 @@ exprToLatex expr = case getValue expr of
                             ++(exprToLatex $ unfix rhs)
   UnBoolExpr GTL.Not p -> "\\lnot "++(exprToLatex $ unfix p)
   IndexExpr expr idx -> exprToLatex (unfix expr) ++ "_{"++show idx++"}"
---atomToLatex (GTLBoolExpr (ElemExpr v vals t) p) = "\\mathit{"++(name v)++"}"++(if (t && p) || (not t && not p) then "" else "\\not")++"\\in"++show vals
---atomToLatex (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then "" else "\\lnot ")++v++(if h==0 then "" else "["++show h++"]")
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
 estimateWidth :: TypedExpr String -> Int
@@ -357,7 +360,10 @@ estimateWidth expr = case getValue expr of
   Value (GTLBoolVal x) -> length (show x)
   Value (GTLIntVal x) -> length (show x)
   Value (GTLEnumVal x) -> 1+(length x)
+  Value (GTLArrayVal xs) -> 1+(length xs)+sum (fmap (estimateWidth.unfix) xs)
+  Value (GTLTupleVal xs) -> 1+(length xs)+sum (fmap (estimateWidth.unfix) xs)
   BinIntExpr _ lhs rhs -> 1+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
   IndexExpr expr idx -> estimateWidth (unfix expr) + ((length (show idx) + 1) `div` 2)
---estimateWidth (GTLBoolExpr (ElemExpr v vals t) p) = (if (t && p) || (not t && not p) then 3 else 7)+(length $ name v)+(length (show vals))
---estimateWidth (GTLBoolExpr (BoolVar (Variable v h _)) t) = (if t then 0 else 1)+(length v)+(if h==0 then 0 else 2+(length (show h)))
+  UnBoolExpr GTL.Not e -> 1 + (estimateWidth (unfix e))
+  _ -> error $ "Internal error: Can't estimate width of expression "++show expr
+
