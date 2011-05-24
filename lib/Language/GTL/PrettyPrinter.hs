@@ -29,7 +29,7 @@ simplePrettyPrint spec
      [name ++ "{"]++
      ["  input "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelInput mdl) ]++
      ["  output "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelOutput mdl) ]++
-     (fmap ("  "++) (simplePrettyPrintBuchi (ltlToBuchi (gtlToLTL (gtlModelContract mdl)))))++
+     (fmap ("  "++) (simplePrettyPrintBuchi (ltlToBuchi distributeNot (gtlToLTL (gtlModelContract mdl)))))++
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
 
@@ -187,7 +187,7 @@ genPortName var ind = var ++ concat (fmap (\i -> "_"++show i) ind)
 modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL (gtlModelContract m)
-      buchi = ltlToBuchi ltl
+      buchi = ltlToBuchi distributeNot ltl
   outp <- readProcess "sfdp" ["-Tdot"] (printIt $ buchiToDot buchi)
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot

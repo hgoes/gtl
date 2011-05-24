@@ -69,7 +69,7 @@ neverClaim :: Trace -- ^ The trace
 neverClaim trace f mdls
   = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                            in varName iface q v l) trace
-        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL $ gnot f) traceAut
+        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi distributeNot $ gtlToLTL $ gnot f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
         steps = [ Pr.StmtLabel ("st"++showSt i)

@@ -374,6 +374,7 @@ pushNot expr
     BinBoolExpr op l r -> Typed GTLBool $ BinBoolExpr op (Fix $ pushNot $ unfix l) (Fix $ pushNot $ unfix r)
     UnBoolExpr Not p -> distributeNot $ unfix p
     UnBoolExpr op p -> Typed GTLBool $ UnBoolExpr op (Fix $ pushNot $ unfix p)
+    IndexExpr e i -> Typed (getType expr) (IndexExpr (Fix $ pushNot $ unfix e) i)
     _ -> expr
 
 -- | Extracts the maximum level of history for each variable in the expression.

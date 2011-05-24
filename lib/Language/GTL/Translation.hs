@@ -63,7 +63,7 @@ gtlToBuchi f expr = mapM (\co -> do
                                               ) $ Set.toList (vars co))
                              return $ co { vars = nvars }
                          ) $
-                    ltlToBuchi (gtlToLTL expr)
+                    ltlToBuchi GTL.distributeNot (gtlToLTL expr)
 
 ---- | Extract all variables with their history level from an atom.
 --getAtomVars :: GTLAtom v -> [(v,Integer)]
@@ -80,7 +80,9 @@ gtlToLTL expr
       GTL.Or -> LTL.Bin LTL.Or (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
       GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL (unfix l))) (gtlToLTL (unfix r))
       GTL.Until -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-    BinRelExpr _ _ _ -> Atom expr
+    BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
+      [e] -> e
+      es -> foldl1 (LTL.Bin LTL.And) es
     UnBoolExpr op p -> case op of
       GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
       GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
@@ -89,6 +91,16 @@ gtlToLTL expr
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLSimpleAutomaton (simpleAutomaton buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
+    where
+      flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]
+      flattenRel rel lhs rhs = case (getValue lhs,getValue rhs) of
+        (Value (GTLArrayVal xs),Value (GTLArrayVal ys)) -> zipWith (\x y -> Typed GTLBool (BinRelExpr rel x y)) xs ys
+        (Value (GTLArrayVal xs),_) -> zipWith (\x i -> Typed GTLBool (BinRelExpr rel x (Fix $ Typed (getType $ unfix x) (IndexExpr (Fix rhs) i)))) xs [0..]
+        (_,Value (GTLArrayVal ys)) -> zipWith (\i y -> Typed GTLBool (BinRelExpr rel (Fix $ Typed (getType $ unfix y) (IndexExpr (Fix lhs) i)) y)) [0..] ys
+        (Value (GTLTupleVal xs),Value (GTLTupleVal ys)) -> zipWith (\x y -> Typed GTLBool (BinRelExpr rel x y)) xs ys
+        (Value (GTLTupleVal xs),_) -> zipWith (\x i -> Typed GTLBool (BinRelExpr rel x (Fix $ Typed (getType $ unfix x) (IndexExpr (Fix rhs) i)))) xs [0..]
+        (_,Value (GTLTupleVal ys)) -> zipWith (\i y -> Typed GTLBool (BinRelExpr rel (Fix $ Typed (getType $ unfix y) (IndexExpr (Fix lhs) i)) y)) [0..] ys
+        _ -> [Typed GTLBool (BinRelExpr rel (Fix lhs) (Fix rhs))]
 
 expandExpr :: Ord v => TypedExpr v -> [Set (TypedExpr v)]
 expandExpr expr
