@@ -213,6 +213,8 @@ translateBuchi mmdl f buchi inmp outmp
     in [ prIf [ (case snd $ vars st of
                     Nothing -> []
                     Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
+                catMaybes [ translateRestriction mdl rvar idx outmp inmp restr
+                          | ((var,idx),restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
                 [ Pr.StmtGoto $ "st_"++show s1++"_"++show s2 ]
               | ((s1,s2),st) <- Map.toList rbuchi, isStart st ]
        ] ++
@@ -501,14 +503,16 @@ translateState mmdl f outmp inmp (n1,n2) st buchi
                     Nothing -> []
                     Just mdl -> [Pr.StmtPrintf ("ENTER "++mdl++" "++show n1++" "++show n2++"\n") []]
                 )++
-     catMaybes [ translateRestriction mdl rvar idx outmp inmp restr
-               | ((var,idx),restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
-     [prIf [ (case snd $ vars (case Map.lookup (s1,s2) buchi of
-                                  Nothing -> error $ "Internal error: Buchi state "++show (s1,s2)++" not found."
-                                  Just p -> p
-                              ) of
+     [prIf [ (case mcond of
                  Nothing -> []
                  Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
+             catMaybes [ translateRestriction mdl rvar idx outmp inmp restr
+                       | ((var,idx),restr) <- Map.toList assign, let (mdl,rvar) = f var ] ++
              [Pr.StmtGoto $ "st_"++show s1++"_"++show s2]
-           | (s1,s2) <- Set.toList $ successors st]]
+           | (s1,s2) <- Set.toList $ successors st,
+             let (assign,mcond) = vars $ case Map.lookup (s1,s2) buchi of
+                   Nothing -> error $ "Internal error: Buchi state "++show (s1,s2)++" not found."
+                   Just p -> p
+           ]
+     ]
     )
