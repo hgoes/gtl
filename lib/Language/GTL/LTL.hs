@@ -270,7 +270,7 @@ expand lneg untils n f node nset = case new node of
   (x:xs)
     | Set.member x (old node) -> expand lneg untils n f (node { new = xs }) nset
     | otherwise -> case x of
-             Atom p -> if Set.member (Atom (lneg p)) (old node)
+             Atom p -> if Set.member (Atom (lneg p)) (old node) || Set.member (Un Not (Atom p)) (old node)
                        then (nset,n,f)
                        else expand lneg untils n f (node { old = Set.insert x (old node)
                                                          , new = xs
@@ -278,7 +278,7 @@ expand lneg untils n f node nset = case new node of
              Ground p -> if p
                          then expand lneg untils n f (node { new = xs }) nset
                          else (nset,n,f)
-             Un Not (Atom p) -> if Set.member (Atom p) (old node)
+             Un Not (Atom p) -> if Set.member (Atom p) (old node) || Set.member (Un Not (Atom (lneg p))) (old node)
                                 then (nset,n,f)
                                 else expand lneg untils n f (node { old = Set.insert x (old node)
                                                                   , new = xs
