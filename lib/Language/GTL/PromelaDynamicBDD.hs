@@ -117,14 +117,14 @@ varName nvr mdl var lvl = (if nvr
 
 -- | Convert a translated GTL program into a PROMELA module.
 translateContracts :: TransProgram -> [Pr.Module]
-translateContracts prog 
+translateContracts prog
   = let include = Pr.CDecl $ unlines ["\\#include <cudd/cudd.h>"
                                      ,"\\#include <cudd_arith.h>"
                                      ,"\\#include <assert.h>"
                                      ,"DdManager* manager;"]
         states = [ Pr.CState ("DdNode* "++varName False name var n) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
-                 , (var,hist) <- Map.toList (varsIn mdl) 
+                 , (var,hist) <- Map.toList (varsIn mdl)
                  , n <- [0..hist] ] ++
                  [ Pr.CState ("DdNode* "++varName True name var lvl) "Global" (Just "NULL")
                  | (name,mdl) <- Map.toList $ transModels prog
@@ -149,10 +149,10 @@ translateContracts prog
                         ["  "++vname lvl++" = "++(if lvl==0
                                                   then "DD_ONE(manager)"
                                                   else vname (lvl-1))++";"
-                        | (from,tos) <- Map.toList (varsOut mdl), (to,lvls) <- Map.toList tos, 
+                        | (from,tos) <- Map.toList (varsOut mdl), (to,lvls) <- Map.toList tos,
                           let hist = case to of
                                 Nothing -> Set.findMax lvls
-                                Just (q,n) -> (varsIn ((transModels prog)!q))!n, 
+                                Just (q,n) -> (varsIn ((transModels prog)!q))!n,
                           let vname l = case to of
                                 Just (q,n) -> "now->"++varName False q n l
                                 Nothing -> "now->"++varName True name from l,
@@ -160,9 +160,9 @@ translateContracts prog
                         ["}"]
                       | (name,mdl) <- Map.toList (transModels prog) ]
         init = prInit [ prAtomic $ [ StmtCCode $ unlines $
-                                     [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++ 
+                                     [ "manager = Cudd_Init(32,0,CUDD_UNIQUE_SLOTS,CUDD_CACHE_SLOTS,0);"] ++
                                      [ "now."++varName False name var clvl++" = Cudd_ReadOne(manager);"
-                                     | (name,mdl) <- Map.toList $ transModels prog, 
+                                     | (name,mdl) <- Map.toList $ transModels prog,
                                        (var,lvl) <- Map.toList $ varsIn mdl,
                                        clvl <- [0..lvl]
                                      ] ++
@@ -224,7 +224,7 @@ translateNever buchi
                                                         else [Pr.StmtCExpr Nothing $ unwords $ intersperse "&&"
                                                               [ "cond__never"++show n++"(&now)" | n <- vars nentr ]]) ++
                                                         [Pr.StmtGoto $ "st"++showSt succ]
-                                                      | succ <- Set.toList $ successors entr, 
+                                                      | succ <- Set.toList $ successors entr,
                                                         let nentr = rbuchi!succ ]
                                                ]
                            in Pr.StmtLabel ("st"++showSt st) $ if finalSets entr
@@ -262,7 +262,7 @@ parseGTLAtom mp arg at
                      GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
                      GTLVar n lvl v -> parseGTLRelation mp arg BinEq (ExprVar n lvl) (ExprConst v)
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
-        
+
 -- | Parse a GTL relation into a C-Function.
 --   Returns a unique number for the resulting function, whether its a test- or assignment function and
 --   its source-code representation.
@@ -310,7 +310,7 @@ createBDDAssign :: BDDConst a => Integer -- ^ How many temporary variables have 
                      -> GTL.Expr (Maybe String,String) a -- ^ The expression to assign the BDD with
                      -> String
 createBDDAssign count q n outs rel expr
-  = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var 
+  = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var
                | (var,lvls) <- Map.toList outs
                , lvl <- Set.toList lvls]
         (cmd2,te) = case rel of

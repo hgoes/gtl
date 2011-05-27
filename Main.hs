@@ -80,7 +80,7 @@ main = do
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
-    PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
+    PromelaBuddy -> PrBd.verifyModel True (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
     Tikz -> do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str

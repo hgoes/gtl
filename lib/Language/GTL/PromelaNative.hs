@@ -68,18 +68,9 @@ verifyModel opts name decls = do
   generatePan (name <.> "pr") outputDir
   let verifier = (name ++ "-verifier")
   rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts))
-  {-
-  unless keep $ do
-    deleteTmp "pan.c"
-    deleteTmp "pan.h"
-    deleteTmp "pan.m"
-    deleteTmp "pan.t"
-    deleteTmp "pan.b"
-  -}
   outp <- runVerifier verifier outputDir
   putStrLn "--- Output ---"
   putStrLn outp
-  {- unless keep $ deleteTmp verifier -}
   let traceFiles = filterTraces outp
   --putStrLn $ show traceFiles
   currentDir <- getCurrentDirectory
@@ -88,7 +79,6 @@ verifyModel opts name decls = do
   runBDDM $ do
     traces <- mapM (\trace -> lift $ do
                        res <- fmap (traceToAtoms buchi) $ parseTrace (name <.> "pr") trace
-                       --unless keep $ deleteTmp trace
                        return res
                    ) traceFiles
     case traces of
@@ -97,9 +87,6 @@ verifyModel opts name decls = do
         putStrLn $ show (length traces) ++ " errors found"
         writeTraces (name <.> "gtltrace") traces
         putStrLn $ "Written to "++(name <.> "gtltrace")
-  {-
-  unless keep $ deleteTmp (name <.> "pr")
-  -}
   setCurrentDirectory currentDir
   return ()
 

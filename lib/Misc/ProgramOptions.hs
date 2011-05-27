@@ -36,7 +36,6 @@ data TranslationMode
 data Options = Options
                { mode :: TranslationMode
                , traceFile :: Maybe FilePath
-               , keepTmpFiles :: Bool
                , outputPath :: String
                , showHelp :: Bool
                , showVersion :: Bool
@@ -48,7 +47,6 @@ data Options = Options
 defaultOptions = Options
   { mode = PromelaBuddy
   , traceFile = Nothing
-  , keepTmpFiles = False
   , outputPath = "."
   , showHelp = False
   , showVersion = False
@@ -83,7 +81,6 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                          ) "mode"
                                  ) ("The tranlation mode ("++modeString (mode defaultOptions) modes++")")
           ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
-          ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
           ,Option ['o'] ["output-directory"] (ReqArg (\path opts -> opts { outputPath = path }) "path") "Path into which the output should be generated"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
