@@ -10,7 +10,7 @@
 {-| Implements a verification mechanism that abstracts components by using their
     contract to build a state machine that acts on BDD.
  -}
-module Language.GTL.PromelaDynamicBDD where
+module Language.GTL.Target.PromelaCUDD where
 
 import Language.GTL.Translation
 import Language.Promela.Syntax as Pr

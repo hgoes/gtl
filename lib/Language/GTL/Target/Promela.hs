@@ -3,7 +3,7 @@
    misericordiam tuam
  -}
 {-# LANGUAGE GADTs,ScopedTypeVariables #-}
-module Language.GTL.PromelaNative where
+module Language.GTL.Target.Promela where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL

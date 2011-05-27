@@ -17,13 +17,13 @@ import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
 
-import Language.GTL.PromelaCIntegration
+import Language.GTL.Target.PromelaKCG
 import Language.GTL.LocalVerification
 import Language.GTL.Translation
 import Language.GTL.Model
-import Language.GTL.PromelaDynamicBDD as PrBd
+import Language.GTL.Target.PromelaCUDD as PrBd
 import Language.GTL.PrettyPrinter as PrPr
-import Language.GTL.PromelaNative as PrNat
+import Language.GTL.Target.Promela as PrNat
 
 data TranslationMode
      = NativeC

@@ -2,7 +2,7 @@
 {-| Verifies a GTL specification by converting the components to C-code and
     simulating all possible runs.
  -}
-module Language.GTL.PromelaCIntegration where
+module Language.GTL.Target.PromelaKCG where
 
 import Language.GTL.Expression as GTL
 import Language.GTL.Model

@@ -9,7 +9,7 @@ Description:
   synchronous and asynchronous model checking formalisms.
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl
+  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl,language-uppaal
   Hs-Source-Dirs: lib
   Exposed-Modules:
     Language.GTL.Parser
@@ -18,10 +18,8 @@ Library
     Language.GTL.Parser.Token
     Language.GTL.Model
     Language.GTL.Translation
-    Language.GTL.PromelaCIntegration
     Language.GTL.LTL
     Language.GTL.ErrorRefiner
-    Language.GTL.PromelaDynamicBDD
     Language.GTL.PrettyPrinter
     Language.GTL.Backend
     Language.GTL.Backend.Scade
@@ -30,8 +28,10 @@ Library
     Language.GTL.LocalVerification
     Language.GTL.Expression
     Language.GTL.Buchi
-    Language.GTL.PromelaNative
     Language.GTL.Types
+    Language.GTL.Target.PromelaCUDD
+    Language.GTL.Target.Promela
+    Language.GTL.Target.PromelaKCG
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath
