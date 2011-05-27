@@ -17,9 +17,11 @@ import Data.Dynamic
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1)
 import Control.Monad.Identity
+import Control.Monad.State
 import Data.Monoid
 import Data.Typeable
 import Data.Maybe
+import Data.BDD
 
 import System.FilePath
 import Language.Promela.Pretty
@@ -33,12 +35,21 @@ import Misc.ProgramOptions as Opts
 type OutputMap = Map (String,String) (Set (String,String),Maybe Integer)
 type InputMap = Map (String,String) Integer
 
+fst3 (x, _, _) = x
+snd3 (_, x, _) = x
+
 generatePan fileName outputDir = do
-  createDirectoryIfMissing True outputDir
   currentDir <- getCurrentDirectory
   setCurrentDirectory outputDir
   rawSystem "spin" ["-a", fileName]
   setCurrentDirectory currentDir
+
+runVerifier verifier outputDir = do
+  currentDir <- getCurrentDirectory
+  setCurrentDirectory outputDir
+  outp <- readProcess ("." </> verifier) ["-a","-e"] ""
+  setCurrentDirectory currentDir
+  return outp
 
 -- | Do a complete verification of a given GTL file
 verifyModel :: Opts.Options -- ^ Options
@@ -48,10 +59,12 @@ verifyModel :: Opts.Options -- ^ Options
 verifyModel opts name decls = do
   let --prog = buildTransProgram decls
       pr = translateSpec decls
-  writeFile ((outputPath opts) </> name <.> "pr") (show $ prettyPromela pr)
-  generatePan (name <.> "pr") (outputPath opts)
-  let verifier = (outputPath opts) </> (name ++ "-verifier")
-  rawSystem (ccBinary opts) ([(outputPath opts) </> "pan.c", "-o" ++ verifier] ++ (ccFlags opts))
+      outputDir = (outputPath opts)
+  createDirectoryIfMissing True outputDir
+  writeFile (outputDir </> name <.> "pr") (show $ prettyPromela pr)
+  generatePan (name <.> "pr") outputDir
+  let verifier = (name ++ "-verifier")
+  rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts))
   {-
   unless keep $ do
     deleteTmp "pan.c"
@@ -60,27 +73,51 @@ verifyModel opts name decls = do
     deleteTmp "pan.t"
     deleteTmp "pan.b"
   -}
-  outp <- readProcess verifier ["-a","-e"] ""
+  outp <- runVerifier verifier outputDir
+  putStrLn "--- Output ---"
   putStrLn outp
   {- unless keep $ deleteTmp verifier -}
   let traceFiles = filterTraces outp
-  putStrLn $ show traceFiles
-  {-
+  --putStrLn $ show traceFiles
+  currentDir <- getCurrentDirectory
+  setCurrentDirectory outputDir
+  let buchi = Map.mapWithKey buildBuchi (gtlSpecModels decls)
   runBDDM $ do
     traces <- mapM (\trace -> lift $ do
-                       res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
-                       unless keep $ deleteTmp trace
+                       res <- fmap (traceToAtoms buchi) $ parseTrace (name <.> "pr") trace
+                       --unless keep $ deleteTmp trace
                        return res
-                   ) trace_files
+                   ) traceFiles
     case traces of
       [] -> lift $ putStrLn "No errors found."
       _  -> lift $ do
         putStrLn $ show (length traces) ++ " errors found"
         writeTraces (name <.> "gtltrace") traces
         putStrLn $ "Written to "++(name <.> "gtltrace")
+  {-
   unless keep $ deleteTmp (name <.> "pr")
   -}
+  setCurrentDirectory currentDir
   return ()
+
+-- | Given a list of transitions, give a list of atoms that have to hold for each transition.
+traceToAtoms :: Map String (Buchi (Map a IntRestriction, Maybe Pr.AnyExpression, [GTLAtom String])) -- ^ The program to work on
+                -> [(String,(Integer, Int))] -- ^ The transitions, given in the form (model,transition-number)
+                -> Trace --[[GTLAtom (String,String)]]
+traceToAtoms stateMachines trace = let
+                                  in fmap (\(mdl, st) ->
+                                          let stateMachine = stateMachines ! mdl
+                                              rbuchi = translateGBA stateMachine
+                                              entr = rbuchi ! st
+                                              (_, _, atoms) = vars entr
+                                          in fmap (mapGTLVars (\n -> (mdl,n))) atoms
+                                        ) trace
+
+buildBuchi :: String -> GTLModel String -> Buchi (Map String IntRestriction, Maybe Pr.AnyExpression, [GTLAtom String])
+buildBuchi name model = runIdentity
+  (gtlToBuchi (\x -> let (restr, cond, atoms) = translateAtoms (Just (name,model)) (\(Just name) var t -> varName name var t) x
+                    in return (completeRestrictions (gtlModelOutput model) restr, cond, atoms))
+  (gtlModelContract model))
 
 translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = let outmp = buildOutputMap spec
@@ -193,8 +230,8 @@ assign mdl var lvl expr = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var cl)
 
 translateModel :: String -> GTLModel String -> InputMap -> OutputMap -> Pr.Module
 translateModel name model inmp outmp
-  = let buchi = runIdentity (gtlToBuchi (\x -> let (restr,cond) = translateAtoms (Just (name,model)) (\(Just name) var -> varName name var) x
-                                               in return (completeRestrictions (gtlModelOutput model) restr,cond)
+  = let buchi = runIdentity (gtlToBuchi (\x -> let (restr, cond, atoms) = translateAtoms (Just (name,model)) (\(Just name) var t -> varName name var t) x
+                                               in return (completeRestrictions (gtlModelOutput model) restr, cond, atoms)
                                         )
                              (gtlModelContract model))
     in Pr.ProcType
@@ -206,10 +243,10 @@ translateModel name model inmp outmp
        , proctypeSteps = fmap Pr.toStep $ translateBuchi (Just name) (\var -> (name,var)) buchi inmp outmp
        }
 
-translateBuchi :: Maybe String -> (a -> (String,String)) -> Buchi (Map a IntRestriction,Maybe Pr.AnyExpression) -> InputMap -> OutputMap -> [Pr.Statement]
+translateBuchi :: Maybe String -> (a -> (String,String)) -> Buchi (Map a IntRestriction,Maybe Pr.AnyExpression, [GTLAtom a]) -> InputMap -> OutputMap -> [Pr.Statement]
 translateBuchi mmdl f buchi inmp outmp
   = let rbuchi = translateGBA buchi
-    in [ prIf [ (case snd $ vars st of
+    in [ prIf [ (case snd3 $ vars st of
                     Nothing -> []
                     Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                 [ Pr.StmtGoto $ "st_"++show s1++"_"++show s2 ]
@@ -241,13 +278,13 @@ instance Monoid IntRestriction where
                   , unequals = (unequals r1)++(unequals r2)
                   }
 
-translateAtoms :: Ord a => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression)
-translateAtoms mmdl f = foldl (\(mp,expr) at -> case translateAtom mmdl f at of
-                                  Left (name,restr) -> (Map.insertWith mappend name restr mp,expr)
+translateAtoms :: Ord a => Maybe (String,GTLModel a) -> (Maybe String -> a -> Integer -> Pr.VarRef) -> [GTLAtom a] -> (Map a IntRestriction,Maybe Pr.AnyExpression, [GTLAtom a])
+translateAtoms mmdl f atoms = foldl (\(mp,expr,atoms) at -> case translateAtom mmdl f at of
+                                  Left (name,restr) -> (Map.insertWith mappend name restr mp,expr, atoms)
                                   Right cond -> case expr of
-                                    Nothing -> (mp,Just cond)
-                                    Just cond2 -> (mp,Just $ Pr.BinExpr Pr.BinAnd cond cond2)
-                              ) (Map.empty,Nothing)
+                                    Nothing -> (mp,Just cond, atoms)
+                                    Just cond2 -> (mp,Just $ Pr.BinExpr Pr.BinAnd cond cond2, atoms)
+                              ) (Map.empty,Nothing, atoms) atoms
 
 completeRestrictions :: Ord a => Map a TypeRep -> Map a IntRestriction -> Map a IntRestriction
 completeRestrictions tp mp = Map.union mp (fmap (const mempty) tp)
@@ -421,8 +458,8 @@ translateState
   -> OutputMap
   -> InputMap
   -> (Integer,Int)
-  -> BuchiState (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool
-  -> GBuchi (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression) Bool
+  -> BuchiState (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression, [GTLAtom a]) Bool
+  -> GBuchi (Integer,Int) (Map a IntRestriction,Maybe Pr.AnyExpression, [GTLAtom a]) Bool
     -> Pr.Statement
 translateState mmdl f outmp inmp n@(n1,n2) st buchi
   = (if finalSets st && isNothing mmdl
@@ -434,8 +471,8 @@ translateState mmdl f outmp inmp n@(n1,n2) st buchi
                     Just mdl -> [Pr.StmtPrintf ("ENTER " ++ mdl ++ " " ++ show n ++ "\n") []]
                 )++
      [ translateRestriction mdl rvar outmp inmp restr
-     | (var,restr) <- Map.toList (fst $ vars st), let (mdl,rvar) = f var ] ++
-     [prIf [ (case snd $ vars (buchi!(s1,s2)) of
+     | (var,restr) <- Map.toList (fst3 $ vars st), let (mdl,rvar) = f var ] ++
+     [prIf [ (case snd3 $ vars (buchi!(s1,s2)) of
                  Nothing -> []
                  Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
              [Pr.StmtGoto $ "st_"++show s1++"_"++show s2]
