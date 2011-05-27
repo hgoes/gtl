@@ -18,7 +18,7 @@ import Language.Promela.Pretty
 import Language.Scade.Pretty
 
 import Language.GTL.Target.PromelaKCG
-import Language.GTL.LocalVerification
+import Language.GTL.Target.Local
 import Language.GTL.Translation
 import Language.GTL.Model
 import Language.GTL.Target.PromelaCUDD as PrBd

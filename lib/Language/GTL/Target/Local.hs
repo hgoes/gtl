@@ -1,6 +1,6 @@
 {-| Provides the formalism-specific verification backend.
  -}
-module Language.GTL.LocalVerification where
+module Language.GTL.Target.Local where
 
 import Language.GTL.Model
 import Language.GTL.Backend.All
