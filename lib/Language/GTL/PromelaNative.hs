@@ -21,7 +21,6 @@ import Control.Monad.State
 import Data.Monoid
 import Data.Typeable
 import Data.Maybe
-import Data.BDD
 
 import System.FilePath
 import Language.Promela.Pretty
@@ -76,17 +75,16 @@ verifyModel opts name decls = do
   currentDir <- getCurrentDirectory
   setCurrentDirectory outputDir
   let buchi = buildBuchis (gtlSpecModels decls)
-  runBDDM $ do
-    traces <- mapM (\trace -> lift $ do
-                       res <- fmap (traceToAtoms buchi) $ parseTrace (name <.> "pr") trace
-                       return res
-                   ) traceFiles
-    case traces of
-      [] -> lift $ putStrLn "No errors found."
-      _  -> lift $ do
-        putStrLn $ show (length traces) ++ " errors found"
-        writeTraces (name <.> "gtltrace") traces
-        putStrLn $ "Written to "++(name <.> "gtltrace")
+  traces <- mapM (\trace -> do
+                     res <- fmap (traceToAtoms buchi) $ parseTrace (name <.> "pr") trace
+                     return res
+                 ) traceFiles
+  case traces of
+    [] -> putStrLn "No errors found."
+    _  -> do
+      putStrLn $ show (length traces) ++ " errors found"
+      writeTraces (name <.> "gtltrace") traces
+      putStrLn $ "Written to "++(name <.> "gtltrace")
   setCurrentDirectory currentDir
   return ()
 
