@@ -5,6 +5,8 @@ import System.FilePath
 import System.Process
 import Control.Monad (when)
 import System.Exit
+import System.Directory
+import System.IO.Error
 
 import Language.GTL.Parser.Lexer as GTL
 import Language.GTL.Parser as GTL
@@ -72,6 +74,8 @@ main = do
   when (showVersion opts) $ do
     putStrLn versionString
     exitSuccess
+  (createDirectoryIfMissing True $ outputPath opts)
+    `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file
   mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
   rgtl <- case mgtl of
@@ -80,7 +84,7 @@ main = do
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
-    PromelaBuddy -> PrBd.verifyModel True (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
+    PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
     Tikz -> do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str

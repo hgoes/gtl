@@ -30,6 +30,7 @@ import System.Process
 import Language.GTL.ErrorRefiner
 
 import Misc.ProgramOptions as Opts
+import Misc.VerificationEnvironment
 
 type OutputMap = Map (String,String) (Set (String,String),Maybe Integer)
 type InputMap = Map (String,String) Integer
@@ -40,18 +41,7 @@ data BuchiVariables a = BuchiVariables
   , atoms :: [GTLAtom a]
   }
 
-generatePan fileName outputDir = do
-  currentDir <- getCurrentDirectory
-  setCurrentDirectory outputDir
-  rawSystem "spin" ["-a", fileName]
-  setCurrentDirectory currentDir
 
-runVerifier verifier outputDir = do
-  currentDir <- getCurrentDirectory
-  setCurrentDirectory outputDir
-  outp <- readProcess ("." </> verifier) ["-a","-e"] ""
-  setCurrentDirectory currentDir
-  return outp
 
 -- | Do a complete verification of a given GTL file
 verifyModel :: Opts.Options -- ^ Options
@@ -59,19 +49,9 @@ verifyModel :: Opts.Options -- ^ Options
                -> GTLSpec String -- ^ The GTL file contents
                -> IO ()
 verifyModel opts name decls = do
-  let --prog = buildTransProgram decls
-      pr = translateSpec decls
+  let pr = translateSpec decls
       outputDir = (outputPath opts)
-  createDirectoryIfMissing True outputDir
-  writeFile (outputDir </> name <.> "pr") (show $ prettyPromela pr)
-  generatePan (name <.> "pr") outputDir
-  let verifier = (name ++ "-verifier")
-  rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts))
-  outp <- runVerifier verifier outputDir
-  putStrLn "--- Output ---"
-  putStrLn outp
-  let traceFiles = filterTraces outp
-  --putStrLn $ show traceFiles
+  traceFiles <- runVerification opts name pr
   currentDir <- getCurrentDirectory
   setCurrentDirectory outputDir
   let buchi = buildBuchis (gtlSpecModels decls)

@@ -31,7 +31,8 @@ Library
     Language.GTL.Buchi
     Language.GTL.PromelaNative
     Misc.ProgramOptions
+    Misc.VerificationEnvironment
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela,process,filepath
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory
   Main-Is: Main.hs
