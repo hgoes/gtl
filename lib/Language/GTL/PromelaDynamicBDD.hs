@@ -71,19 +71,7 @@ verifyModel opts name decls = do
   let prog = buildTransProgram decls
       pr = translateContracts prog
   traceFiles <- runVerification opts name pr
-  currentDir <- getCurrentDirectory
-  setCurrentDirectory (outputPath opts)
-  traces <- mapM (\trace -> do
-                     res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
-                     return res
-                 ) traceFiles
-  case traces of
-    [] -> putStrLn "No errors found."
-    _  -> do
-      putStrLn $ show (length traces) ++ " errors found"
-      writeTraces (name <.> "gtltrace") traces
-      putStrLn $ "Written to "++(name <.> "gtltrace")
-  setCurrentDirectory currentDir
+  parseTraces opts name traceFiles (traceToAtoms prog)
 
 -- | Given a list of transitions, give a list of atoms that have to hold for each transition.
 traceToAtoms :: TransProgram -- ^ The program to work on

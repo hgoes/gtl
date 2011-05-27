@@ -41,8 +41,6 @@ data BuchiVariables a = BuchiVariables
   , atoms :: [GTLAtom a]
   }
 
-
-
 -- | Do a complete verification of a given GTL file
 verifyModel :: Opts.Options -- ^ Options
                -> String -- ^ Name of the GTL file without extension
@@ -50,23 +48,9 @@ verifyModel :: Opts.Options -- ^ Options
                -> IO ()
 verifyModel opts name decls = do
   let pr = translateSpec decls
-      outputDir = (outputPath opts)
+      buchi = buildBuchis (gtlSpecModels decls)
   traceFiles <- runVerification opts name pr
-  currentDir <- getCurrentDirectory
-  setCurrentDirectory outputDir
-  let buchi = buildBuchis (gtlSpecModels decls)
-  traces <- mapM (\trace -> do
-                     res <- fmap (traceToAtoms buchi) $ parseTrace (name <.> "pr") trace
-                     return res
-                 ) traceFiles
-  case traces of
-    [] -> putStrLn "No errors found."
-    _  -> do
-      putStrLn $ show (length traces) ++ " errors found"
-      writeTraces (name <.> "gtltrace") traces
-      putStrLn $ "Written to "++(name <.> "gtltrace")
-  setCurrentDirectory currentDir
-  return ()
+  parseTraces opts name traceFiles (traceToAtoms buchi)
 
 -- | Given a list of transitions, give a list of atoms that have to hold for each transition.
 traceToAtoms :: Map String (Buchi (BuchiVariables String)) -- ^ The program to work on
