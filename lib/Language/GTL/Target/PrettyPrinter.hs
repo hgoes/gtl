@@ -2,7 +2,7 @@
 {-| This module provides functions to render GTL specifications to Tikz Latex drawing commands.
     It can thus be used to get a pretty image for a GTL file.
  -}
-module Language.GTL.PrettyPrinter where
+module Language.GTL.Target.PrettyPrinter where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL

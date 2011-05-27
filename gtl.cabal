@@ -20,7 +20,6 @@ Library
     Language.GTL.Translation
     Language.GTL.LTL
     Language.GTL.ErrorRefiner
-    Language.GTL.PrettyPrinter
     Language.GTL.Backend
     Language.GTL.Backend.Scade
     Language.GTL.Backend.None
@@ -32,6 +31,7 @@ Library
     Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
+    Language.GTL.Target.PrettyPrinter
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath

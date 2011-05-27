@@ -22,7 +22,7 @@ import Language.GTL.LocalVerification
 import Language.GTL.Translation
 import Language.GTL.Model
 import Language.GTL.Target.PromelaCUDD as PrBd
-import Language.GTL.PrettyPrinter as PrPr
+import Language.GTL.Target.PrettyPrinter as PrPr
 import Language.GTL.Target.Promela as PrNat
 
 data TranslationMode
