@@ -11,6 +11,7 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.Translation
 import Language.GTL.Buchi
 import Language.GTL.Types
+import Language.GTL.Target.Common hiding (Restriction (..),translateAtom,translateExpr,translateCheckExpr,translateAtoms)
 
 import Data.Set as Set
 import Data.Map as Map
@@ -21,9 +22,6 @@ import Prelude hiding (foldl,concat,foldl1)
 import Control.Monad.Identity
 import Data.Monoid
 import Data.Maybe
-
-type OutputMap = Map (String,String,[Integer]) (Set (String,String,[Integer]),Maybe Integer)
-type InputMap = Map (String,String,[Integer]) Integer
 
 translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = let outmp = buildOutputMap spec
@@ -59,23 +57,6 @@ declareVars spec outmp inmp
          [(mdl++"_"++var++concat [ "_"++show i | i <- idx ],Just (lvl+1),Nothing)]
        | ((mdl,var,idx),(lvl,inp)) <- Map.toList all_vars ]
 
-lookupType :: GTLSpec String -> String -> String -> [Integer] -> Bool -> GTLType
-lookupType spec inst var idx inp 
-  = let rinst = case Map.lookup inst (gtlSpecInstances spec) of
-          Nothing -> error $ "Internal error: Instance "++show inst++" not found."
-          Just p -> p
-        mdl = case Map.lookup (gtlInstanceModel rinst) (gtlSpecModels spec) of
-          Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel rinst)++" not found."
-          Just p -> p
-        ttp = case Map.lookup var (if inp then gtlModelInput mdl
-                                   else gtlModelOutput mdl) of
-                Nothing -> error $ "Internal error: Variable "++show var++" not found."
-                Just p -> p
-        tp = case resolveIndices ttp idx of
-          Right p -> p
-          _ -> error $ "Internal error: Unable to resolve type "++show ttp
-    in tp
-
 convertValue :: GTLType -> GTLConstant -> Pr.AnyExpression
 convertValue tp c = case unfix c of
   GTLIntVal v -> Pr.ConstExpr $ Pr.ConstInt v
@@ -96,56 +77,6 @@ translateNever expr inmp outmp
                              (return.(translateAtoms Nothing (\Nothing (mdl,var) -> varName mdl var)))
                              (gnot expr))
     in Pr.Never $ fmap Pr.toStep (Pr.StmtSkip:(translateBuchi Nothing id buchi inmp outmp))
-
-flattenVar :: GTLType -> [Integer] -> [(GTLType,[Integer])]
-flattenVar (GTLArray sz tp) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp is)
-flattenVar (GTLArray sz tp) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
-flattenVar (GTLTuple tps) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
-flattenVar (GTLTuple tps) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
-flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
-
-allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
-allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
-allPossibleIdx (GTLTuple tps) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
-allPossibleIdx tp = [(tp,[])]
-
-buildOutputMap :: GTLSpec String -> OutputMap
-buildOutputMap spec
-  = let mp1 = foldl (\mp (GTLConnPt mf vf fi,GTLConnPt mt vt ti)
-                     -> let tp_out = getInstanceVariableType spec False mf vf
-                            tp_in = getInstanceVariableType spec True mt vt
-                            idx_in = Set.fromList [ (mt,vt,i) | (_,i) <- flattenVar tp_in ti ]
-                            mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing)) | (_,i) <- flattenVar tp_out fi ]
-                        in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,nvr1)) mp mp_out
-                    ) Map.empty (gtlSpecConnections spec)
-        mp2 = foldl (\mp (var,idx,lvl)
-                     -> let tp = getInstanceVariableType spec False (fst var) (snd var)
-                        in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,case nvr1 of
-                                                                          Nothing -> nvr2
-                                                                          Just rnvr1 -> case nvr2 of
-                                                                            Nothing -> nvr1
-                                                                            Just rnvr2 -> Just $ max rnvr1 rnvr2))
-                           mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl)) | (_,i) <- flattenVar tp idx ])
-                    ) mp1 (getVars $ gtlSpecVerify spec)
-    in mp2
-
-buildInputMap :: GTLSpec String -> InputMap
-buildInputMap spec
-  = Map.foldlWithKey (\mp name inst
-                      -> let mdl = case Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec) of
-                               Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel inst)++" not found."
-                               Just p -> p
-                         in foldl (\mp' (var,idx,lvl)
-                                   -> if Map.member var (gtlModelInput mdl)
-                                      then Map.insertWith max (name,var,idx) lvl mp'
-                                      else mp'
-                                  ) (Map.union mp (Map.fromList
-                                                   [ ((name,var,idx),0)
-                                                   | (var,tp) <- Map.toList $ gtlModelInput mdl, 
-                                                     (t,idx) <- allPossibleIdx tp
-                                                   ]
-                                                  )) (getVars $ gtlModelContract mdl)
-                     ) Map.empty (gtlSpecInstances spec)
 
 varName :: String -> String -> [Integer] -> Integer -> Pr.VarRef
 varName mdl var idx lvl = VarRef (mdl ++ "_" ++ var ++ concat [ "_"++show i | i <- idx]) (Just lvl) Nothing

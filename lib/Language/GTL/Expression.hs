@@ -56,6 +56,11 @@ instance Functor (Term v) where
   fmap f (UnBoolExpr op p) = UnBoolExpr op (f p)
   fmap f (IndexExpr x i) = IndexExpr (f x) i
 
+instance Functor a => Functor (Typed a) where
+  fmap f t = Typed { getType = getType t
+                   , getValue = fmap f (getValue t)
+                   }
+
 instance (Binary r,Binary v) => Binary (Term v r) where
   put (Var v l) = put (0::Word8) >> put v >> put l
   put (Value val) = put (1::Word8) >> put val
