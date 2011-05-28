@@ -22,15 +22,15 @@ import Language.GTL.Target.Local
 import Language.GTL.Translation
 import Language.GTL.Model
 import Language.GTL.Target.PromelaCUDD as PrBd
-import Language.GTL.Target.PrettyPrinter as PrPr
+--import Language.GTL.Target.PrettyPrinter as PrPr
 import Language.GTL.Target.Promela as PrNat
 
 data TranslationMode
      = NativeC
      | Local
      | PromelaBuddy
-     | Tikz
-     | Pretty
+--     | Tikz
+--     | Pretty
      | Native
      deriving (Show,Eq)
 
@@ -56,7 +56,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty),("native",Native)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),("pretty",Pretty),-}("native",Native)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -161,9 +161,9 @@ main = do
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
     PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
-    Tikz -> do
+    {-Tikz -> do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str
-    Pretty -> putStrLn (simplePrettyPrint rgtl)
+    Pretty -> putStrLn (simplePrettyPrint rgtl)-}
     Native -> print (prettyPromela $ PrNat.translateSpec rgtl)
   return ()
