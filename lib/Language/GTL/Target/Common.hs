@@ -12,12 +12,14 @@ import Data.List (genericIndex)
 import Data.Monoid
 import Control.Monad.Identity
 
-type OutputMap = Map (String,String,[Integer]) (Set (String,String,[Integer]),Maybe Integer)
-type InputMap = Map (String,String,[Integer]) Integer
+type TargetVar = (String,String,[Integer])
+
+type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer)
+type InputMap = Map TargetVar Integer
 
 data TargetModel = TargetModel
-                   { tmodelVars :: [(String,[Integer],Integer,GTLType)]
-                   , tmodelProcs :: Map String (Buchi (Map (String,[Integer]) (Restriction (String,[Integer])),[TypedExpr (String,[Integer])]))
+                   { tmodelVars :: [(TargetVar,Integer,GTLType)]
+                   , tmodelProcs :: Map String (GBuchi (Integer,Int) (Map TargetVar (Restriction TargetVar),[TypedExpr TargetVar]) Bool)
                    , tmodelVerify :: TypedExpr (String,[Integer])
                    , tmodelInits :: Map (String,[Integer]) (Maybe GTLConstant)
                    } deriving Show
@@ -54,11 +56,14 @@ buildTargetModel spec inmp outmp
                                        Just rlvl -> Map.insertWith (\(lvl1,inp) (lvl2,_) -> (max lvl1 lvl2,inp)) (mf,vf,fi) (rlvl,False) cur
                                     ) (fmap (\lvl -> (lvl,True)) inmp) outmp
     in TargetModel
-       { tmodelVars = [ (mdl++"_"++var,idx,lvl,lookupType spec mdl var idx inp)
+       { tmodelVars = [ ((mdl,var,idx),lvl,lookupType spec mdl var idx inp)
                       | ((mdl,var,idx),(lvl,inp)) <- Map.toList all_vars ]
        , tmodelProcs = Map.mapWithKey (\name mdl 
-                                       -> runIdentity $ 
-                                          gtlToBuchi (return.(translateAtoms (Just (name,mdl))))
+                                       -> translateGBA $ runIdentity $ 
+                                          gtlToBuchi (return.(translateAtoms
+                                                              (\v idx -> (name,v,idx))
+                                                              (\(n,v,is) i -> (n,v,i:is))
+                                                              (Just (name,mdl))))
                                           (gtlModelContract mdl)
                                       ) (gtlSpecModels spec)
        , tmodelVerify = flattenExpr [] (mapGTLVars (\(m,v) -> m++"_"++v) $ gtlSpecVerify spec)
@@ -178,21 +183,21 @@ unpackExpr i e = case getValue e of
   IndexExpr ne ni -> unpackExpr (ni:i) (unfix ne)
   Automaton buchi -> [ flattenExpr i e ]
     
-translateAtoms :: (Ord a) => Maybe (String,GTLModel a) -> [TypedExpr a] -> (Map (a,[Integer]) (Restriction (a,[Integer])),[TypedExpr (a,[Integer])])
-translateAtoms mmdl
-  = foldl (\(restrs,expr) e -> case translateAtom mmdl e True [] of
+translateAtoms :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> [TypedExpr a] -> (Map b (Restriction b),[TypedExpr b])
+translateAtoms f g mmdl
+  = foldl (\(restrs,expr) e -> case translateAtom f g mmdl e True [] of
               Left nrestr -> (foldl (\mp (var,re) -> Map.insertWith mappend var re mp) restrs nrestr,expr)
               Right ne -> (restrs,ne++expr)) (Map.empty,[])
 
-translateAtom :: (Ord a) => Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
-                 -> Either [((a,[Integer]),Restriction (a,[Integer]))] [TypedExpr (a,[Integer])]
-translateAtom mmdl expr t idx
+translateAtom :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
+                 -> Either [(b,Restriction b)] [TypedExpr b]
+translateAtom f g mmdl expr t idx
   = case getValue expr of
-    BinRelExpr rel lhs rhs -> case translateExpr mmdl (unfix lhs) of
-      Left trg -> case translateExpr mmdl (unfix rhs) of
+    BinRelExpr rel lhs rhs -> case translateExpr f g mmdl (unfix lhs) of
+      Left trg -> case translateExpr f g mmdl (unfix rhs) of
         Left _ -> error "Can't relate more than one output var (yet)"
         Right src -> Left $ buildAssign rrel trg src
-      Right src -> case translateExpr mmdl (unfix rhs) of
+      Right src -> case translateExpr f g mmdl (unfix rhs) of
         Left trg -> Left $ buildAssign (relTurn rrel) trg src
         Right src2 -> Right [ Typed GTLBool (BinRelExpr rrel (Fix s1) (Fix s2)) | (s1,s2) <- zip src src2 ]
       where
@@ -201,44 +206,44 @@ translateAtom mmdl expr t idx
         buildAssign BinLTEq trg [src] = [(trg,mempty { upperLimits = [(True,src)] })]
         buildAssign BinGT trg [src] = [(trg,mempty { lowerLimits = [(False,src)] })]
         buildAssign BinGTEq trg [src] = [(trg,mempty { lowerLimits = [(True,src)] })]
-        buildAssign BinEq (trg,is) src = [ ((trg,i:is),mempty { equals = [s] }) | (i,s) <- zip [0..] src ]
-        buildAssign BinNEq (trg,is) src = [ ((trg,i:is),mempty { unequals = [s] }) | (i,s) <- zip [0..] src ]
-    Var var lvl -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (var,idx) lvl))]
+        buildAssign BinEq trg src = [ (g trg i,mempty { equals = [s] }) | (i,s) <- zip [0..] src ]
+        buildAssign BinNEq trg src = [ (g trg i,mempty { unequals = [s] }) | (i,s) <- zip [0..] src ]
+    Var var lvl -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (f var idx) lvl))]
                    in case mmdl of
                      Nothing -> Right chk
                      Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
                                         then Right chk
-                                        else Left [ ((var,reverse idx),mempty { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
-    IndexExpr e i -> translateAtom mmdl (unfix e) t (i:idx)
-    UnBoolExpr Not p -> translateAtom mmdl (unfix p) (not t) idx
+                                        else Left [ (f var (reverse idx),mempty { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
+    IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
+    UnBoolExpr Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
-translateExpr :: (Ord a) => Maybe (String,GTLModel a) -> TypedExpr a -> Either (a,[Integer]) [TypedExpr (a,[Integer])]
-translateExpr mmdl expr = case getValue expr of
+translateExpr :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
+translateExpr f g mmdl expr = case getValue expr of
   Var var 0 -> case mmdl of
-    Nothing -> Right $ translateCheckExpr Nothing expr []
+    Nothing -> Right $ translateCheckExpr f Nothing expr []
     Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
-                       then Left (var,[])
-                       else Right $ translateCheckExpr mmdl expr []
-  IndexExpr e i -> case translateExpr mmdl (unfix e) of
-    Left (v,idx) -> Left (v,i:idx)
-    Right _ -> Right $ translateCheckExpr mmdl (unfix e) [i]
-  _ -> Right $ translateCheckExpr mmdl expr []
+                       then Left $ f var []
+                       else Right $ translateCheckExpr f mmdl expr []
+  IndexExpr e i -> case translateExpr f g mmdl (unfix e) of
+    Left v -> Left $ g v i
+    Right _ -> Right $ translateCheckExpr f mmdl (unfix e) [i]
+  _ -> Right $ translateCheckExpr f mmdl expr []
 
-translateCheckExpr :: (Ord a) => Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr (a,[Integer])]
-translateCheckExpr mmdl expr idx = case getValue expr of
+translateCheckExpr :: (Ord a) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
+translateCheckExpr f mmdl expr idx = case getValue expr of
     Var var lvl -> case mmdl of
-      Nothing -> [Typed (getType expr) (Var (var,reverse idx) lvl)]
+      Nothing -> [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
       Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                         then [Typed (getType expr) (Var (var,reverse idx) lvl)]
+                         then [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
                          else error "Can't relate more than one output var (yet)"
     Value (GTLTupleVal xs) -> case idx of
-      i:is -> translateCheckExpr mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr mmdl (unfix x) [] | x <- xs ]
+      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
     Value (GTLArrayVal xs) -> case idx of
-      i:is -> translateCheckExpr mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr mmdl (unfix x) [] | x <- xs ]
+      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
     BinIntExpr op lhs rhs -> [ Typed (getType expr) (BinIntExpr op (Fix l) (Fix r))
-                             | (l,r) <- zip (translateCheckExpr mmdl (unfix lhs) idx)
-                                        (translateCheckExpr mmdl (unfix rhs) idx) ]
-    IndexExpr e i -> translateCheckExpr mmdl (unfix e) (i:idx)
+                             | (l,r) <- zip (translateCheckExpr f mmdl (unfix lhs) idx)
+                                        (translateCheckExpr f mmdl (unfix rhs) idx) ]
+    IndexExpr e i -> translateCheckExpr f mmdl (unfix e) (i:idx)
     _ -> [mapGTLVars (const undefined) expr]
