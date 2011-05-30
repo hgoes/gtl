@@ -33,7 +33,8 @@ Library
     --Language.GTL.Target.PrettyPrinter
     Language.GTL.Target.Local
     Language.GTL.Target.Common
+    Language.GTL.Target.UPPAAL
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela,process,filepath
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,language-uppaal
   Main-Is: Main.hs

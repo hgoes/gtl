@@ -16,6 +16,7 @@ import Language.Scade.Lexer as Sc
 import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
+import Language.UPPAAL.PrettyPrinter
 
 import Language.GTL.Target.PromelaKCG
 import Language.GTL.Target.Local
@@ -24,6 +25,7 @@ import Language.GTL.Model
 import Language.GTL.Target.PromelaCUDD as PrBd
 --import Language.GTL.Target.PrettyPrinter as PrPr
 import Language.GTL.Target.Promela as PrNat
+import Language.GTL.Target.UPPAAL as UPP
 
 data TranslationMode
      = NativeC
@@ -32,6 +34,7 @@ data TranslationMode
 --     | Tikz
 --     | Pretty
      | Native
+     | UPPAAL
      deriving (Show,Eq)
 
 data Options = Options
@@ -56,7 +59,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),("pretty",Pretty),-}("native",Native)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),("pretty",Pretty),-}("native",Native),("uppaal",UPPAAL)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -166,4 +169,5 @@ main = do
       putStrLn str
     Pretty -> putStrLn (simplePrettyPrint rgtl)-}
     Native -> print (prettyPromela $ PrNat.translateSpec rgtl)
+    UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
   return ()
