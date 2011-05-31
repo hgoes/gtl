@@ -59,13 +59,20 @@ translateTarget tm
                                                        , locCommited = False
                                                        , locColor = Nothing
                                                        } ],
-                    let start_trans = [ noPos $ Transition Nothing "start" ("l"++show s1++"_"++show s2)
-                                        [] [] Nothing
+                    let start_trans = [ noPos $ Transition { transId = Nothing
+                                                           , transSource = "start"
+                                                           , transTarget = "l"++show s1++"_"++show s2
+                                                           , transLabel = translateRestrictions all_enums 0 (fst (vars st)) ++
+                                                                          translateConditions (snd (vars st))
+                                                           , transNails = []
+                                                           , transColor = Nothing
+                                                           }
                                       | ((s1,s2),st) <- Map.toList buchi, isStart st ],
                     let st_trans = [ noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s1++"_"++show s2 
                                                         , transTarget = "l"++show t1++"_"++show t2
-                                                        , transLabel = translateRestrictions all_enums 0 (fst (vars nst))
+                                                        , transLabel = translateRestrictions all_enums 0 (fst (vars nst)) ++
+                                                                       translateConditions (snd (vars nst))
                                                         , transNails = []
                                                         , transColor = Nothing
                                                         }
@@ -74,6 +81,10 @@ translateTarget tm
                                      let nst = buchi!(t1,t2)
                                      ]
                   ]
+
+translateConditions :: [TypedExpr TargetVar] -> [Positional Label]
+translateConditions conds = [noPos (Label Guard [ translateExpression e ])
+                            | e <- conds ]
 
 translateRestrictions :: Map [String] Int -> Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> [Positional Label]
 translateRestrictions _ _ [] = []
@@ -128,6 +139,13 @@ translateExpression expr = case getValue expr of
                                                   G.BinGTEq -> U.BinGTE
                                                   G.BinEq -> U.BinEq
                                                   G.BinNEq -> U.BinNEq) (translateExpression l) (translateExpression r)
+  BinIntExpr op (Fix l) (Fix r) -> ExprBinary (case op of
+                                                  G.OpPlus -> U.BinPlus
+                                                  G.OpMinus -> U.BinMinus
+                                                  G.OpMult -> U.BinMult
+                                                  G.OpDiv -> U.BinDiv) (translateExpression l) (translateExpression r)
+  UnBoolExpr op (Fix e) -> ExprUnary (case op of
+                                         G.Not -> U.UnNot) (translateExpression e)
                                                   
 
 convertType :: Map [String] Int -> GTLType -> TypeId
