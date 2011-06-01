@@ -21,7 +21,6 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (mapMaybe)
-import Data.BDD
 import Data.Bits
 
 -- | Compile a GTL declaration into a promela module simulating the specified model.

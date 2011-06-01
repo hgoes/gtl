@@ -6,8 +6,6 @@ module Language.GTL.ErrorRefiner where
 
 import System.Process
 import Data.Maybe (mapMaybe)
-import Data.BDD
-import Data.BDD.Serialization
 import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
 import Data.Bits

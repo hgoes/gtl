@@ -30,7 +30,6 @@ import Data.Maybe
 
 import System.IO.Error (isDoesNotExistError)
 import Language.GTL.ErrorRefiner
-import Data.BDD
 import Control.Exception.Extensible
 import System.Process
 import System.FilePath
@@ -84,18 +83,17 @@ verifyModel keep gcc cflags name decls = do
   putStrLn outp
   unless keep $ deleteTmp verifier
   let trace_files = filterTraces outp
-  runBDDM $ do
-    traces <- mapM (\trace -> lift $ do
-                       res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
-                       unless keep $ deleteTmp trace
-                       return res
-                   ) trace_files
-    case traces of
-      [] -> lift $ putStrLn "No errors found."
-      _  -> lift $ do
-        putStrLn $ show (length traces) ++ " errors found"
-        writeTraces (name <.> "gtltrace") traces
-        putStrLn $ "Written to "++(name <.> "gtltrace")
+  traces <- mapM (\trace -> do
+                     res <- fmap (traceToAtoms prog) $ parseTrace (name <.> "pr") trace
+                     unless keep $ deleteTmp trace
+                     return res
+                 ) trace_files
+  case traces of
+    [] -> putStrLn "No errors found."
+    _  -> do
+      putStrLn $ show (length traces) ++ " errors found"
+      writeTraces (name <.> "gtltrace") traces
+      putStrLn $ "Written to "++(name <.> "gtltrace")
   unless keep $ deleteTmp (name <.> "pr")
 
 -- | Given a list of transitions, give a list of atoms that have to hold for each transition.

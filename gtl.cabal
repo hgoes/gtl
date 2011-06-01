@@ -9,7 +9,7 @@ Description:
   synchronous and asynchronous model checking formalisms.
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,bdd,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl,language-uppaal
+  Build-Depends:        base,array,containers,language-scade,language-promela,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl,language-uppaal
   Hs-Source-Dirs: lib
   Exposed-Modules:
     Language.GTL.Parser
