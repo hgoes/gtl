@@ -53,6 +53,9 @@ plusRestriction r1 r2
                   }
   | otherwise = error $ "Merging restrictions of type "++show (restrictionType r1)++" and "++show (restrictionType r2)
 
+completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a (Restriction b)
+completeRestrictions restr outp = Map.union restr (fmap emptyRestriction outp)
+
 buildTargetModel :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
 buildTargetModel spec inmp outmp
   = let all_vars = Map.foldrWithKey (\(mf,vf,fi) (vars,lvl) cur
@@ -70,6 +73,11 @@ buildTargetModel spec inmp outmp
                                                                                     (\v idx -> (name,v,idx))
                                                                                     (\(n,v,is) i -> (n,v,i:is))
                                                                                     (Just (name,mdl)) atm
+                                                                     rrestr = completeRestrictions restr (Map.fromList 
+                                                                                                          [ ((name,var,idx),rtp)
+                                                                                                          | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
+                                                                                                            (rtp,idx) <- flattenVar tp []
+                                                                                                          ])
                                                                  in return ([ ([ (tvar,case Map.lookup tvar inmp of
                                                                                      Nothing -> error (show (tvar,var,r))
                                                                                      Just p -> p
@@ -78,9 +86,9 @@ buildTargetModel spec inmp outmp
                                                                                ] ++ (case nvr of
                                                                                         Nothing -> []
                                                                                         Just lvl -> [(var,lvl)]),r)
-                                                                            | (var,r) <- Map.toList restr,
+                                                                            | (var,r) <- Map.toList rrestr,
                                                                               let (tvars,nvr) = case Map.lookup var outmp of
-                                                                                    Nothing -> error (show (var,r))
+                                                                                    Nothing -> (Set.empty,Nothing)
                                                                                     Just p -> p
                                                                             ],cond)
                                                         )

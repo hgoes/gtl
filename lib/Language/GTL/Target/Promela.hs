@@ -14,10 +14,11 @@ import Language.GTL.Target.Common
 
 import Data.Set as Set
 import Data.Map as Map
-import Data.List (elemIndex)
+import Data.List (elemIndex,genericLength)
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1,mapM)
 import Data.Maybe
+import Data.Int
 
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
@@ -178,10 +179,13 @@ translateTRestr tvars restr
                                     | v <- Set.toList rr ] of 
                        [] -> Nothing
                        p -> Just $ prIf p
-        Nothing -> Just $ prSequence $ buildTGenerator 
-                   (fmap (\(t,e) -> (t,translateTExpr e)) $ upperLimits restr)
-                   (fmap (\(t,e) -> (t,translateTExpr e)) $ lowerLimits restr)
-                   (\v -> build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkNEquals,checkNAllowed])) tvars
+        Nothing -> case buildTGenerator (restrictionType restr)
+                        (fmap (\(t,e) -> (t,translateTExpr e)) $ upperLimits restr)
+                        (fmap (\(t,e) -> (t,translateTExpr e)) $ lowerLimits restr)
+                        (\v -> build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f v) [checkNEquals,checkNAllowed])) tvars of
+                     [] -> Nothing
+                     [x] -> Just x
+                     xs -> Just $ prSequence xs
       _ -> case catMaybes  [ case ((case build (Pr.BinExpr Pr.BinAnd) (fmap (\f -> f tv) [checkAllowed,checkNEquals,checkNAllowed,checkUppers,checkLowers]) of
                                        Nothing -> []
                                        Just chk -> [Pr.StmtExpr $ Pr.ExprAny chk])++
@@ -194,10 +198,14 @@ translateTRestr tvars restr
                     [[p]] -> Just p
                     p -> Just $ prIf p
 
-buildTGenerator :: [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.AnyExpression -> Maybe Pr.AnyExpression) -> [(TargetVar,Integer)] -> [Pr.Statement]
-buildTGenerator upper lower check to
+buildTGenerator :: GTLType -> [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.AnyExpression -> Maybe Pr.AnyExpression) -> [(TargetVar,Integer)] -> [Pr.Statement]
+buildTGenerator tp upper lower check to
   = let rupper e = case upper of
-          [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (maxBound::Int)))
+          [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (case tp of
+                                                                      GTLEnum xs -> (genericLength xs)-1
+                                                                      GTLInt -> fromIntegral (maxBound::Int32)
+                                                                      GTLBool -> 1
+                                                                  ))
           _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $
                fmap (\(inc,expr) -> Pr.BinExpr Pr.BinLT e (if inc
                                                            then expr
@@ -207,10 +215,15 @@ buildTGenerator upper lower check to
                                       then expr
                                       else Pr.BinExpr Pr.BinPlus expr (Pr.ConstExpr $ Pr.ConstInt 1)) lower
     in case to of
-      [] -> [Pr.StmtSkip]
+      [] -> []
       ((inst,var,idx),lvl):fs 
         -> let trg = Pr.RefExpr (varName inst var idx 0)
-           in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (fromIntegral (minBound::Int)))
+           in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case tp of
+                                                                 GTLEnum _ -> 0
+                                                                 GTLInt -> fromIntegral (minBound::Int)
+                                                                 GTLBool -> 0
+                                                             )
+                                 )
                (prSequence . assign inst var idx lvl)
                rlower]++
                [prDo $ [[Pr.StmtExpr $ Pr.ExprAny $ rupper trg]++
