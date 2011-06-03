@@ -7,7 +7,6 @@ import Language.GTL.Parser.Token
 import Language.GTL.Parser.Syntax
 import Language.GTL.Types
 
-import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
 }
 

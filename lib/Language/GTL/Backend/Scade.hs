@@ -13,9 +13,7 @@ import Language.GTL.LTL as LTL
 import Data.Map as Map
 import Data.Set as Set
 import Data.List as List
-import Data.Dynamic
 import Control.Monad.Identity
-import Data.Maybe
 
 data Scade = Scade deriving (Show)
 

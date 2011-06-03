@@ -8,22 +8,16 @@ module Language.GTL.Target.Promela where
 import Language.GTL.Model
 import Language.GTL.Expression as GTL
 import Language.Promela.Syntax as Pr
-import Language.GTL.Translation
 import Language.GTL.Buchi
 import Language.GTL.Types
 import Language.GTL.Target.Common
 
 import Data.Set as Set
 import Data.Map as Map
-import Data.List (genericIndex,elemIndex)
-import Data.Dynamic
+import Data.List (elemIndex)
 import Data.Foldable
-import Data.Traversable
 import Prelude hiding (foldl,concat,foldl1,mapM)
-import Control.Monad.Identity (runIdentity)
-import Data.Monoid
 import Data.Maybe
-import Debug.Trace
 
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl

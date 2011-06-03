@@ -13,15 +13,11 @@ import Language.GTL.Translation
 import Language.GTL.LTL
 
 import qualified Language.Promela.Syntax as Pr
-import qualified Language.Scade.Syntax as Sc
 import Language.Promela.Pretty
 
 import Data.Map (Map,(!))
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Maybe (mapMaybe)
-import Data.Bits
 
 -- | Compile a GTL declaration into a promela module simulating the specified model.
 --   Optionally takes a trace that is used to restrict the execution.

@@ -10,9 +10,6 @@ import Language.GTL.Expression as GTL
 import Language.GTL.Types as GTL
 import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
-import Data.Binary
-import Data.Word
-import Data.Typeable
 import Data.Foldable
 import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,mapM)
@@ -20,37 +17,6 @@ import Data.List (genericLength)
 
 import Data.Set as Set
 import Data.Map as Map
-
-{-
--- | A representation of GTL expressions that can't be further translated into LTL
---   and thus have to be used as atoms.
-data GTLAtom v = GTLBoolExpr (GTL.BoolExpr v) Bool
-               deriving (Eq, Ord)
-
-instance Show v => Show (GTLAtom v) where
-  show (GTLBoolExpr e _) = show e
-
-instance Binary v => Binary (GTLAtom v) where
-  put (GTLBoolExpr e n) = put e >> put n
-  get = do
-    e <- get
-    n <- get
-    return $ GTLBoolExpr e n
-
--- | Applies a function to every variable in the atom.
-mapGTLVars :: (v -> w) -> GTLAtom v -> GTLAtom w
-mapGTLVars f (GTLBoolExpr e p) = GTLBoolExpr (mapVarsBoolExpr f e) p
-
--- | Negate a GTL atom.
-gtlAtomNot :: GTLAtom v -> GTLAtom v
-gtlAtomNot (GTLBoolExpr e p) = GTLBoolExpr e (not p) -- TODO: be more intelligent as before
---gtlAtomNot (GTLElem name lits p) = GTLElem name lits (not p)
---gtlAtomNot (GTLVar n lvl v) = GTLVar n lvl (not v)
-
--- | Like `gtlToBuchi' but takes more than one formula.
-gtlsToBuchi :: (Monad m,Show v,Ord v) => ([TypedExpr v] -> m a) -> [GTL.LogicExpr v] -> m (Buchi a)
-gtlsToBuchi f = (gtlToBuchi f) . foldl1 (BinLogicExpr GTL.And)
--}
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be

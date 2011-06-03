@@ -8,14 +8,9 @@ import System.Process
 import Data.Maybe (mapMaybe)
 import Data.Map as Map hiding (mapMaybe)
 import Data.Set as Set
-import Data.Bits
 import Data.Binary
 import Data.Binary.Put
 import Data.Binary.Get
-import System.FilePath
-import Language.Promela.Pretty
-import Control.Monad
-import Control.Monad.Trans
 import qualified Data.ByteString.Lazy as LBS
 import Codec.Compression.BZip
 import Data.List (genericLength,elemIndex)
@@ -23,7 +18,6 @@ import Data.List (genericLength,elemIndex)
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
 import Language.GTL.Expression as GTL
-import Language.GTL.Translation
 import Language.GTL.Types
 
 -- | A trace is a list of requirements.

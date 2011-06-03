@@ -26,7 +26,6 @@ import Control.Monad.State
 import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
-import Data.Maybe
 
 import System.IO.Error (isDoesNotExistError)
 import Language.GTL.ErrorRefiner

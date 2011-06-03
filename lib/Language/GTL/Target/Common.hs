@@ -9,7 +9,6 @@ import Language.GTL.Buchi
 import Data.Set as Set
 import Data.Map as Map
 import Data.List (genericIndex)
-import Data.Monoid
 import Control.Monad.Identity
 
 type TargetVar = (String,String,[Integer])

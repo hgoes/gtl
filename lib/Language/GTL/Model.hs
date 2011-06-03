@@ -7,12 +7,8 @@ import Language.GTL.Parser.Syntax
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Language.GTL.Types
-import Data.Typeable
-import Data.Dynamic
 import Data.Map as Map
 import Data.Set as Set
-import Data.List (genericIndex,genericLength)
-import Data.Binary
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
 

@@ -3,7 +3,6 @@ module Language.GTL.Types where
 
 import Text.Read hiding (get)
 import Data.Binary
-import Data.Word
 import Data.List (genericLength,genericIndex)
 import Data.Foldable (Foldable)
 import Data.Traversable

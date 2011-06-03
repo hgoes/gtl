@@ -13,8 +13,6 @@ import Language.GTL.Types
 import Data.Binary
 import Data.Maybe
 import Data.Map as Map
-import Control.Exception
-import Control.Monad (foldM)
 import Data.Set as Set
 import Data.List as List (genericLength,genericIndex)
 import Data.Either

@@ -18,9 +18,7 @@ import Data.Set as Set
 import Data.Map as Map
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1)
-import Control.Monad.Identity (runIdentity)
 import Language.GTL.Buchi
-import Data.Traversable
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a

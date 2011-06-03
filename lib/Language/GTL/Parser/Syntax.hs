@@ -3,10 +3,7 @@ module Language.GTL.Parser.Syntax where
 
 import Language.GTL.Parser.Token (UnOp(..),BinOp(..))
 import Language.GTL.Types
-import Control.Monad.Error
 import Data.Map as Map
-import Data.Word
-import Data.Typeable
 
 -- | A GTL file is a list of declarations.
 data Declaration = Model ModelDecl -- ^ Declares a model.

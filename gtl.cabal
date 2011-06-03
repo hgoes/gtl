@@ -11,6 +11,7 @@ Description:
 Library
   Build-Depends:        base,array,containers,language-scade,language-promela,mtl,process,filepath,binary,bytestring,bzlib,directory,extensible-exceptions,graphviz,fgl,language-uppaal
   Hs-Source-Dirs: lib
+  GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
     Language.GTL.Parser
     Language.GTL.Parser.Lexer
