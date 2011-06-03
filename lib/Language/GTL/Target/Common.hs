@@ -53,8 +53,8 @@ plusRestriction r1 r2
                   }
   | otherwise = error $ "Merging restrictions of type "++show (restrictionType r1)++" and "++show (restrictionType r2)
 
-completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a (Restriction b)
-completeRestrictions restr outp = Map.union restr (fmap emptyRestriction outp)
+completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
+completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
 
 buildTargetModel :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
 buildTargetModel spec inmp outmp
@@ -77,7 +77,7 @@ buildTargetModel spec inmp outmp
                                                                                                           [ ((name,var,idx),rtp)
                                                                                                           | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
                                                                                                             (rtp,idx) <- flattenVar tp []
-                                                                                                          ])
+                                                                                                          ]) outmp
                                                                  in return ([ ([ (tvar,case Map.lookup tvar inmp of
                                                                                      Nothing -> error (show (tvar,var,r))
                                                                                      Just p -> p

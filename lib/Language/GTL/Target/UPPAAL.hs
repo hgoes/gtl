@@ -152,7 +152,8 @@ convertType :: Map [String] Int -> GTLType -> TypeId
 convertType _ GTLInt = TypeInt Nothing
 convertType _ GTLByte = TypeInt (Just (ExprNat 0,ExprNat 255))
 convertType _ GTLBool = TypeInt (Just (ExprNat 0,ExprNat 1))
-convertType enums (GTLEnum xs) = TypeName ("enum"++show (enums!xs))
+convertType enums (GTLEnum xs) = TypeName ("enum"++show (case Map.lookup xs enums of
+                                                            Just p -> p))
 
 varString :: TargetVar -> String
 varString (iname,var,idx) = iname++"_"++var++concat [ "_"++show i | i <- idx ]
