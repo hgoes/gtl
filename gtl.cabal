@@ -35,6 +35,7 @@ Library
     Language.GTL.Target.Local
     Language.GTL.Target.Common
     Language.GTL.Target.UPPAAL
+    Language.GTL.Target.Printer
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath,language-uppaal
