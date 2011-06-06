@@ -7,22 +7,17 @@ import Language.GTL.Buchi
 import Language.UPPAAL.Syntax as U
 import Language.GTL.Target.Common
 
-import Data.List (genericLength,genericReplicate)
+import Data.List (genericLength,genericReplicate,elemIndex)
 import Data.Map as Map
 import Data.Set as Set
 
 translateSpec :: GTLSpec String -> U.Specification
 translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec) (buildOutputMap spec))
 
-getEnums :: TargetModel -> Map [String] Int
-getEnums tm = foldl (\mp x -> case Map.lookup x mp of
-                        Nothing -> Map.insert x (Map.size mp) mp
-                        Just _ -> mp) Map.empty [ xs | (_,_,GTLEnum xs,_) <- tmodelVars tm ]
-
 translateTarget :: TargetModel -> U.Specification
 translateTarget tm
   = Spec { specImports = Nothing
-         , specDeclarations = enum_decls ++ var_decls
+         , specDeclarations = var_decls
          , specTemplates = templates
          , specInstantiation = Nothing
          , specProcesses = [ (pname,pname++"_tmpl",[])
@@ -31,15 +26,10 @@ translateTarget tm
                         | pname <- Map.keys (tmodelProcs tm) ]
          }
     where
-      all_enums = getEnums tm
-      enum_decls = concat [ [ TypeDecl (Type Nothing (TypeScalar (ExprNat (genericLength xs)))) [("enum"++show i,[])] ] ++
-                            [ VarDecl (Type Nothing (TypeName ("enum"++show i))) [(x,[],Nothing)]
-                            | x <- xs ]
-                          | (xs,i) <- Map.toList all_enums ]
-      var_decls = [ VarDecl (Type Nothing (convertType all_enums tp))
+      var_decls = [ VarDecl (Type Nothing (convertType tp))
                     [(varString var,[ExprArray (ExprNat (lvl+1))],case init of
                          Nothing -> Nothing
-                         Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant $ unfix $ head $ Set.toList iset)]
+                         Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant tp $ unfix $ head $ Set.toList iset)]
                   | (var,lvl,tp,init) <- tmodelVars tm ]
       templates = [Template (noPos $ pname++"_tmpl") Nothing [] 
                    (start_loc ++ st_locs)
@@ -64,7 +54,7 @@ translateTarget tm
                     let start_trans = [ noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
                                                            , transTarget = "l"++show s1++"_"++show s2
-                                                           , transLabel = translateRestrictions all_enums 0 (fst (vars st)) ++
+                                                           , transLabel = translateRestrictions 0 (fst (vars st)) ++
                                                                           translateConditions (snd (vars st))
                                                            , transNails = []
                                                            , transColor = Nothing
@@ -73,7 +63,7 @@ translateTarget tm
                     let st_trans = [ noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s1++"_"++show s2 
                                                         , transTarget = "l"++show t1++"_"++show t2
-                                                        , transLabel = translateRestrictions all_enums 0 (fst (vars nst)) ++
+                                                        , transLabel = translateRestrictions 0 (fst (vars nst)) ++
                                                                        translateConditions (snd (vars nst))
                                                         , transNails = []
                                                         , transColor = Nothing
@@ -88,12 +78,12 @@ translateConditions :: [TypedExpr TargetVar] -> [Positional Label]
 translateConditions conds = [noPos (Label Guard [ translateExpression e ])
                             | e <- conds ]
 
-translateRestrictions :: Map [String] Int -> Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> [Positional Label]
-translateRestrictions _ _ [] = []
-translateRestrictions enums i ((tvars,restr):xs)
-  = (translateRestriction enums i restr) ++
+translateRestrictions :: Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> [Positional Label]
+translateRestrictions _ [] = []
+translateRestrictions i ((tvars,restr):xs)
+  = (translateRestriction i restr) ++
     (translateUpdate i tvars)++
-    (translateRestrictions enums (i+1) xs)
+    (translateRestrictions (i+1) xs)
 
 translateUpdate :: Integer -> [(TargetVar,Integer)] -> [Positional Label]
 translateUpdate i vars = [noPos (Label Assignment [ExprAssign Assign
@@ -103,9 +93,9 @@ translateUpdate i vars = [noPos (Label Assignment [ExprAssign Assign
                                                     else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
                                                   | (var,lvl) <- vars, j <- reverse [0..lvl] ])]
   
-translateRestriction :: Map [String] Int -> Integer -> Restriction TargetVar -> [Positional Label]
-translateRestriction enums i restr
-  = [noPos (Label Selection [ExprSelect [("tmp"++show i,Type Nothing (convertType enums (restrictionType restr)))]])
+translateRestriction :: Integer -> Restriction TargetVar -> [Positional Label]
+translateRestriction i restr
+  = [noPos (Label Selection [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]])
     ,noPos (Label Guard $ 
             [ ExprBinary (if ins then U.BinGTE else U.BinGT) (ExprId ("tmp"++show i)) (translateExpression lower)
             | (ins,lower) <- lowerLimits restr
@@ -122,15 +112,16 @@ translateRestriction enums i restr
            )
     ]
 
-translateConstant :: GTLValue r -> Expression
-translateConstant (GTLBoolVal b) = ExprNat (if b then 1 else 0)
-translateConstant (GTLIntVal b) = ExprNat b
-translateConstant (GTLEnumVal x) = ExprId x
+translateConstant :: GTLType -> GTLValue r -> Expression
+translateConstant _ (GTLBoolVal b) = ExprNat (if b then 1 else 0)
+translateConstant _ (GTLIntVal b) = ExprNat b
+translateConstant (GTLEnum xs) (GTLEnumVal x) = let Just i = elemIndex x xs
+                                                in ExprNat (fromIntegral i)
 
 translateExpression :: TypedExpr TargetVar -> Expression
 translateExpression expr = case getValue expr of
   Var v h -> ExprIndex (ExprId (varString v)) (ExprNat h)
-  Value val -> translateConstant val
+  Value val -> translateConstant (getType expr) val
   BinBoolExpr op (Fix l) (Fix r) -> ExprBinary (case op of
                                                    And -> BinAnd
                                                    Or -> BinOr
@@ -151,12 +142,11 @@ translateExpression expr = case getValue expr of
                                          G.Not -> U.UnNot) (translateExpression e)
                                                   
 
-convertType :: Map [String] Int -> GTLType -> TypeId
-convertType _ GTLInt = TypeInt Nothing
-convertType _ GTLByte = TypeInt (Just (ExprNat 0,ExprNat 255))
-convertType _ GTLBool = TypeInt (Just (ExprNat 0,ExprNat 1))
-convertType enums (GTLEnum xs) = TypeName ("enum"++show (case Map.lookup xs enums of
-                                                            Just p -> p))
+convertType :: GTLType -> TypeId
+convertType GTLInt = TypeInt Nothing
+convertType GTLByte = TypeInt (Just (ExprNat 0,ExprNat 255))
+convertType GTLBool = TypeInt (Just (ExprNat 0,ExprNat 1))
+convertType (GTLEnum xs) = TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1)))
 
 varString :: TargetVar -> String
 varString (iname,var,idx) = iname++"_"++var++concat [ "_"++show i | i <- idx ]
