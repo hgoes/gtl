@@ -15,7 +15,7 @@ import Prelude hiding (foldl,concat,foldl1)
 
 type TargetVar = (String,String,[Integer])
 
-type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType{-,Maybe (Set GTLConstant)-})
+type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType)
 type InputMap = Map TargetVar (Integer,GTLType)
 
 data TargetModel = TargetModel
