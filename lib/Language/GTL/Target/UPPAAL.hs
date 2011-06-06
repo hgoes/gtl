@@ -7,7 +7,7 @@ import Language.GTL.Buchi
 import Language.UPPAAL.Syntax as U
 import Language.GTL.Target.Common
 
-import Data.List (genericLength)
+import Data.List (genericLength,genericReplicate)
 import Data.Map as Map
 import Data.Set as Set
 
@@ -37,8 +37,10 @@ translateTarget tm
                             | x <- xs ]
                           | (xs,i) <- Map.toList all_enums ]
       var_decls = [ VarDecl (Type Nothing (convertType all_enums tp))
-                    [(varString var,[ExprArray (ExprNat (lvl+1))],Nothing)]
-                  | (var,lvl,tp,_) <- tmodelVars tm ]
+                    [(varString var,[ExprArray (ExprNat (lvl+1))],case init of
+                         Nothing -> Nothing
+                         Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant $ unfix $ head $ Set.toList iset)]
+                  | (var,lvl,tp,init) <- tmodelVars tm ]
       templates = [Template (noPos $ pname++"_tmpl") Nothing [] 
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
@@ -120,14 +122,15 @@ translateRestriction enums i restr
            )
     ]
 
+translateConstant :: GTLValue r -> Expression
+translateConstant (GTLBoolVal b) = ExprNat (if b then 1 else 0)
+translateConstant (GTLIntVal b) = ExprNat b
+translateConstant (GTLEnumVal x) = ExprId x
+
 translateExpression :: TypedExpr TargetVar -> Expression
 translateExpression expr = case getValue expr of
   Var v h -> ExprIndex (ExprId (varString v)) (ExprNat h)
-  Value (GTLBoolVal b) -> ExprNat (if b
-                                   then 1
-                                   else 0)
-  Value (GTLIntVal b) -> ExprNat b
-  Value (GTLEnumVal x) -> ExprId x
+  Value val -> translateConstant val
   BinBoolExpr op (Fix l) (Fix r) -> ExprBinary (case op of
                                                    And -> BinAnd
                                                    Or -> BinOr
