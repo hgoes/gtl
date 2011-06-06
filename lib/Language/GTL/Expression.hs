@@ -146,6 +146,12 @@ instance Eq v => Eq (Fix (Typed (Term v))) where
 instance Ord v => Ord (Fix (Typed (Term v))) where
   compare e1 e2 = compare (getValue $ unfix e1) (getValue $ unfix e2)
 
+instance Eq (Fix GTLValue) where
+  e1 == e2 = (unfix e1) == (unfix e2)
+  
+instance Ord (Fix GTLValue) where 
+  compare e1 e2 = compare (unfix e1) (unfix e2)
+
 showTerm :: Show v => (r -> String) -> Term v r -> String
 showTerm f (Var name lvl) = show name ++ (if lvl==0
                                           then ""
@@ -382,24 +388,25 @@ pushNot expr
 
 -- | Extracts the maximum level of history for each variable in the expression.
 maximumHistory :: Ord v => TypedExpr v -> Map v Integer
-maximumHistory exprs = foldl (\mp (n,_,lvl) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
+maximumHistory exprs = foldl (\mp (n,_,lvl,_) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 
 -- | Extracts all variables with their level of history from an expression.
-getVars :: TypedExpr v -> [(v,[Integer],Integer)]
-getVars x = getTermVars (getVars . unfix) (getValue x)
+getVars :: TypedExpr v -> [(v,[Integer],Integer,GTLType)]
+getVars x = getTermVars (getVars . unfix) x
 
-getTermVars :: (r -> [(v,[Integer],Integer)]) -> Term v r -> [(v,[Integer],Integer)]
-getTermVars mu (Var n lvl) = [(n,[],lvl)]
-getTermVars mu (Value x) = getValueVars mu x
-getTermVars mu (BinBoolExpr op l r) = (mu l)++(mu r)
-getTermVars mu (BinRelExpr op l r) = (mu l)++(mu r)
-getTermVars mu (BinIntExpr op l r) = (mu l)++(mu r)
-getTermVars mu (UnBoolExpr op p) = mu p
-getTermVars mu (IndexExpr e i) = fmap (\(v,idx,lvl) -> (v,i:idx,lvl)) (mu e)
-getTermVars mu (Automaton buchi) = concat $ fmap (\st -> mu (vars st)) (Map.elems buchi)
+getTermVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,[Integer],Integer,GTLType)]
+getTermVars mu expr = case getValue expr of
+  Var n lvl -> [(n,[],lvl,getType expr)]
+  Value x -> getValueVars mu x
+  BinBoolExpr op l r -> (mu l)++(mu r)
+  BinRelExpr op l r -> (mu l)++(mu r)
+  BinIntExpr op l r -> (mu l)++(mu r)
+  UnBoolExpr op p -> mu p
+  IndexExpr e i -> fmap (\(v,idx,lvl,tp) -> (v,i:idx,lvl,tp)) (mu e)
+  Automaton buchi -> concat $ fmap (\st -> mu (vars st)) (Map.elems buchi)
 
-getValueVars :: (r -> [(v,[Integer],Integer)]) -> GTLValue r -> [(v,[Integer],Integer)]
+getValueVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,[Integer],Integer,GTLType)]
 getValueVars mu (GTLArrayVal xs) = concat (fmap mu xs)
 getValueVars mu (GTLTupleVal xs) = concat (fmap mu xs)
 getValueVars _ _ = []

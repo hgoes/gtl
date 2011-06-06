@@ -10,17 +10,18 @@ import Data.Set as Set
 import Data.Map as Map
 import Data.List (genericIndex)
 import Control.Monad.Identity
+import Data.Foldable
+import Prelude hiding (foldl,concat,foldl1)
 
 type TargetVar = (String,String,[Integer])
 
-type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer)
-type InputMap = Map TargetVar Integer
+type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType{-,Maybe (Set GTLConstant)-})
+type InputMap = Map TargetVar (Integer,GTLType)
 
 data TargetModel = TargetModel
-                   { tmodelVars :: [(TargetVar,Integer,GTLType)]
+                   { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
                    , tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
                    , tmodelVerify :: TypedExpr TargetVar
-                   , tmodelInits :: [(TargetVar,Integer,GTLType,Maybe GTLConstant)]
                    } deriving Show
 
 data Restriction v = Restriction
@@ -58,14 +59,44 @@ completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emp
 
 buildTargetModel :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
 buildTargetModel spec inmp outmp
-  = let all_vars = Map.foldrWithKey (\(mf,vf,fi) (vars,lvl) cur
+  = let all_vars = Map.foldrWithKey (\(mf,vf,fi) (vars,lvl,tp) cur
                                      -> case lvl of
                                        Nothing -> cur
-                                       Just rlvl -> Map.insertWith (\(lvl1,inp) (lvl2,_) -> (max lvl1 lvl2,inp)) (mf,vf,fi) (rlvl,False) cur
-                                    ) (fmap (\lvl -> (lvl,True)) inmp) outmp
+                                       Just rlvl -> Map.insertWith (\(lvl1,inp,tp) (lvl2,_,_) -> (max lvl1 lvl2,inp,tp)
+                                                                   ) (mf,vf,fi) (rlvl,False,tp) cur
+                                    ) (fmap (\(lvl,tp) -> (lvl,True,tp)) inmp) outmp
+        all_vars2 = Map.foldrWithKey 
+                    (\iname inst mp
+                     -> let defs = Map.union
+                                   (gtlInstanceDefaults inst)
+                                   (gtlModelDefaults mdl)
+                            mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                        in Map.foldrWithKey
+                           (\var def mp
+                            -> let tp = case Map.lookup var (gtlModelInput mdl) of
+                                     Nothing -> (gtlModelOutput mdl)!var
+                                     Just p -> p
+                               in case def of
+                                 Just v -> foldl (\mp (c,(rtp,idx)) 
+                                                  -> let nmp = Map.adjust (\(lvl,inp,tp,restr) 
+                                                                           -> (lvl,inp,tp,case restr of
+                                                                                  Nothing -> Just $ Set.singleton c
+                                                                                  Just r -> Just (Set.insert c r)
+                                                                              )) (iname,var,idx) mp
+                                                     in case Map.lookup (iname,var,idx) outmp of
+                                                       Nothing -> nmp
+                                                       Just (tvars,_,_) -> foldl (\mp' tvar -> Map.adjust (\(lvl,inp,tp,restr) 
+                                                                                                           -> (lvl,inp,tp,case restr of
+                                                                                                                  Nothing -> Just $ Set.singleton c
+                                                                                                                  Just r -> Just (Set.insert c r)
+                                                                                                              )) tvar mp') nmp tvars
+                                                 ) mp $ zip (flattenConstant v) (flattenVar tp [])
+                                 Nothing -> mp) mp defs
+                    ) (fmap (\(lvl,inp,tp) -> (lvl,inp,tp,Nothing)) all_vars) (gtlSpecInstances spec)
     in TargetModel
-       { tmodelVars = [ ((mdl,var,idx),lvl,lookupType spec mdl var idx inp)
-                      | ((mdl,var,idx),(lvl,inp)) <- Map.toList all_vars ]
+       { tmodelVars = [ ((mdl,var,idx),lvl,tp,inits)
+                      | ((mdl,var,idx),(lvl,inp,tp,inits)) <- Map.toList all_vars2
+                      ]
        , tmodelProcs = Map.mapWithKey (\name inst
                                        -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                           in translateGBA $ runIdentity $ 
@@ -80,7 +111,7 @@ buildTargetModel spec inmp outmp
                                                                                                           ]) outmp
                                                                  in return ([ ([ (tvar,case Map.lookup tvar inmp of
                                                                                      Nothing -> error (show (tvar,var,r))
-                                                                                     Just p -> p
+                                                                                     Just (p,_) -> p
                                                                                  )
                                                                                | tvar <- Set.toList tvars
                                                                                ] ++ (case nvr of
@@ -89,36 +120,13 @@ buildTargetModel spec inmp outmp
                                                                             | (var,r) <- Map.toList rrestr,
                                                                               let (tvars,nvr) = case Map.lookup var outmp of
                                                                                     Nothing -> (Set.empty,Nothing)
-                                                                                    Just p -> p
+                                                                                    Just (p1,p2,_) -> (p1,p2)
                                                                             ],cond)
                                                         )
                                              (gtlModelContract mdl)
                                       )
                        (gtlSpecInstances spec)
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
-       , tmodelInits = [ (rvar,lvl,tp,c)
-                       | (iname,inst) <- Map.toList $ gtlSpecInstances spec,
-                         let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
-                         (var,def) <- Map.toList $ gtlModelDefaults mdl,
-                         (rvar,lvl,tp,c) <- case Map.lookup var (gtlModelInput mdl) of
-                           Just mtp -> [ ((iname,var,idx),inmp!(iname,var,idx),rtp,c)
-                                       | ((rtp,idx),c) <- zip (flattenVar mtp []) 
-                                                          (case def of
-                                                              Nothing -> repeat Nothing
-                                                              Just rdef -> fmap Just (flattenConstant rdef))
-                                       ]
-                           Nothing -> [ (nvar,lvl,rtp,c)
-                                      | ((rtp,idx),c) <- zip (flattenVar ((gtlModelOutput mdl)!var) []) 
-                                                         (case def of
-                                                             Nothing -> repeat Nothing
-                                                             Just rdef -> fmap Just (flattenConstant rdef)),
-                                        let (nvars,nvr) = outmp!(iname,var,idx),
-                                        (nvar,lvl) <- (case nvr of
-                                                          Nothing -> id
-                                                          Just n -> (((iname,var,idx),n):))
-                                                      (fmap (\v -> (v,inmp!v)) $ Set.toList nvars)
-                                      ]
-                       ]
        }
 
 buildOutputMap :: GTLSpec String -> OutputMap
@@ -127,17 +135,16 @@ buildOutputMap spec
                      -> let tp_out = getInstanceVariableType spec False mf vf
                             tp_in = getInstanceVariableType spec True mt vt
                             idx_in = Set.fromList [ (mt,vt,i) | (_,i) <- flattenVar tp_in ti ]
-                            mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing)) | (_,i) <- flattenVar tp_out fi ]
-                        in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,nvr1)) mp mp_out
+                            mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing,tp)) | (tp,i) <- flattenVar tp_out fi ]
+                        in Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,nvr1,tp1)) mp mp_out
                     ) Map.empty (gtlSpecConnections spec)
-        mp2 = foldl (\mp (var,idx,lvl)
-                     -> let tp = getInstanceVariableType spec False (fst var) (snd var)
-                        in Map.unionWith (\(set1,nvr1) (set2,nvr2) -> (Set.union set1 set2,case nvr1 of
-                                                                          Nothing -> nvr2
-                                                                          Just rnvr1 -> case nvr2 of
-                                                                            Nothing -> nvr1
-                                                                            Just rnvr2 -> Just $ max rnvr1 rnvr2))
-                           mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl)) | (_,i) <- flattenVar tp idx ])
+        mp2 = foldl (\mp (var,idx,lvl,tp)
+                     -> Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,case nvr1 of
+                                                                                  Nothing -> nvr2
+                                                                                  Just rnvr1 -> case nvr2 of
+                                                                                    Nothing -> nvr1
+                                                                                    Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
+                        mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp)) | (tp,i) <- flattenVar tp idx ])
                     ) mp1 (getVars $ gtlSpecVerify spec)
     in mp2
 
@@ -147,12 +154,14 @@ buildInputMap spec
                       -> let mdl = case Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec) of
                                Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel inst)++" not found."
                                Just p -> p
-                         in foldl (\mp' (var,idx,lvl)
+                         in foldl (\mp' (var,idx,lvl,tp)
                                    -> if Map.member var (gtlModelInput mdl)
-                                      then Map.insertWith max (name,var,idx) lvl mp'
+                                      then foldl (\mp'' (tp',idx')
+                                                  -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
+                                                     (name,var,idx') (lvl,tp') mp'') mp' (flattenVar tp idx)
                                       else mp'
                                   ) (Map.union mp (Map.fromList
-                                                   [ ((name,var,idx),0)
+                                                   [ ((name,var,idx),(0,t))
                                                    | (var,tp) <- Map.toList $ gtlModelInput mdl, 
                                                      (t,idx) <- allPossibleIdx tp
                                                    ]

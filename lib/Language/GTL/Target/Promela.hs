@@ -23,8 +23,13 @@ import Data.Int
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
   where
-    var_decls = [ Pr.Decl $ Pr.Declaration Nothing (convertType tp) [(varString mdl var idx,Just (lvl+1),Nothing)]
-                | ((mdl,var,idx),lvl,tp) <- tmodelVars tm ]
+    var_decls = [ Pr.Decl $ Pr.Declaration Nothing (convertType tp) [(varString mdl var idx l,Nothing,case inits of
+                                                                         Nothing -> Nothing
+                                                                         Just dset -> Just $ translateConstant tp (unfix $ head $ Set.toList dset)
+                                                                     )]
+                | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm, 
+                  l <- [0..lvl]
+                ]
     procs = [ Pr.ProcType { proctypeActive = Nothing
                           , proctypeName = pname
                           , proctypeArguments = []
@@ -59,11 +64,11 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
             | (pname,buchi) <- Map.toList $ tmodelProcs tm ]
     init = [Pr.Init Nothing
             [Pr.toStep $ prAtomic $ [Pr.StmtSkip] ++
-             concat [ case def of
+             {-concat [ case def of
                          Nothing -> [] -- XXX
                          Just (Fix p) -> outputTAssign [(tvar,lvl)] (translateConstant tp p)
                     | (tvar,lvl,tp,def) <- tmodelInits tm
-                    ] ++
+                    ] ++-}
              [ Pr.StmtRun iname []
              | iname <- Map.keys (tmodelProcs tm)
              ]]
@@ -244,12 +249,13 @@ convertType :: GTLType -> Pr.Typename
 convertType GTLInt = Pr.TypeInt
 convertType GTLBool = Pr.TypeBool
 convertType (GTLEnum _) = Pr.TypeInt
+convertType tp = error $ "Promela target can't use type "++show tp++" yet."
 
 varName :: String -> String -> [Integer] -> Integer -> Pr.VarRef
-varName mdl var idx lvl = VarRef (varString mdl var idx) (Just lvl) Nothing
+varName mdl var idx lvl = VarRef (varString mdl var idx lvl) Nothing Nothing
 
-varString :: String -> String -> [Integer] -> String
-varString mdl var idx = mdl ++ "_" ++ var ++ concat [ "_"++show i | i <- idx]
+varString :: String -> String -> [Integer] -> Integer -> String
+varString mdl var idx lvl = mdl ++ "_" ++ var ++ concat [ "_"++show i | i <- idx] ++ "_"++show lvl
 
 assign :: String -> String -> [Integer] -> Integer -> Pr.AnyExpression -> [Pr.Statement]
 assign mdl var idx lvl expr 

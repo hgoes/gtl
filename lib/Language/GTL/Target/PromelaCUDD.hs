@@ -290,8 +290,8 @@ parseGTLRelation :: AtomCache -- ^ A cache of parsed atoms
                     -> GTL.TypedExpr (Maybe String,String) -- ^ Right hand side of the relation
                     -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
-  = let lvars = [ (v,lvl) | ((Nothing,v),_,lvl) <- getVars lhs, Map.member v outps ]
-        rvars = [ (v,lvl) | ((Nothing,v),_,lvl) <- getVars rhs, Map.member v outps ]
+  = let lvars = [ (v,lvl) | ((Nothing,v),_,lvl,_) <- getVars lhs, Map.member v outps ]
+        rvars = [ (v,lvl) | ((Nothing,v),_,lvl,_) <- getVars rhs, Map.member v outps ]
         idx = fromIntegral $ Map.size mp
         name = case arg of
           Nothing -> Nothing
@@ -495,7 +495,7 @@ buildTransProgram gtl
                                                                  (Map.singleton (Just (t,tv)) (Set.singleton 0))
                                                                  (varsOut mdl)
                                                      }) f cmdls) tmodels1 (gtlSpecConnections gtl)
-        tmodels3 = foldl (\cmdls' ((q,n),_,lvl) ->
+        tmodels3 = foldl (\cmdls' ((q,n),_,lvl,_) ->
                            Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                n (Map.singleton Nothing (Set.singleton lvl))
                                                                (varsOut mdl)

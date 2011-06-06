@@ -17,7 +17,7 @@ translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec)
 getEnums :: TargetModel -> Map [String] Int
 getEnums tm = foldl (\mp x -> case Map.lookup x mp of
                         Nothing -> Map.insert x (Map.size mp) mp
-                        Just _ -> mp) Map.empty [ xs | (_,_,GTLEnum xs) <- tmodelVars tm ]
+                        Just _ -> mp) Map.empty [ xs | (_,_,GTLEnum xs,_) <- tmodelVars tm ]
 
 translateTarget :: TargetModel -> U.Specification
 translateTarget tm
@@ -38,7 +38,7 @@ translateTarget tm
                           | (xs,i) <- Map.toList all_enums ]
       var_decls = [ VarDecl (Type Nothing (convertType all_enums tp))
                     [(varString var,[ExprArray (ExprNat (lvl+1))],Nothing)]
-                  | (var,lvl,tp) <- tmodelVars tm ]
+                  | (var,lvl,tp,_) <- tmodelVars tm ]
       templates = [Template (noPos $ pname++"_tmpl") Nothing [] 
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
