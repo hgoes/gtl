@@ -1,3 +1,6 @@
+{-| Provides a UPPAAL verification target.
+    UPPAAL is a state-based verification formalism and thus it is quite easy to translate GTL code to it.
+ -}
 module Language.GTL.Target.UPPAAL where
 
 import Language.GTL.Model hiding (getEnums)
@@ -11,9 +14,11 @@ import Data.List (genericLength,genericReplicate,elemIndex)
 import Data.Map as Map
 import Data.Set as Set
 
+-- | Translate a GTL specification to a UPPAAL specification.
 translateSpec :: GTLSpec String -> U.Specification
 translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec) (buildOutputMap spec))
 
+-- | Translate a pre-translated TargetModel to a UPPAAL specification.
 translateTarget :: TargetModel -> U.Specification
 translateTarget tm
   = Spec { specImports = Nothing
@@ -74,10 +79,12 @@ translateTarget tm
                                      ]
                   ]
 
+-- | Translate a list of conditional expressions into edge guards.
 translateConditions :: [TypedExpr TargetVar] -> [Positional Label]
 translateConditions conds = [noPos (Label Guard [ translateExpression e ])
                             | e <- conds ]
 
+-- | Translate a list of output restrictions into edge updates.
 translateRestrictions :: Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> [Positional Label]
 translateRestrictions _ [] = []
 translateRestrictions i ((tvars,restr):xs)
@@ -85,14 +92,18 @@ translateRestrictions i ((tvars,restr):xs)
     (translateUpdate i tvars)++
     (translateRestrictions (i+1) xs)
 
-translateUpdate :: Integer -> [(TargetVar,Integer)] -> [Positional Label]
+-- | Assign a temporary variable to a list of output variables.
+translateUpdate :: Integer -- ^ Numbering of the variable
+                   -> [(TargetVar,Integer)] -- ^ List of output variables including their history level
+                   -> [Positional Label]
 translateUpdate i vars = [noPos (Label Assignment [ExprAssign Assign
                                                    (ExprIndex (ExprId (varString var)) (ExprNat j))
                                                    (if j==0
                                                     then ExprId ("tmp"++show i)
                                                     else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
                                                   | (var,lvl) <- vars, j <- reverse [0..lvl] ])]
-  
+
+-- | Translate a single output restriction into a temporary variable that non-deterministically gets assigned the allowed values.
 translateRestriction :: Integer -> Restriction TargetVar -> [Positional Label]
 translateRestriction i restr
   = [noPos (Label Selection [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]])
@@ -112,12 +123,14 @@ translateRestriction i restr
            )
     ]
 
+-- | Translate a GTLValue into a UPPAAL expression.
 translateConstant :: GTLType -> GTLValue r -> Expression
 translateConstant _ (GTLBoolVal b) = ExprNat (if b then 1 else 0)
 translateConstant _ (GTLIntVal b) = ExprNat b
 translateConstant (GTLEnum xs) (GTLEnumVal x) = let Just i = elemIndex x xs
                                                 in ExprNat (fromIntegral i)
 
+-- | Translate a GTL expression into a UPPAAL one.
 translateExpression :: TypedExpr TargetVar -> Expression
 translateExpression expr = case getValue expr of
   Var v h -> ExprIndex (ExprId (varString v)) (ExprNat h)
@@ -141,12 +154,13 @@ translateExpression expr = case getValue expr of
   UnBoolExpr op (Fix e) -> ExprUnary (case op of
                                          G.Not -> U.UnNot) (translateExpression e)
                                                   
-
+-- | Translate a GTL type into a UPPAAL type.
 convertType :: GTLType -> TypeId
 convertType GTLInt = TypeInt Nothing
 convertType GTLByte = TypeInt (Just (ExprNat 0,ExprNat 255))
 convertType GTLBool = TypeInt (Just (ExprNat 0,ExprNat 1))
 convertType (GTLEnum xs) = TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1)))
 
+-- | Get the UPPAAL name of a variable.
 varString :: TargetVar -> String
 varString (iname,var,idx) = iname++"_"++var++concat [ "_"++show i | i <- idx ]
