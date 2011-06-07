@@ -67,7 +67,9 @@ versionString = "This is the GALS Translation Language of version "++version++".
 #endif
 
 main = do
-  (opts,gtl_file) <- getOptions
+  opts <- getOptions
+  let gtl_file = gtlFile opts
+  print $ ccFlags opts
   when (showHelp opts) $ do
     putStr usage
     exitSuccess
