@@ -26,6 +26,7 @@ import System.FilePath
 import System.Cmd
 import System.Directory
 import System.Process
+import System.Exit
 
 import Misc.ProgramOptions as Opts
 
@@ -47,8 +48,10 @@ compile
   -> String -- ^ Name of the resulting verifier executable
     -> IO()
 compile opts outputDir verifier = do
-  exitCode <- rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts))
-  return ()
+  exitCode <- rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts) ++ (ldFlags opts))
+  case exitCode of
+    ExitSuccess -> return ()
+    ExitFailure c -> ioError $ userError "Error while running compiler"
 
 runVerifier
   :: String -- ^ Name of theverifier executable
