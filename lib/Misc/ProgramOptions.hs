@@ -136,14 +136,15 @@ parseFreeOptions o =
       else error $ "Unknown option " ++ optName
 
 -- | Splits program options by " -" into a list usable for
--- running processes with these options.
+-- running processes with these options. Splitting by " " only is
+-- not suitable as it would split path names which contain spaces.
 splitOptions :: String -> [String]
 splitOptions = map (prependIfNecessary '-') . (split (" -"))
   where
     prependIfNecessary :: Eq a => a -> [a] -> [a]
     prependIfNecessary s l@(x:xs) = if s == x then l else s:l
 
--- | Split list into tokens at break point
+-- | Split list into tokens where the first list matches
 split :: Eq a => [a] -> [a] -> [[a]]
 split p = unfoldr (split' p)
   where
