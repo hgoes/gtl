@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable,FlexibleInstances,
-  ExistentialQuantification, StandaloneDeriving, TypeSynonymInstances, FlexibleContexts, 
+  ExistentialQuantification, StandaloneDeriving, TypeSynonymInstances, FlexibleContexts,
   DeriveFunctor #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
@@ -148,8 +148,8 @@ instance Ord v => Ord (Fix (Typed (Term v))) where
 
 instance Eq (Fix GTLValue) where
   e1 == e2 = (unfix e1) == (unfix e2)
-  
-instance Ord (Fix GTLValue) where 
+
+instance Ord (Fix GTLValue) where
   compare e1 e2 = compare (unfix e1) (unfix e2)
 
 showTerm :: Show v => (r -> String) -> Term v r -> String
@@ -182,7 +182,7 @@ showTerm f (UnBoolExpr op p) = "(" ++ (case op of
 showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
 
 enforceType :: String -> GTLType -> GTLType -> Either String ()
-enforceType expr ac tp = if ac == tp 
+enforceType expr ac tp = if ac == tp
                          then return ()
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
@@ -272,7 +272,7 @@ untyped :: TypedExpr v -> Expr v
 untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
 
 parseTerm :: (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Expr v)
-parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex expr >>= return.Fix) f ex
+parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f ex
 
 parseTerm' :: (ExistsBinding v -> GExpr -> Either String r)
               -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
@@ -324,7 +324,7 @@ parseTerm' mu f ex (GExists b q n expr) = case q of
   Just _ -> do
     var <- f q n
     parseTerm' mu f (Map.insert b (var,0) ex) expr
-parseTerm' mu f ex (GAutomaton sts) = do 
+parseTerm' mu f ex (GAutomaton sts) = do
   (buchi,_,_) <- foldlM (\(cbuchi,ccur,cmp) state -> do
                             (res,nbuchi,ncur,nmp) <- parseState state Nothing ccur cmp cbuchi
                             return (nbuchi,ncur,nmp)
@@ -424,8 +424,8 @@ mapTermVars f mu (BinIntExpr op l r) = BinIntExpr op (mu l) (mu r)
 mapTermVars f mu (UnBoolExpr op p) = UnBoolExpr op (mu p)
 mapTermVars f mu (IndexExpr e i) = IndexExpr (mu e) i
 mapTermVars f mu (Automaton buchi) = Automaton $ fmap (\st -> st { vars = mu (vars st) }) buchi
-  
-mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2  
+
+mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2
 mapValueVars mu (GTLIntVal x) = GTLIntVal x
 mapValueVars mu (GTLByteVal x) = GTLByteVal x
 mapValueVars mu (GTLBoolVal x) = GTLBoolVal x
