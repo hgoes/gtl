@@ -233,7 +233,7 @@ buildTGenerator tp upper lower check to
         -> let trg = Pr.RefExpr (varName inst var idx 0)
            in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case tp of
                                                                  GTLEnum _ -> 0
-                                                                 GTLInt -> fromIntegral (minBound::Int)
+                                                                 GTLInt -> fromIntegral (minBound::Int32)
                                                                  GTLBool -> 0
                                                              )
                                  )
