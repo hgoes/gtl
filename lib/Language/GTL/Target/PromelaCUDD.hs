@@ -30,10 +30,7 @@ import Data.List (intersperse)
 import System.IO.Error (isDoesNotExistError)
 import Language.GTL.ErrorRefiner
 import Control.Exception.Extensible
-import System.Process
-import System.FilePath
 import System.Directory
-import Language.Promela.Pretty (prettyPromela)
 
 import Misc.ProgramOptions as Opts
 import Misc.VerificationEnvironment
@@ -232,7 +229,7 @@ parseGTLExpr :: AtomCache -- ^ A cache of already parsed atoms
                 -> ((Integer,Bool),AtomCache)
 parseGTLExpr cache arg expr = let (idx,isinp,res) = case getValue expr of
                                     Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant True)
-                                    UnBoolExpr GTL.Not nexpr -> case getValue (unfix nexpr) of 
+                                    UnBoolExpr GTL.Not nexpr -> case getValue (unfix nexpr) of
                                       Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant False)
                                     BinRelExpr rel l r -> parseGTLRelation cache arg rel (unfix l) (unfix r)
                               in ((idx,isinp),Map.insert expr (idx,isinp,res) cache)
@@ -437,7 +434,7 @@ createBDDExpr v mdl expr = case getValue expr of
                                    OpMinus -> "Cudd_bddMinus"
                                    OpMult -> "Cudd_bddTimes"
                                    OpDiv -> "Cudd_bddDivide"
-                               )++"(manager,tmp"++show v2++",tmp"++show (v2+1)++",0)")  
+                               )++"(manager,tmp"++show v2++",tmp"++show (v2+1)++",0)")
 
 buildTransProgram :: GTLSpec String -> TransProgram
 buildTransProgram gtl
@@ -448,7 +445,7 @@ buildTransProgram gtl
                                                                 Just d -> case unfix d of
                                                                   GTLIntVal i -> "Cudd_bddSingleton(manager,"++show i++",0)"
                                                                   _ -> error "Init expressions must be ints atm"
-                                                                  
+
                                                             ) (gtlModelDefaults m)
                                            in TransModel { varsInit = inits
                                                          , varsIn = Map.mapWithKey (\k v -> hist!k) (gtlModelInput m)
