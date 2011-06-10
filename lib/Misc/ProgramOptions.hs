@@ -31,9 +31,10 @@ data TranslationMode
      = NativeC
      | Local
      | PromelaBuddy
-     | Tikz
+--      | Tikz
      | Pretty
      | Native
+     | UPPAAL
      deriving (Show,Eq)
 
 data Options = Options
@@ -62,7 +63,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty),("native",Native)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
