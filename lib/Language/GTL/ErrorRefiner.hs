@@ -12,7 +12,7 @@ import Data.Binary
 import Data.Binary.Put
 import Data.Binary.Get
 import qualified Data.ByteString.Lazy as LBS
-import Codec.Compression.BZip
+--import Codec.Compression.BZip
 import Data.List (genericLength,elemIndex)
 
 import Language.Promela.Syntax as Pr
@@ -51,13 +51,13 @@ filterTraces outp = mapMaybe (\ln -> case words ln of
 
 -- | Write a list of traces into a file.
 writeTraces :: FilePath -> [Trace] -> IO ()
-writeTraces fp traces = LBS.writeFile fp $ compress $ runPut $ put traces
+writeTraces fp traces = LBS.writeFile fp $ {-compress $-} runPut $ put traces
 
 -- | Read a list of traces from a file.
 readBDDTraces :: FilePath -> IO [Trace]
 readBDDTraces fp = do
   str <- LBS.readFile fp
-  return $ runGet get (decompress str)
+  return $ runGet get str --(decompress str)
 
 -- | Given a function to generate names, this function converts a GTL atom into a C-expression.
 atomToC :: CNameGen -- ^ Function to generate C-names
