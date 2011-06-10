@@ -24,7 +24,7 @@
 	     (2 'font-lock-constant-face nil t)
 	     (3 'font-lock-function-name-face nil t)
 	     )
-	   '("\\<\\(instance\\) *\\([a-z]+\\) *\\([a-z]+\\)"
+	   '("\\<\\(instance\\) *\\([a-zA-Z0-9]+\\) *\\([a-zA-Z0-9]+\\)"
 	     (1 'font-lock-keyword-face nil t)
 	     (2 'font-lock-function-name-face nil t)
 	     (3 'font-lock-variable-name-face nil t)

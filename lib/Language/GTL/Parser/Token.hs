@@ -1,6 +1,7 @@
 module Language.GTL.Parser.Token where
 
 data Token = Identifier String
+           | ConstEnum String
            | Key KeyWord
            | Bracket BracketType Bool
            | Dot
@@ -14,18 +15,26 @@ data Token = Identifier String
            deriving Show
 
 data KeyWord = KeyAll
+             | KeyBool
+             | KeyByte
              | KeyConnect
              | KeyContract
+             | KeyEnum
              | KeyModel
              | KeyOutput
+             | KeyFalse
+             | KeyFloat
              | KeyInit
              | KeyInput
+             | KeyInt
+             | KeyInstance
              | KeyVerify
              | KeyExists
              | KeyFinal
              | KeyAutomaton
              | KeyState
              | KeyTransition
+             | KeyTrue
              | KeyUntil
              deriving Show
 
@@ -56,4 +65,5 @@ data BinOp = GOpAnd
            | GOpMinus
            | GOpMult
            | GOpDiv
+           | GOpPow
            deriving (Show,Eq,Ord)

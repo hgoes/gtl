@@ -2,15 +2,14 @@
 module Language.GTL.Parser.Syntax where
 
 import Language.GTL.Parser.Token (UnOp(..),BinOp(..))
-import Control.Monad.Error
+import Language.GTL.Types
 import Data.Map as Map
-import Data.Word
-import Data.Typeable
 
 -- | A GTL file is a list of declarations.
 data Declaration = Model ModelDecl -- ^ Declares a model.
                  | Connect ConnectDecl -- ^ Declares a connection between two models.
                  | Verify VerifyDecl -- ^ Declares a property that needs to be verified.
+                 | Instance InstanceDecl
                  deriving Show
 
 -- | Declares a synchronous model.
@@ -20,22 +19,31 @@ data ModelDecl = ModelDecl
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
-                 , modelInputs :: Map String String -- ^ Declared inputs of the model with their corresponding type
-                 , modelOutputs :: Map String String -- ^ Declared outputs of a model
+                 , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
+                 , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
                  } deriving Show
 
 -- | Declares a connection between two variables
 data ConnectDecl = ConnectDecl
                    { connectFromModel :: String -- ^ Model of the source variable
                    , connectFromVariable :: String -- ^ Name of the source variable
+                   , connectFromIndices :: [Integer]
                    , connectToModel :: String -- ^ Model of the target variable
                    , connectToVariable :: String -- ^ Name of the target variable
+                   , connectToIndices :: [Integer]
                    } deriving Show
 
 -- | A list of formulas to verify.
 data VerifyDecl = VerifyDecl
                   { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
                   } deriving Show
+
+data InstanceDecl = InstanceDecl
+                    { instanceModel :: String
+                    , instanceName :: String
+                    , instanceContract :: [GExpr]
+                    , instanceInits :: [(String,InitExpr)]
+                    } deriving Show
 
 -- | An untyped expression type.
 --   Used internally in the parser.
@@ -47,6 +55,10 @@ data GExpr = GBin BinOp GExpr GExpr
            | GSet [Integer]
            | GExists String (Maybe String) String GExpr
            | GAutomaton [State]
+           | GTuple [GExpr]
+           | GArray [GExpr]
+           | GIndex GExpr GExpr
+           | GEnum String
            deriving (Show,Eq,Ord)
 
 data State = State
@@ -58,5 +70,5 @@ data State = State
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.
-              | InitOne Integer -- ^ The variable is initialized with a specific value.
+              | InitOne GExpr -- ^ The variable is initialized with a specific value.
               deriving (Show,Eq)

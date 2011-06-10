@@ -2,7 +2,7 @@
 {-| Verifies a GTL specification by converting the components to C-code and
     simulating all possible runs.
  -}
-module Language.GTL.PromelaCIntegration where
+module Language.GTL.Target.PromelaKCG where
 
 import Language.GTL.Expression as GTL
 import Language.GTL.Model
@@ -13,16 +13,11 @@ import Language.GTL.Translation
 import Language.GTL.LTL
 
 import qualified Language.Promela.Syntax as Pr
-import qualified Language.Scade.Syntax as Sc
 import Language.Promela.Pretty
 
 import Data.Map (Map,(!))
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Maybe (mapMaybe)
-import Data.BDD
-import Data.Bits
 
 -- | Compile a GTL declaration into a promela module simulating the specified model.
 --   Optionally takes a trace that is used to restrict the execution.
@@ -63,13 +58,13 @@ inputVars mdl iface = zipWith (\i _ -> "input_"++mdl++show i) [0..] (cIFaceInput
 -- | Convert a trace and a verify expression into a promela never claim.
 --   If you don't want to include a trace, give an empty one `[]'.
 neverClaim :: Trace -- ^ The trace
-              -> Expr (String,String) Bool -- ^ The verify expression
+              -> TypedExpr (String,String) -- ^ The verify expression
               -> Map String (GTLModel String) -- ^ All models
               -> Pr.Module
 neverClaim trace f mdls
   = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                            in varName iface q v l) trace
-        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi $ gtlToLTL $ ExprNot f) traceAut
+        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi distributeNot $ gtlToLTL $ gnot f) traceAut
         showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
         init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
         steps = [ Pr.StmtLabel ("st"++showSt i)
@@ -88,7 +83,7 @@ neverClaim trace f mdls
                        cexprl = [ atomToC (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
                                                      in varName iface q v l) ratom
                                 | (atom,en) <- Set.toList $ fst $ vars st,
-                                  let ratom = if en then atom else gtlAtomNot atom ]
+                                  let ratom = if en then atom else distributeNot atom ]
                    in if finalSets st
                       then Pr.StmtLabel ("accept"++showSt i) inner
                       else inner)
@@ -109,7 +104,7 @@ generatePromelaCode spec history
                                                                          ]++
                                                                          [ cIFaceGetInputVar iface (inputVars name iface) tvar ++ " = " ++
                                                                            source ++ ";"
-                                                                         | (fmod,fvar,tmod,tvar) <- gtlSpecConnections spec
+                                                                         | (GTLConnPt fmod fvar [],GTLConnPt tmod tvar []) <- gtlSpecConnections spec
                                                                          , tmod == name
                                                                          , let siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!fmod
                                                                                source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar

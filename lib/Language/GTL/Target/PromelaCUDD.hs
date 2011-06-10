@@ -10,13 +10,14 @@
 {-| Implements a verification mechanism that abstracts components by using their
     contract to build a state machine that acts on BDD.
  -}
-module Language.GTL.PromelaDynamicBDD where
+module Language.GTL.Target.PromelaCUDD where
 
 import Language.GTL.Translation
 import Language.Promela.Syntax as Pr
 import Language.GTL.LTL
 import Language.GTL.Expression as GTL
 import Language.GTL.Model
+import Language.GTL.Types
 
 import Data.Map as Map
 import Data.Set as Set
@@ -25,11 +26,9 @@ import Control.Monad.State
 import Prelude hiding (foldl,concat,catch)
 import Data.Foldable
 import Data.List (intersperse)
-import Data.Dynamic
 
 import System.IO.Error (isDoesNotExistError)
 import Language.GTL.ErrorRefiner
-import Data.BDD
 import Control.Exception.Extensible
 import System.Process
 import System.FilePath
@@ -44,7 +43,7 @@ data TransModel = TransModel
                   { varsInit :: Map String String
                   , varsIn :: Map String Integer
                   , varsOut :: Map String (Map (Maybe (String,String)) (Set Integer))
-                  , stateMachine :: Buchi ([Integer],[Integer],[GTLAtom String])
+                  , stateMachine :: Buchi ([Integer],[Integer],[TypedExpr String])
                   , checkFunctions :: [String]
                   } deriving Show
 
@@ -220,37 +219,56 @@ translateNever buchi
 -- | A cache that maps atoms to C-functions that represent them.
 --   The C-functions are encoded by a unique number, whether they are a test- or
 --   assignment-function and their source code representation.
-type AtomCache = Map (GTLAtom (Maybe String,String)) (Integer,Bool,String)
+type AtomCache = Map (TypedExpr (Maybe String,String)) (Integer,Bool,String)
 
 -- | A map from component names to output variable informations.
 type OutputMapping = Map String (Map (Maybe (String,String)) (Set Integer))
 
--- | Parse a GTL atom to a C-function.
+-- | Parse a GTL expression to a C-function.
 --   Returns the unique number of the function and whether its a test- or assignment-function.
+parseGTLExpr :: AtomCache -- ^ A cache of already parsed atoms
+                -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
+                -> TypedExpr (Maybe String,String) -- ^ The atom to parse
+                -> ((Integer,Bool),AtomCache)
+parseGTLExpr cache arg expr = let (idx,isinp,res) = case getValue expr of
+                                    Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant True)
+                                    UnBoolExpr GTL.Not nexpr -> case getValue (unfix nexpr) of 
+                                      Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant False)
+                                    BinRelExpr rel l r -> parseGTLRelation cache arg rel (unfix l) (unfix r)
+                              in ((idx,isinp),Map.insert expr (idx,isinp,res) cache)
+
+{-
 parseGTLAtom :: AtomCache -- ^ A cache of already parsed atoms
                 -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
-                -> GTLAtom (Maybe String,String) -- ^ The atom to parse
+                -> TypedExpr (Maybe String,String) -- ^ The atom to parse
                 -> ((Integer,Bool),AtomCache)
 parseGTLAtom mp arg at
   = case Map.lookup at mp of
     Just (i,isinp,_) -> ((i,isinp),mp)
     Nothing -> let (idx,isinp,res) = case at of
-                     GTLRel rel lhs rhs -> parseGTLRelation mp arg rel lhs rhs
-                     GTLVar n lvl v -> parseGTLRelation mp arg BinEq (ExprVar n lvl) (ExprConst v)
+                     GTLBoolExpr expr p -> parseGTLBoolExpr mp arg expr p
                in ((idx,isinp),Map.insert at (idx,isinp,res) mp)
 
+parseGTLBoolExpr :: AtomCache
+                    -> Maybe (String,OutputMapping)
+                    -> BoolExpr (Maybe String,String)
+                    -> Bool
+                    -> (Integer,Bool,String)
+parseGTLBoolExpr mp arg (RelExpr rel l r) p = parseGTLRelation mp arg (if p then rel else relNot rel) l r
+parseGTLBoolExpr mp arg (BoolVar var) p = parseGTLRelation mp arg BinEq (VarExpr var) (GTL.ConstExpr (Constant (GTLBoolVal p) GTLBool))
+-}
 -- | Parse a GTL relation into a C-Function.
 --   Returns a unique number for the resulting function, whether its a test- or assignment function and
 --   its source-code representation.
-parseGTLRelation :: BDDConst a => AtomCache -- ^ A cache of parsed atoms
+parseGTLRelation :: AtomCache -- ^ A cache of parsed atoms
                     -> Maybe (String,OutputMapping) -- ^ Informations about the containing component
                     -> Relation -- ^ The relation type to parse
-                    -> GTL.Expr (Maybe String,String) a -- ^ Left hand side of the relation
-                    -> GTL.Expr (Maybe String,String) a -- ^ Right hand side of the relation
+                    -> GTL.TypedExpr (Maybe String,String) -- ^ Left hand side of the relation
+                    -> GTL.TypedExpr (Maybe String,String) -- ^ Right hand side of the relation
                     -> (Integer,Bool,String)
 parseGTLRelation mp arg rel lhs rhs
-  = let lvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars lhs, Map.member v outps ]
-        rvars = [ (v,lvl) | ((Nothing,v),lvl) <- getVars rhs, Map.member v outps ]
+  = let lvars = [ (v,lvl) | ((Nothing,v),_,lvl,_) <- getVars lhs, Map.member v outps ]
+        rvars = [ (v,lvl) | ((Nothing,v),_,lvl,_) <- getVars rhs, Map.member v outps ]
         idx = fromIntegral $ Map.size mp
         name = case arg of
           Nothing -> Nothing
@@ -262,15 +280,15 @@ parseGTLRelation mp arg rel lhs rhs
           Nothing -> Map.empty
           Just (_,s) -> s
         (res,isinp) = (case lvars of
-                          [] -> case rhs of
-                            ExprVar (Nothing,n) lvl -> if Map.member n outps
-                                                       then (createBDDAssign idx rname n (outps!n) (relTurn rel) lhs,False)
-                                                       else error "No output variable in relation"
+                          [] -> case getValue rhs of
+                            Var (Nothing,n) lvl -> if Map.member n outps
+                                                    then (createBDDAssign idx rname n (outps!n) (relTurn rel) lhs,False)
+                                                    else error "No output variable in relation"
                             _ -> case rvars of
                               [] -> (createBDDCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
-                          _ -> case lhs of
-                            ExprVar (Nothing,n) lvl -> (createBDDAssign idx rname n (outps!n) rel rhs,False)
+                          _ -> case getValue lhs of
+                            Var (Nothing,n) lvl -> (createBDDAssign idx rname n (outps!n) rel rhs,False)
                             _ -> case lvars of
                               [] -> (createBDDCompare idx name rel lhs rhs,True)
                               _ -> error "Output variables must be alone"
@@ -278,12 +296,12 @@ parseGTLRelation mp arg rel lhs rhs
     in (idx,isinp,res)
 
 -- | Create a BDD assignment
-createBDDAssign :: BDDConst a => Integer -- ^ How many temporary variables have been used so far?
+createBDDAssign :: Integer -- ^ How many temporary variables have been used so far?
                      -> String -- ^ The current component name
                      -> String -- ^ The name of the target variable
                      -> Map (Maybe (String,String)) (Set Integer) -- ^ A mapping of output variables
                      -> Relation -- ^ The relation used to assign the BDD
-                     -> GTL.Expr (Maybe String,String) a -- ^ The expression to assign the BDD with
+                     -> GTL.TypedExpr (Maybe String,String) -- ^ The expression to assign the BDD with
                      -> String
 createBDDAssign count q n outs rel expr
   = let trgs = [ maybe ("now->"++varName True q n lvl) (\(q',n') -> "now->"++varName False q' n' lvl) var
@@ -331,11 +349,11 @@ createBDDAssign count q n outs rel expr
                 ["}"])
 
 -- | Create a comparison operation between two BDD.
-createBDDCompare :: BDDConst a => Integer -- ^ How many temporary variables have been used?
+createBDDCompare :: Integer -- ^ How many temporary variables have been used?
                       -> Maybe String -- ^ If the comparision is part of a contract, give the name of the component, otherwise `Nothing'
                       -> Relation -- ^ The relation used to compare the BDDs
-                      -> GTL.Expr (Maybe String,String) a -- ^ Expression representing BDD 1
-                      -> GTL.Expr (Maybe String,String) a -- ^ Expression representing BDD 2
+                      -> GTL.TypedExpr (Maybe String,String) -- ^ Expression representing BDD 1
+                      -> GTL.TypedExpr (Maybe String,String) -- ^ Expression representing BDD 2
                       -> String
 createBDDCompare count q rel expr1 expr2
   = let (cmd1,de1,v,e1) = createBDDExpr 0 q expr1
@@ -386,36 +404,40 @@ instance BDDConst Bool where
                in if v then var
                   else "Cudd_Not("++var++")"
 
+constrBddConst :: GTLValue a -> String
+constrBddConst (GTLIntVal x) = bddConst (fromIntegral x::Int)
+constrBddConst (GTLBoolVal x) = bddConst x
+
 -- | Convert a GTL expression into a C-expression.
 --   Returns a list of statements that have to be executed before the expression,
 --   one that has to be executed afterwards, a number of temporary variables used
 --   and the resulting C-expression.
-createBDDExpr :: BDDConst a => Integer -- ^ The current number of temporary variables
+createBDDExpr :: Integer -- ^ The current number of temporary variables
                  -> Maybe String -- ^ The current component
-                 -> GTL.Expr (Maybe String,String) a -- ^ The GTL expression
+                 -> GTL.TypedExpr (Maybe String,String) -- ^ The GTL expression
                  -> ([String],[String],Integer,String)
-createBDDExpr v mdl (ExprConst i) = ([],[],v,bddConst i)
-createBDDExpr v mdl (ExprVar (q,n) lvl) = case mdl of
-  Nothing -> case q of
-    Just rq -> ([],[],v,"now->"++varName True rq n lvl)
-    Nothing -> error "verify claims must not contain qualified variables"
-  Just rmdl -> ([],[],v,"now->"++varName False rmdl n lvl)
-createBDDExpr v mdl (ExprBinInt op lhs rhs)
-  = let (cmd1,de1,v1,e1) = createBDDExpr v mdl lhs
-        (cmd2,de2,v2,e2) = createBDDExpr v1 mdl rhs
-    in (cmd1++cmd2++["DdNode* tmp"++show v2++" = "++e1++";",
-                     "Cudd_Ref(tmp"++show v2++");",
-                     "DdNode* tmp"++show (v2+1)++" = "++e2++";",
-                     "Cudd_Ref(tmp"++show (v2+1)++");"],
-        ["Cudd_RecursiveDeref(manager,tmp"++show (v2+1)++");"
-        ,"Cudd_RecursiveDeref(manager,tmp"++show v2++");"]++de2++de1,
-        v2+2,
-        (case op of
-            OpPlus -> "Cudd_bddPlus"
-            OpMinus -> "Cudd_bddMinus"
-            OpMult -> "Cudd_bddTimes"
-            OpDiv -> "Cudd_bddDivide"
-        )++"(manager,tmp"++show v2++",tmp"++show (v2+1)++",0)")
+createBDDExpr v mdl expr = case getValue expr of
+  Var (q,n) lvl -> case mdl of
+    Nothing -> case q of
+      Just rq -> ([],[],v,"now->"++varName True rq n lvl)
+      Nothing -> error "verify claims must not contain qualified variables"
+    Just rmdl -> ([],[],v,"now->"++varName False rmdl n lvl)
+  Value x -> ([],[],v, constrBddConst x)
+  BinIntExpr op lhs rhs -> let (cmd1,de1,v1,e1) = createBDDExpr v mdl (unfix lhs)
+                               (cmd2,de2,v2,e2) = createBDDExpr v1 mdl (unfix rhs)
+                           in (cmd1++cmd2++["DdNode* tmp"++show v2++" = "++e1++";",
+                                            "Cudd_Ref(tmp"++show v2++");",
+                                            "DdNode* tmp"++show (v2+1)++" = "++e2++";",
+                                            "Cudd_Ref(tmp"++show (v2+1)++");"],
+                               ["Cudd_RecursiveDeref(manager,tmp"++show (v2+1)++");"
+                               ,"Cudd_RecursiveDeref(manager,tmp"++show v2++");"]++de2++de1,
+                               v2+2,
+                               (case op of
+                                   OpPlus -> "Cudd_bddPlus"
+                                   OpMinus -> "Cudd_bddMinus"
+                                   OpMult -> "Cudd_bddTimes"
+                                   OpDiv -> "Cudd_bddDivide"
+                               )++"(manager,tmp"++show v2++",tmp"++show (v2+1)++",0)")  
 
 buildTransProgram :: GTLSpec String -> TransProgram
 buildTransProgram gtl
@@ -423,9 +445,10 @@ buildTransProgram gtl
                                                hist = maximumHistory (gtlModelContract m)
                                                inits = fmap (\i -> case i of
                                                                 Nothing -> "Cudd_ReadOne(manager)"
-                                                                Just d -> case fromDynamic d of
-                                                                  Nothing -> error "Init expressions must be ints atm"
-                                                                  Just i -> "Cudd_bddSingleton(manager,"++show (i::Int)++",0)"
+                                                                Just d -> case unfix d of
+                                                                  GTLIntVal i -> "Cudd_bddSingleton(manager,"++show i++",0)"
+                                                                  _ -> error "Init expressions must be ints atm"
+                                                                  
                                                             ) (gtlModelDefaults m)
                                            in TransModel { varsInit = inits
                                                          , varsIn = Map.mapWithKey (\k v -> hist!k) (gtlModelInput m)
@@ -437,18 +460,19 @@ buildTransProgram gtl
         (tclaims,fclaims) = runState
                             (gtlToBuchi (\ats -> do
                                             mp <- get
-                                            let (c,nmp) = foldl (\(cs,cmp2) at -> let ((n,True),nmp) = parseGTLAtom cmp2 Nothing (mapGTLVars (\(q,n) -> (Just q,n)) at)
+                                            let (c,nmp) = foldl (\(cs,cmp2) at -> let ((n,True),nmp) = parseGTLExpr cmp2 Nothing (mapGTLVars (\(q,n) -> (Just q,n)) at)
                                                                                   in (n:cs,nmp)
                                                                 ) ([],mp) ats
                                             put nmp
                                             return c
-                                        ) (GTL.ExprNot (gtlSpecVerify gtl)))
+                                        ) (GTL.gnot (gtlSpecVerify gtl)))
                             Map.empty
-        tmodels2 = foldl (\cmdls (f,fv,t,tv) -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union) fv
-                                                                                    (Map.singleton (Just (t,tv)) (Set.singleton 0))
-                                                                                    (varsOut mdl)
-                                                                        }) f cmdls) tmodels1 (gtlSpecConnections gtl)
-        tmodels3 = foldl (\cmdls' ((q,n),lvl) ->
+        tmodels2 = foldl (\cmdls (GTLConnPt f fv [],GTLConnPt t tv [])
+                          -> Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union) fv
+                                                                 (Map.singleton (Just (t,tv)) (Set.singleton 0))
+                                                                 (varsOut mdl)
+                                                     }) f cmdls) tmodels1 (gtlSpecConnections gtl)
+        tmodels3 = foldl (\cmdls' ((q,n),_,lvl,_) ->
                            Map.adjust (\mdl -> mdl { varsOut = Map.insertWith (Map.unionWith Set.union)
                                                                n (Map.singleton Nothing (Set.singleton lvl))
                                                                (varsOut mdl)
@@ -460,7 +484,7 @@ buildTransProgram gtl
                                                                   (\ats -> do
                                                                       mp <- get
                                                                       let (c,a,nmp) = foldl (\(chks,ass,cmp) at
-                                                                                             -> let ((n,f),nmp) = parseGTLAtom cmp (Just (k,varsOut entr)) (mapGTLVars (\n -> (Nothing,n)) at)
+                                                                                             -> let ((n,f),nmp) = parseGTLExpr cmp (Just (k,varsOut entr)) (mapGTLVars (\n -> (Nothing,n)) at)
                                                                                                 in (if f then (n:chks,ass,nmp)
                                                                                                     else (chks,n:ass,nmp))
                                                                                             ) ([],[],mp) ats

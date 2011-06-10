@@ -13,15 +13,22 @@ $digit10 = [0-9]
 
 tokens:-
   $white+                        ;
-  "//" .* \n                     ;
+  "//".*                         ;
   all                            { key KeyAll }
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
   automaton                      { key KeyAutomaton }
+  bool                           { key KeyBool }
+  byte                           { key KeyByte }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
+  enum                           { key KeyEnum }
+  false                          { key KeyFalse }
+  float                          { key KeyFloat }
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
+  int                            { key KeyInt }
+  instance                       { key KeyInstance }
   model                          { key KeyModel }
   finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
                                                             [] -> Nothing
@@ -36,6 +43,7 @@ tokens:-
   in                             { bin GOpIn }
   state                          { key KeyState }
   transition                     { key KeyTransition }
+  true                           { key KeyTrue }
   until                          { key KeyUntil }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }
@@ -60,6 +68,8 @@ tokens:-
   "-"                            { bin GOpMinus }
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
+  "^"                            { bin GOpPow }
+  "'" $letter ($letter | $digit10)* { \s -> ConstEnum (tail s) }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }
   $digit10+                      { \s -> ConstInt (read s) }

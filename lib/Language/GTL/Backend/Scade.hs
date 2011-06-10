@@ -5,6 +5,7 @@ import Language.Scade.Lexer (alexScanTokens)
 import Language.Scade.Parser (scade)
 import Language.GTL.Backend
 import Language.GTL.Translation
+import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
@@ -12,8 +13,6 @@ import Language.GTL.LTL as LTL
 import Data.Map as Map
 import Data.Set as Set
 import Data.List as List
-import Data.Typeable
-import Data.Dynamic
 import Control.Monad.Identity
 
 data Scade = Scade deriving (Show)
@@ -56,33 +55,31 @@ instance GTLBackend Scade where
         print $ prettyScade [scade]
         return $ Nothing
 
-scadeTranslateTypeC :: TypeRep -> String
-scadeTranslateTypeC rep
-  | rep == typeOf (undefined::Int) = "kcg_int"
-  | rep == typeOf (undefined::Bool) = "kcg_bool"
-  | otherwise = error $ "Couldn't translate "++show rep++" to C-type"
+scadeTranslateTypeC :: GTLType -> String
+scadeTranslateTypeC GTLInt = "kcg_int"
+scadeTranslateTypeC GTLBool = "kcg_bool"
+scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
-scadeTranslateValueC :: Dynamic -> String
-scadeTranslateValueC d = case fromDynamic d of
-  Just v -> show (v::Int)
-  Nothing -> case fromDynamic d of
-    Just v -> if v then "1" else "0"
-    Nothing -> error $ "Couldn't translate "++show d++" to C-value"
+scadeTranslateValueC :: GTLConstant -> String
+scadeTranslateValueC d = case unfix d of
+  GTLIntVal v -> show v
+  GTLBoolVal v -> if v then "1" else "0"
+  _ -> error $ "Couldn't translate "++show d++" to C-value"
 
-scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe TypeRep
-scadeTypeToGTL _ _ Sc.TypeInt = Just (typeOf (undefined::Int))
-scadeTypeToGTL _ _ Sc.TypeBool = Just (typeOf (undefined::Bool))
-scadeTypeToGTL _ _ Sc.TypeReal = Just (typeOf (undefined::Double))
-scadeTypeToGTL _ _ Sc.TypeChar = Just (typeOf (undefined::Char))
+scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
+scadeTypeToGTL _ _ Sc.TypeInt = Just GTLInt
+scadeTypeToGTL _ _ Sc.TypeBool = Just GTLBool
+scadeTypeToGTL _ _ Sc.TypeReal = Just GTLFloat
+scadeTypeToGTL _ _ Sc.TypeChar = Just GTLByte
 scadeTypeToGTL g l (Sc.TypePath (Path path)) = do
   tp <- scadeLookupType g l path
   scadeTypeToGTL g Map.empty tp
-scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (typeOf (undefined::Int))
+scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (GTLEnum enums)
 scadeTypeToGTL g l (Sc.TypePower tp expr) = do
   rtp <- scadeTypeToGTL g l tp
   case expr of
     ConstIntExpr 1 -> return rtp
-    ConstIntExpr n -> return $ mkTyConApp (mkTyCon $ "("++(replicate (fromIntegral n) ',')++")") (replicate (fromIntegral n) rtp)
+    ConstIntExpr n -> return (GTLArray n rtp)
 scadeTypeToGTL _ _ _ = Nothing
 
 data ScadeTypeInfo = ScadePackage ScadeTypeMapping
@@ -122,7 +119,7 @@ scadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont
 scadeTypes ((PackageDecl _ name decls):xs) = Map.insert name (ScadePackage (scadeTypes decls)) (scadeTypes xs)
 scadeTypes (_:xs) = scadeTypes xs
 
-scadeTypeMap :: ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> Either String (Map String TypeRep)
+scadeTypeMap :: ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> Either String (Map String GTLType)
 scadeTypeMap global local tps = do
   res <- mapM (\(name,expr) -> case scadeTypeToGTL global local expr of
                   Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
@@ -164,10 +161,10 @@ buildTest opname ins outs = UserOpDecl
   , userOpName = opname++"_test"
   , userOpSize = Nothing
   , userOpParams = ins
-  , userOpReturns = [ VarDecl { varNames = [VarId "test_result" False False]
-                              , varType = TypeBool
-                              , varDefault = Nothing
-                              , varLast = Nothing
+  , userOpReturns = [ VarDecl { Sc.varNames = [VarId "test_result" False False]
+                              , Sc.varType = TypeBool
+                              , Sc.varDefault = Nothing
+                              , Sc.varLast = Nothing
                               } ]
   , userOpNumerics = []
   , userOpContent = DataDef { dataSignals = []
@@ -187,7 +184,7 @@ buildTest opname ins outs = UserOpDecl
 buchiToScade :: String -- ^ Name of the resulting SCADE node
                 -> Map String TypeExpr -- ^ Input variables
                 -> Map String TypeExpr -- ^ Output variables
-                -> Buchi (Set (GTLAtom String)) -- ^ The buchi automaton
+                -> Buchi (Set (TypedExpr String)) -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
   = UserOpDecl
@@ -198,10 +195,10 @@ buchiToScade name ins outs buchi
     , userOpSize = Nothing
     , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
                      | (n,tp) <- Map.toList ins ++ Map.toList outs ]
-    , userOpReturns = [VarDecl { varNames = [VarId "test_result" False False]
-                               , varType = TypeBool
-                               , varDefault = Nothing
-                               , varLast = Nothing
+    , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
+                               , Sc.varType = TypeBool
+                               , Sc.varDefault = Nothing
+                               , Sc.varLast = Nothing
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
@@ -214,7 +211,7 @@ buchiToScade name ins outs buchi
     }
 
 -- | The starting state for a contract automaton.
-startState :: Buchi (Set (GTLAtom String)) -> Sc.State
+startState :: Buchi (Set (TypedExpr String)) -> Sc.State
 startState buchi = Sc.State
   { stateInitial = True
   , stateFinal = False
@@ -251,7 +248,7 @@ failState = Sc.State
   }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-buchiToStates :: Buchi (Set (GTLAtom String)) -> [Sc.State]
+buchiToStates :: Buchi (Set (TypedExpr String)) -> [Sc.State]
 buchiToStates buchi = startState buchi :
                       failState :
                       [ Sc.State
@@ -271,33 +268,41 @@ buchiToStates buchi = startState buchi :
                      | (num,st) <- Map.toList buchi ]
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: Integer -> BuchiState st (Set (GTLAtom String)) f -> Sc.Transition
+stateToTransition :: Integer -> BuchiState st (Set (TypedExpr String)) f -> Sc.Transition
 stateToTransition name st
   = Transition
     (relsToExpr $ Set.toList (vars st))
     Nothing
     (TargetFork Restart ("st"++show name))
 
-litToExpr :: Integral a => GTL.Expr String a -> Sc.Expr
-litToExpr (ExprConst n) = ConstIntExpr (fromIntegral n)
-litToExpr (ExprVar x lvl) = foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [x]) [1..lvl]
-litToExpr (ExprBinInt op l r) = BinaryExpr (case op of
-                                               OpPlus -> BinPlus
-                                               OpMinus -> BinMinus
-                                               OpMult -> BinTimes
-                                               OpDiv -> BinDiv) (litToExpr l) (litToExpr r)
+exprToScade :: TypedExpr String -> Sc.Expr
+exprToScade expr = case getValue expr of
+  Var name lvl -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
+  Value val -> valueToScade (getType expr) val
+  BinIntExpr op l r -> Sc.BinaryExpr (case op of
+                                         OpPlus -> BinPlus
+                                         OpMinus -> BinMinus
+                                         OpMult -> BinTimes
+                                         OpDiv -> BinDiv
+                                     ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  BinRelExpr rel l r -> BinaryExpr (case rel of
+                                      BinLT -> BinLesser
+                                      BinLTEq -> BinLessEq
+                                      BinGT -> BinGreater
+                                      BinGTEq -> BinGreaterEq
+                                      BinEq -> BinEquals
+                                      BinNEq -> BinDifferent
+                                   ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
 
-relToExpr :: GTLAtom String -> Sc.Expr
-relToExpr (GTLRel rel l r)
-  = BinaryExpr (case rel of
-                   BinLT -> BinLesser
-                   BinLTEq -> BinLessEq
-                   BinGT -> BinGreater
-                   BinGTEq -> BinGreaterEq
-                   BinEq -> BinEquals
-                   BinNEq -> BinDifferent
-               ) (litToExpr l) (litToExpr r)
+valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
+valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
+valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
+valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
+valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
+valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
+valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
 
-relsToExpr :: [GTLAtom String] -> Sc.Expr
-relsToExpr [] = ConstBoolExpr True
-relsToExpr xs = foldl1 (BinaryExpr BinAnd) (fmap relToExpr xs)
+relsToExpr :: [TypedExpr String] -> Sc.Expr
+relsToExpr [] = Sc.ConstBoolExpr True
+relsToExpr xs = foldl1 (Sc.BinaryExpr Sc.BinAnd) (fmap exprToScade xs)

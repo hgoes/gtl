@@ -14,14 +14,17 @@ import Language.Scade.Lexer as Sc
 import Language.Scade.Parser as Sc
 import Language.Promela.Pretty
 import Language.Scade.Pretty
+import Language.UPPAAL.PrettyPrinter
 
-import Language.GTL.PromelaCIntegration
-import Language.GTL.LocalVerification
+import Language.GTL.Target.PromelaKCG
+import Language.GTL.Target.Local
 import Language.GTL.Translation
 import Language.GTL.Model
-import Language.GTL.PromelaDynamicBDD as PrBd
-import Language.GTL.PrettyPrinter as PrPr
-import Language.GTL.PromelaNative as PrNat
+import Language.GTL.Target.PromelaCUDD as PrBd
+--import Language.GTL.Target.PrettyPrinter as PrPr
+import Language.GTL.Target.Promela as PrNat
+import Language.GTL.Target.UPPAAL as UPP
+import Language.GTL.Target.Printer
 
 import Misc.ProgramOptions
 
@@ -87,9 +90,10 @@ main = do
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal rgtl
     PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
-    Tikz -> do
+    {-Tikz -> do
       str <- PrPr.gtlToTikz rgtl
-      putStrLn str
+      putStrLn str-}
     Pretty -> putStrLn (simplePrettyPrint rgtl)
     Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
+    UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
   return ()
