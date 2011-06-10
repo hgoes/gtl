@@ -11,6 +11,9 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
 import Language.GTL.Types
 import Language.GTL.Target.Common
+import Language.GTL.ErrorRefiner
+
+import Control.Monad.Identity
 
 import Data.Set as Set
 import Data.Map as Map
@@ -20,6 +23,44 @@ import Prelude hiding (foldl,concat,foldl1,mapM)
 import Data.Maybe
 import Data.Int
 
+import Misc.ProgramOptions as Opts
+import Misc.VerificationEnvironment
+
+-- | Do a complete verification of a given GTL file
+verifyModel :: Opts.Options -- ^ Options
+               -> String -- ^ Name of the GTL file without extension
+               -> GTLSpec String -- ^ The GTL file contents
+               -> IO ()
+verifyModel opts name spec = do
+  let pr = translateSpec spec
+      model = buildTargetModel spec (buildInputMap spec) (buildOutputMap spec)
+  traceFiles <- runVerification opts name pr
+  parseTraces opts name traceFiles (traceToAtoms model)
+
+-- | Given a list of transitions, give a list of atoms that have to hold for each transition.
+traceToAtoms :: TargetModel -- ^ The program to work on
+                -> [(String,(Integer, Int))] -- ^ The transitions, given in the form (model,transition-number)
+                -> Trace --[[GTLAtom (String,String)]]
+traceToAtoms model trace = let
+                                  in fmap (\(mdl, st) ->
+                                          let stateMachine = (tmodelProcs model) ! mdl
+                                              rbuchi = stateMachine
+                                              entr = rbuchi ! st
+                                              ats = atoms $ vars entr
+                                          in fmap (mapGTLVars (\n -> (mdl,n))) ats
+                                        ) trace
+
+-- stateMachine :: Buchi ([Integer],[Integer],[TypedExpr String])
+{-
+traceToAtoms :: TransProgram -- ^ The program to work on
+                -> [(String,Integer)] -- ^ The transitions, given in the form (model,transition-number)
+                -> Trace
+traceToAtoms prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
+                                                 entr = (stateMachine tmdl)!st
+                                                 (_,_,atoms) = vars entr
+                                             in fmap (mapGTLVars (\n -> (mdl,n))) atoms) trace
+-}
+
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
   where
@@ -27,7 +68,7 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                                          Nothing -> Nothing
                                                                          Just dset -> Just $ translateConstant tp (unfix $ head $ Set.toList dset)
                                                                      )]
-                | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm, 
+                | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm,
                   l <- [0..lvl]
                 ]
     procs = [ Pr.ProcType { proctypeActive = Nothing
@@ -37,22 +78,22 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $
                                             [ prAtomic [
-                                                 prIf [ (case translateTExprs (snd $ vars st) of
+                                                 prIf [ (case translateTExprs (inputConstraints $ vars st) of
                                                             Nothing -> []
                                                             Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                                                         (catMaybes [ translateTRestr tvars restr
-                                                                   | (tvars,restr) <- (fst $ vars st) ])++
+                                                                   | (tvars,restr) <- (outputConstraints $ vars st) ])++
                                                         [Pr.StmtGoto ("st_"++show s1++"_"++show s2)]
-                                                      | ((s1,s2),st) <- Map.toList buchi, isStart st 
+                                                      | ((s1,s2),st) <- Map.toList buchi, isStart st
                                                       ]
                                                  ]
                                             ] ++
-                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $ prAtomic 
-                                              [ prIf [ (case translateTExprs (snd $ vars nst) of
+                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $ prAtomic
+                                              [ prIf [ (case translateTExprs (inputConstraints $ vars nst) of
                                                            Nothing -> []
                                                            Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                                                        (catMaybes [ translateTRestr tvars restr
-                                                                  | (tvars,restr) <- (fst $ vars nst) ])++
+                                                                  | (tvars,restr) <- (outputConstraints $ vars nst) ])++
                                                        [Pr.StmtGoto ("st_"++show t1++"_"++show t2)]
                                                      | (t1,t2) <- Set.toList (successors st),
                                                        let nst = buchi!(t1,t2)
@@ -98,7 +139,7 @@ translateConstant :: GTLType -> GTLValue r -> Pr.AnyExpression
 translateConstant _ (GTLIntVal x) = Pr.ConstExpr $ Pr.ConstInt x
 translateConstant _ (GTLByteVal x) = Pr.ConstExpr $ Pr.ConstInt (fromIntegral x)
 translateConstant _ (GTLBoolVal x) = Pr.ConstExpr $ Pr.ConstBool x
-translateConstant (GTLEnum xs) (GTLEnumVal x) 
+translateConstant (GTLEnum xs) (GTLEnumVal x)
   = let Just i = elemIndex x xs
     in Pr.ConstExpr $ Pr.ConstInt $ fromIntegral i
 
@@ -181,7 +222,7 @@ translateTRestr tvars restr
                                             (outputTAssign tvars (translateConstant (restrictionType restr) v))) of
                                         [] -> Nothing
                                         p -> Just p
-                                    | v <- Set.toList rr ] of 
+                                    | v <- Set.toList rr ] of
                        [] -> Nothing
                        p -> Just $ prIf p
         Nothing -> case buildTGenerator (restrictionType restr)
@@ -221,7 +262,7 @@ buildTGenerator tp upper lower check to
                                       else Pr.BinExpr Pr.BinPlus expr (Pr.ConstExpr $ Pr.ConstInt 1)) lower
     in case to of
       [] -> []
-      ((inst,var,idx),lvl):fs 
+      ((inst,var,idx),lvl):fs
         -> let trg = Pr.RefExpr (varName inst var idx 0)
            in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case tp of
                                                                  GTLEnum _ -> 0
@@ -258,7 +299,7 @@ varString :: String -> String -> [Integer] -> Integer -> String
 varString mdl var idx lvl = mdl ++ "_" ++ var ++ concat [ "_"++show i | i <- idx] ++ "_"++show lvl
 
 assign :: String -> String -> [Integer] -> Integer -> Pr.AnyExpression -> [Pr.Statement]
-assign mdl var idx lvl expr 
+assign mdl var idx lvl expr
   = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var idx cl) (if cl==0
                                                                 then expr
                                                                 else RefExpr (varName mdl var idx (cl-1))):stmts)

@@ -36,7 +36,7 @@ translateTarget tm
                          Nothing -> Nothing
                          Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant tp $ unfix $ head $ Set.toList iset)]
                   | (var,lvl,tp,init) <- tmodelVars tm ]
-      templates = [Template (noPos $ pname++"_tmpl") Nothing [] 
+      templates = [Template (noPos $ pname++"_tmpl") Nothing []
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
                   | (pname,buchi) <- Map.toList (tmodelProcs tm),
@@ -59,22 +59,22 @@ translateTarget tm
                     let start_trans = [ noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
                                                            , transTarget = "l"++show s1++"_"++show s2
-                                                           , transLabel = translateRestrictions 0 (fst (vars st)) ++
-                                                                          translateConditions (snd (vars st))
+                                                           , transLabel = translateRestrictions 0 (outputConstraints $ vars st) ++
+                                                                          translateConditions (inputConstraints $ vars st)
                                                            , transNails = []
                                                            , transColor = Nothing
                                                            }
                                       | ((s1,s2),st) <- Map.toList buchi, isStart st ],
-                    let st_trans = [ noPos $ Transition { transId = Nothing 
-                                                        , transSource = "l"++show s1++"_"++show s2 
+                    let st_trans = [ noPos $ Transition { transId = Nothing
+                                                        , transSource = "l"++show s1++"_"++show s2
                                                         , transTarget = "l"++show t1++"_"++show t2
-                                                        , transLabel = translateRestrictions 0 (fst (vars nst)) ++
-                                                                       translateConditions (snd (vars nst))
+                                                        , transLabel = translateRestrictions 0 (outputConstraints $ vars nst) ++
+                                                                       translateConditions (inputConstraints $ vars nst)
                                                         , transNails = []
                                                         , transColor = Nothing
                                                         }
                                    | ((s1,s2),st) <- Map.toList buchi,
-                                     (t1,t2) <- Set.toList (successors st), 
+                                     (t1,t2) <- Set.toList (successors st),
                                      let nst = buchi!(t1,t2)
                                      ]
                   ]
@@ -107,7 +107,7 @@ translateUpdate i vars = [noPos (Label Assignment [ExprAssign Assign
 translateRestriction :: Integer -> Restriction TargetVar -> [Positional Label]
 translateRestriction i restr
   = [noPos (Label Selection [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]])
-    ,noPos (Label Guard $ 
+    ,noPos (Label Guard $
             [ ExprBinary (if ins then U.BinGTE else U.BinGT) (ExprId ("tmp"++show i)) (translateExpression lower)
             | (ins,lower) <- lowerLimits restr
             ] ++
@@ -153,7 +153,7 @@ translateExpression expr = case getValue expr of
                                                   G.OpDiv -> U.BinDiv) (translateExpression l) (translateExpression r)
   UnBoolExpr op (Fix e) -> ExprUnary (case op of
                                          G.Not -> U.UnNot) (translateExpression e)
-                                                  
+
 -- | Translate a GTL type into a UPPAAL type.
 convertType :: GTLType -> TypeId
 convertType GTLInt = TypeInt Nothing
