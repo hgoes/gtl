@@ -27,7 +27,7 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                                          Nothing -> Nothing
                                                                          Just dset -> Just $ translateConstant tp (unfix $ head $ Set.toList dset)
                                                                      )]
-                | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm, 
+                | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm,
                   l <- [0..lvl]
                 ]
     procs = [ Pr.ProcType { proctypeActive = Nothing
@@ -43,11 +43,11 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                         (catMaybes [ translateTRestr tvars restr
                                                                    | (tvars,restr) <- (fst $ vars st) ])++
                                                         [Pr.StmtGoto ("st_"++show s1++"_"++show s2)]
-                                                      | ((s1,s2),st) <- Map.toList buchi, isStart st 
+                                                      | ((s1,s2),st) <- Map.toList buchi, isStart st
                                                       ]
                                                  ]
                                             ] ++
-                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $ prAtomic 
+                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $ prAtomic
                                               [ prIf [ (case translateTExprs (snd $ vars nst) of
                                                            Nothing -> []
                                                            Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
@@ -98,7 +98,7 @@ translateConstant :: GTLType -> GTLValue r -> Pr.AnyExpression
 translateConstant _ (GTLIntVal x) = Pr.ConstExpr $ Pr.ConstInt x
 translateConstant _ (GTLByteVal x) = Pr.ConstExpr $ Pr.ConstInt (fromIntegral x)
 translateConstant _ (GTLBoolVal x) = Pr.ConstExpr $ Pr.ConstBool x
-translateConstant (GTLEnum xs) (GTLEnumVal x) 
+translateConstant (GTLEnum xs) (GTLEnumVal x)
   = let Just i = elemIndex x xs
     in Pr.ConstExpr $ Pr.ConstInt $ fromIntegral i
 
@@ -127,10 +127,18 @@ translateTExpr e = case getValue e of
   UnBoolExpr op (Fix ne) -> Pr.UnExpr (case op of
                                           Not -> Pr.UnLNot) (translateTExpr ne)
 
+-- | Assigns variables including changing their respective history.
 outputTAssign :: [(TargetVar,Integer)] -> Pr.AnyExpression -> [Pr.Statement]
 outputTAssign [] _ = []
 outputTAssign (((inst,var,idx),lvl):rest) expr
   = (assign inst var idx lvl expr) ++
+    (outputTAssign rest (Pr.RefExpr (varName inst var idx 0)))
+
+-- | Does only do assignments to variables at time 0.
+outputTAssignNow :: [(TargetVar,Integer)] -> Pr.AnyExpression -> [Pr.Statement]
+outputTAssignNow [] _ = []
+outputTAssignNow (((inst,var,idx),lvl):rest) expr
+  = (assignNow inst var idx lvl expr) ++
     (outputTAssign rest (Pr.RefExpr (varName inst var idx 0)))
 
 
@@ -181,7 +189,7 @@ translateTRestr tvars restr
                                             (outputTAssign tvars (translateConstant (restrictionType restr) v))) of
                                         [] -> Nothing
                                         p -> Just p
-                                    | v <- Set.toList rr ] of 
+                                    | v <- Set.toList rr ] of
                        [] -> Nothing
                        p -> Just $ prIf p
         Nothing -> case buildTGenerator (restrictionType restr)
@@ -221,7 +229,7 @@ buildTGenerator tp upper lower check to
                                       else Pr.BinExpr Pr.BinPlus expr (Pr.ConstExpr $ Pr.ConstInt 1)) lower
     in case to of
       [] -> []
-      ((inst,var,idx),lvl):fs 
+      ((inst,var,idx),lvl):fs
         -> let trg = Pr.RefExpr (varName inst var idx 0)
            in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case tp of
                                                                  GTLEnum _ -> 0
@@ -232,7 +240,7 @@ buildTGenerator tp upper lower check to
                (prSequence . assign inst var idx lvl)
                rlower]++
                [prDo $ [[Pr.StmtExpr $ Pr.ExprAny $ rupper trg]++
-                        (outputTAssign to (Pr.BinExpr Pr.BinPlus trg (Pr.ConstExpr $ Pr.ConstInt 1)))
+                        (outputTAssignNow to (Pr.BinExpr Pr.BinPlus trg (Pr.ConstExpr $ Pr.ConstInt 1)))
                        ]++(case check trg of
                               Nothing -> [[Pr.StmtBreak]]
                               Just rcheck -> [[Pr.StmtExpr $ Pr.ExprAny rcheck
@@ -257,13 +265,19 @@ varName mdl var idx lvl = VarRef (varString mdl var idx lvl) Nothing Nothing
 varString :: String -> String -> [Integer] -> Integer -> String
 varString mdl var idx lvl = mdl ++ "_" ++ var ++ concat [ "_"++show i | i <- idx] ++ "_"++show lvl
 
+-- | Does an assignemnt to a variable including updating its history.
 assign :: String -> String -> [Integer] -> Integer -> Pr.AnyExpression -> [Pr.Statement]
-assign mdl var idx lvl expr 
+assign mdl var idx lvl expr
   = foldl (\stmts cl -> Pr.StmtAssign (varName mdl var idx cl) (if cl==0
                                                                 then expr
                                                                 else RefExpr (varName mdl var idx (cl-1))):stmts)
     []
     [0..lvl]
+
+-- | Does only do an assignment for the actual moment
+assignNow :: String -> String -> [Integer] -> Integer -> Pr.AnyExpression -> [Pr.Statement]
+assignNow mdl var idx lvl expr
+  = [Pr.StmtAssign (varName mdl var idx 0) expr]
 
 minimumAssignment :: Pr.AnyExpression -> (Pr.AnyExpression -> Pr.Statement) -> [Pr.AnyExpression] -> Pr.Statement
 minimumAssignment def f []     = f def
