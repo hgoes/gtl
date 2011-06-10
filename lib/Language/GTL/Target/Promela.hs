@@ -41,25 +41,14 @@ verifyModel opts name spec = do
 traceToAtoms :: TargetModel -- ^ The program to work on
                 -> [(String,(Integer, Int))] -- ^ The transitions, given in the form (model,transition-number)
                 -> Trace --[[GTLAtom (String,String)]]
-traceToAtoms model trace = let
-                                  in fmap (\(mdl, st) ->
-                                          let stateMachine = (tmodelProcs model) ! mdl
-                                              rbuchi = stateMachine
-                                              entr = rbuchi ! st
-                                              ats = atoms $ vars entr
-                                          in fmap (mapGTLVars (\n -> (mdl,n))) ats
-                                        ) trace
-
--- stateMachine :: Buchi ([Integer],[Integer],[TypedExpr String])
-{-
-traceToAtoms :: TransProgram -- ^ The program to work on
-                -> [(String,Integer)] -- ^ The transitions, given in the form (model,transition-number)
-                -> Trace
-traceToAtoms prog trace = fmap (\(mdl,st) -> let tmdl = (transModels prog)!mdl
-                                                 entr = (stateMachine tmdl)!st
-                                                 (_,_,atoms) = vars entr
-                                             in fmap (mapGTLVars (\n -> (mdl,n))) atoms) trace
--}
+traceToAtoms model trace = fmap transitionToAtoms trace
+  where
+    transitionToAtoms :: (String, (Integer, Int)) -> [TypedExpr (String, String)]
+    transitionToAtoms (mdl, st) =
+      let stateMachine = (tmodelProcs model) ! mdl
+          entr = stateMachine ! st
+          ats = atoms $ vars entr
+      in fmap (mapGTLVars (\n -> (mdl,n))) ats
 
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl

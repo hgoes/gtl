@@ -108,10 +108,10 @@ buildTargetModel spec inmp outmp
        }
 
 buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String (GBuchi (Integer,Int) BuchiVariables Bool)
-buildModelProcs spec outmp inmp = Map.mapWithKey f (gtlSpecInstances spec)
+buildModelProcs spec outmp inmp = Map.mapWithKey instanceToBuchi (gtlSpecInstances spec)
   where
-    f :: String -> (GTLInstance String) -> GBuchi (Integer,Int) BuchiVariables Bool
-    f name inst =
+    instanceToBuchi :: String -> (GTLInstance String) -> GBuchi (Integer,Int) BuchiVariables Bool
+    instanceToBuchi name inst =
       let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
           convertVariables :: Monad m => [TypedExpr String] -> m BuchiVariables
           convertVariables atm =
