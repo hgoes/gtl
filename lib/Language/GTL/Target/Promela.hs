@@ -36,8 +36,7 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $
-                                            [ prAtomic [
-                                                 prIf [ (case translateTExprs (snd $ vars st) of
+                                            [ prIf [[ prAtomic $ (case translateTExprs (snd $ vars st) of
                                                             Nothing -> []
                                                             Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                                                         (catMaybes [ translateTRestr tvars restr
@@ -47,8 +46,8 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                       ]
                                                  ]
                                             ] ++
-                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $ prAtomic
-                                              [ prIf [ (case translateTExprs (snd $ vars nst) of
+                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $
+                                              prIf [[ prAtomic $ (case translateTExprs (snd $ vars nst) of
                                                            Nothing -> []
                                                            Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
                                                        (catMaybes [ translateTRestr tvars restr
