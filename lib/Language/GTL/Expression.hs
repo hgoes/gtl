@@ -19,6 +19,7 @@ import Data.Either
 import Data.Foldable
 import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
+import Control.Monad.Error ()
 
 data Fix f = Fix { unfix :: f (Fix f) }
 
@@ -183,7 +184,7 @@ showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
 
 enforceType :: String -> GTLType -> GTLType -> Either String ()
 enforceType expr ac tp = if ac == tp
-                         then return ()
+                         then Right ()
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
 makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String v) -> Map v GTLType -> Set [String] -> GExpr -> Either String (TypedExpr v)

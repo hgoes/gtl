@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor #-}
 module Language.GTL.Types where
 
 import Text.Read hiding (get)
@@ -6,6 +6,7 @@ import Data.Binary
 import Data.List (genericLength,genericIndex)
 import Data.Foldable (Foldable)
 import Data.Traversable
+import Control.Monad.Error ()
 
 data GTLType = GTLInt
              | GTLByte
