@@ -71,15 +71,20 @@ versionString = "This is the GALS Translation Language of version "++version++".
 
 main = do
   opts <- getOptions
-  let gtl_file = gtlFile opts
-  print $ ccFlags opts
-  print $ ldFlags opts
   when (showHelp opts) $ do
     putStr usage
     exitSuccess
   when (showVersion opts) $ do
     putStrLn versionString
     exitSuccess
+  let gtl_file = gtlFile opts
+  print $ ccFlags opts
+  print $ ldFlags opts
+  when (gtl_file == "") $ do
+    ioError $ userError "No GTL file given"
+  exists <- doesFileExist gtl_file
+  when (not exists) $ do
+    ioError . userError $ (gtl_file ++ " does not exist.")
   (createDirectoryIfMissing True $ outputPath opts)
     `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file

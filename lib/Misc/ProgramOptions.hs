@@ -110,15 +110,7 @@ getOptions = do
                                   , ldFlags = ldflags
                                   }
   case getOpt (ReturnInOrder parseFreeOptions) options args of
-    (o, [], []) -> do
-      opts <- return $ foldl (flip id) start_opts o
-      exists <- doesFileExist (gtlFile opts)
-      if gtlFile opts == "" then
-        ioError $ userError "No GTL file given"
-        else
-          if not exists then ioError . userError $ "Not a valid file"
-          else
-            return opts
+    (o, [], []) -> return $ foldl (flip id) start_opts o
     (_, opts, []) -> ioError . userError $ "Unparsed options: " ++ show opts
     (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
