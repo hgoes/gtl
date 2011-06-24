@@ -48,7 +48,10 @@ compile
   -> String -- ^ Name of the resulting verifier executable
     -> IO()
 compile opts outputDir verifier = do
-  exitCode <- rawSystem (ccBinary opts) ([outputDir </> "pan.c", "-o" ++ (outputDir </> verifier)] ++ (ccFlags opts) ++ (ldFlags opts))
+  let input = outputDir </> "pan.c"
+      output = outputDir </> verifier
+      flags = (ccFlags opts) ++ (ldFlags opts) ++ ["-lcudd", "-lmtr", "-lepd", "-lst", "-lutil", "-lcudd_arith", "-lm"]
+  exitCode <- rawSystem (ccBinary opts) ([input, "-o" ++ output] ++ flags)
   case exitCode of
     ExitSuccess -> return ()
     ExitFailure c -> ioError $ userError "Error while running compiler"

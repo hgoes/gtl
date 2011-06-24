@@ -73,6 +73,7 @@ main = do
   opts <- getOptions
   let gtl_file = gtlFile opts
   print $ ccFlags opts
+  print $ ldFlags opts
   when (showHelp opts) $ do
     putStr usage
     exitSuccess
