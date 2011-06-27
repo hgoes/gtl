@@ -11,13 +11,14 @@ module Language.GTL.LTL(
   BuchiState(..),
   ltlToBuchi,
   translateGBA,
-  buchiProduct
+  buchiProduct,
+  ltl2vwaa
   ) where
 
 import Data.Set as Set
 import Data.Map as Map
 import Data.Foldable
-import Prelude hiding (foldl,mapM,foldl1)
+import Prelude hiding (foldl,mapM,foldl1,concat)
 import Language.GTL.Buchi
 
 -- | A LTL formula with atoms of type /a/.
@@ -67,6 +68,14 @@ instance Show UnOp where
 
 instance Show a => Show (LTL a) where
   showsPrec p (Atom x) = showsPrec p x
+  showsPrec p (Bin Until (Ground True) phi) = let str = showString "F " . showsPrec (binPrec Until) phi
+                                              in if p >= binPrec Until
+                                                 then showChar '(' . str . showChar ')'
+                                                 else str
+  showsPrec p (Bin UntilOp (Ground False) phi) = let str = showString "G " . showsPrec (binPrec UntilOp) phi
+                                                 in if p >= binPrec UntilOp
+                                                    then showChar '(' . str . showChar ')'
+                                                    else str
   showsPrec p (Bin op l r) = let str = showsPrec (binPrec op) l . 
                                        showChar ' ' .
                                        shows op . 
@@ -80,8 +89,8 @@ instance Show a => Show (LTL a) where
                           in if p >= unPrec op
                              then showChar '(' . str . showChar ')'
                              else str
-  showsPrec _ (Ground x) = if x then showString "T" --showChar '\x22a4'
-                           else showString "F" --showChar '\x22a5'
+  showsPrec _ (Ground x) = if x then showString "tt" --showChar '\x22a4'
+                           else showString "ff" --showChar '\x22a5'
 
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
@@ -134,6 +143,69 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
+data VWAA a st = VWAA { vwaaTransitions :: Map st (Map (Map a Bool) (Set st))
+                      , vwaaInits :: Set (Set st)
+                      , vwaaCoFinals :: Set st
+                      } deriving (Eq,Ord,Show)
+
+data GBA a st = GBA { gbaTransitions :: Map st (Map (Set a) (st,Set Integer))
+                    , gbaInits :: Set st
+                    } deriving (Eq,Ord,Show)
+
+ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
+ltl2vwaa ltl = VWAA { vwaaTransitions = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
+                    , vwaaInits = inits'
+                    , vwaaCoFinals = undefined
+                    }
+  where
+    inits' = cform ltl
+    cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
+                                           | e1 <- Set.toList (cform lhs)
+                                           , e2 <- Set.toList (cform rhs) ]
+    cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
+    cform f = Set.singleton (Set.singleton f)
+    
+    trans (Ground True) = Map.singleton Map.empty (Set.singleton (Ground True))
+    trans (Ground False) = Map.empty
+    trans (Atom p) = Map.singleton (Map.singleton p True) (Set.singleton (Ground True))
+    trans (Un Not (Atom p)) = Map.singleton (Map.singleton p False) (Set.singleton (Ground True))
+    trans (Un Next f) = Map.fromList [ (Map.empty,xs) | xs <- Set.toList (cform f) ]
+    trans (Bin Until l r) = transUnion (delta r) (transProd (delta l) (Map.singleton Map.empty (Set.singleton (Bin Until l r))))
+    trans (Bin UntilOp l r) = transProd (delta r) (transUnion (delta l) (Map.singleton Map.empty (Set.singleton (Bin UntilOp l r))))
+    
+    delta (Bin Or l r) = transUnion (delta l) (delta r)
+    delta (Bin And l r) = transProd (delta l) (delta r)
+    delta f = trans f
+    
+    transUnion = Map.unionWith transAnd
+    mergeAlphabet a1 a2 = if confl
+                          then Nothing
+                          else Just nmp
+      where (confl,nmp) = Map.mapAccum (\hasC (x,y) -> (hasC || x/=y,x)) False $ Map.unionWith (\(x1,_) (y1,_) -> (x1,y1))
+                          (fmap (\x -> (x,x)) a1)
+                          (fmap (\x -> (x,x)) a2)
+    transProd m1 m2 = Map.fromList [ (na,transAnd e1 e2)
+                                   | (a1,e1) <- Map.toList m1
+                                   , (a2,e2) <- Map.toList m2
+                                   , na <- case mergeAlphabet a1 a2 of
+                                     Nothing -> []
+                                     Just p -> [p]
+                                   ]
+    transAnd s1 s2
+      | Set.toList s1 == [Ground True] = s2
+      | Set.toList s2 == [Ground True] = s1
+      | otherwise = Set.union s1 s2
+    
+    buildTrans [] mp = mp
+    buildTrans (x:xs) mp
+      | Map.member x mp = buildTrans xs mp
+      | otherwise = let ts = trans x
+                    in buildTrans (concat [ Set.toList xs | xs <- Map.elems ts ]++xs) (Map.insert x ts mp)
+    
+ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
+ltlToBuchi = undefined
+
+{-
 type NodeSet a = Map (Set (LTL a),Set (LTL a)) (Integer,Set Integer,Set Integer,Set Integer)
 
 data Node a = Node
@@ -364,3 +436,4 @@ expand lneg untils n f node nset = case new node of
                                                                  else Set.empty
                                                       } | (st,co) <- Map.toList buchi ]
                                    in foldl (\(ns,cn,cf) node -> expand lneg untils cn cf node ns) (nset,n',f+1) nodes
+-}
