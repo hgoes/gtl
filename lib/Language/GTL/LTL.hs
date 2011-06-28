@@ -17,6 +17,7 @@ module Language.GTL.LTL(
 
 import Data.Set as Set
 import Data.Map as Map
+import qualified Data.List as List
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat)
 import Language.GTL.Buchi
@@ -152,8 +153,19 @@ data GBA a st = GBA { gbaTransitions :: Map st (Map (Set a) (st,Set Integer))
                     , gbaInits :: Set st
                     } deriving (Eq,Ord,Show)
 
+optimizeVWAATransitions :: (Ord a,Ord st) => Map (Map a Bool) (Set st) -> Map (Map a Bool) (Set st)
+optimizeVWAATransitions mp = Map.fromAscList $ opt allTrans
+  where
+    allTrans = Map.toAscList mp
+    opt = List.filter
+          (\(cond,trg)
+           -> case List.find (\(cond',trg') -> (Map.isProperSubmapOf cond' cond) &&
+                                               (Set.isSubsetOf trg trg')) allTrans of
+                Nothing -> True
+                Just _ -> False)
+
 ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
-ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
+ltl2vwaa ltl = VWAA { vwaaTransitions = fmap optimizeVWAATransitions trans'
                     , vwaaInits = inits'
                     , vwaaCoFinals = getFinals trans'
                     }
