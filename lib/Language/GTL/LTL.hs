@@ -153,12 +153,14 @@ data GBA a st = GBA { gbaTransitions :: Map st (Map (Set a) (st,Set Integer))
                     } deriving (Eq,Ord,Show)
 
 ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
-ltl2vwaa ltl = VWAA { vwaaTransitions = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
+ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
                     , vwaaInits = inits'
-                    , vwaaCoFinals = undefined
+                    , vwaaCoFinals = getFinals trans'
                     }
   where
     inits' = cform ltl
+    trans' = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
+    
     cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
                                            | e1 <- Set.toList (cform lhs)
                                            , e2 <- Set.toList (cform rhs) ]
@@ -201,6 +203,11 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = buildTrans (concat [ Set.toList xs | xs 
       | Map.member x mp = buildTrans xs mp
       | otherwise = let ts = trans x
                     in buildTrans (concat [ Set.toList xs | xs <- Map.elems ts ]++xs) (Map.insert x ts mp)
+    
+    isFinal (Bin Until _ _) = True
+    isFinal _ = False
+    
+    getFinals mp = Set.filter isFinal $ Map.keysSet mp
     
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
 ltlToBuchi = undefined
