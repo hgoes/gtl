@@ -12,7 +12,8 @@ module Language.GTL.LTL(
   ltlToBuchi,
   translateGBA,
   buchiProduct,
-  ltl2vwaa
+  ltl2vwaa,
+  vwaa2gba
   ) where
 
 import Data.Set as Set
@@ -144,25 +145,93 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
-data VWAA a st = VWAA { vwaaTransitions :: Map st (Map (Map a Bool) (Set st))
+data VWAA a st = VWAA { vwaaTransitions :: Map st [(Map a Bool,Set st)]
                       , vwaaInits :: Set (Set st)
                       , vwaaCoFinals :: Set st
-                      } deriving (Eq,Ord,Show)
+                      } deriving (Eq,Ord)
 
-data GBA a st = GBA { gbaTransitions :: Map st (Map (Set a) (st,Set Integer))
-                    , gbaInits :: Set st
-                    } deriving (Eq,Ord,Show)
+data GBA a st = GBA { gbaTransitions :: Map (Set st) [(Map a Bool,Set st,Set st)]
+                    , gbaInits :: Set (Set st)
+                    } deriving (Eq,Ord)
 
-optimizeVWAATransitions :: (Ord a,Ord st) => Map (Map a Bool) (Set st) -> Map (Map a Bool) (Set st)
-optimizeVWAATransitions mp = Map.fromAscList $ opt allTrans
+instance (Show a,Show st,Ord st) => Show (VWAA a st) where
+  show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
+                                    then "cofinal "
+                                    else "") ++ "state "++show st]
+                                  ++ [ "  "++showCond cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- trans ]
+                                | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
+              ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
+
+instance (Show a,Show st) => Show (GBA a st) where
+  show gba = unlines $ (concat [ [ "state "++show st ] ++
+                                 [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- trans ]
+                               | (st,trans) <- Map.toList (gbaTransitions gba) ])++
+             ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+
+showCond :: Show a => Map a Bool -> String
+showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
+
+optimizeVWAATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st)] -> [(Map a Bool,Set st)]
+optimizeVWAATransitions mp = List.filter
+                             (\(cond,trg)
+                              -> case List.find (\(cond',trg') -> (Map.isProperSubmapOf cond' cond) &&
+                                                                  (Set.isSubsetOf trg' trg)) mp of
+                                   Nothing -> True
+                                   Just _ -> False) mp
+
+insertGBATransition :: (Ord a,Ord st) => (Map a Bool,Set st,Set st) -> [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
+insertGBATransition x [] = [x]
+insertGBATransition t@(cond,trg,fin) all@(t'@(cond',trg',fin'):ys)
+  | (Map.isSubmapOf cond' cond)
+    && (trg==trg')
+    && (Set.isSubsetOf fin' fin) = all
+  | (Map.isSubmapOf cond cond')
+    && (trg==trg')
+    && (Set.isSubsetOf fin fin') = t:ys
+  | otherwise = t':(insertGBATransition t ys)
+    
+
+optimizeGBATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
+optimizeGBATransitions = foldl (\ts t -> insertGBATransition t ts) []
+
+vwaa2gba :: Ord a => VWAA a (LTL a) -> GBA a (LTL a)
+vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Map.empty
+                   , gbaInits = vwaaInits aut
+                   }
   where
-    allTrans = Map.toAscList mp
-    opt = List.filter
-          (\(cond,trg)
-           -> case List.find (\(cond',trg') -> (Map.isProperSubmapOf cond' cond) &&
-                                               (Set.isSubsetOf trg trg')) allTrans of
-                Nothing -> True
-                Just _ -> False)
+    buildTrans [] mp = mp
+    buildTrans (x:xs) mp 
+      | Map.member x mp = buildTrans xs mp
+      | otherwise = let trans = optimizeGBATransitions $ finalSet $ convertTrans x
+                    in buildTrans ([ trg | (_,trg,_) <- trans ]++xs) (Map.insert x trans mp)
+    
+    convertTrans sts 
+      | Set.null sts = []
+      | otherwise = foldl1 transProd [ (vwaaTransitions aut)!st | st <- Set.toList sts ]
+    
+    finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg)
+                                           ) (vwaaCoFinals aut)) 
+                     | (cond,trg) <- trans ]
+
+delta, delta' :: Ord a => LTL a -> [(Map a Bool,Set (LTL a))]
+delta (Ground True) = [(Map.empty,Set.singleton (Ground True))]
+delta (Ground False) = []
+delta (Atom p) = [(Map.singleton p True,Set.singleton (Ground True))]
+delta (Un Not (Atom p)) = [(Map.singleton p False,Set.singleton (Ground True))]
+delta (Un Next f) = [ (Map.empty,xs) | xs <- Set.toList (cform f) ]
+delta (Bin Until l r) = transUnion (delta' r) (transProd (delta' l) [(Map.empty,Set.singleton (Bin Until l r))])
+delta (Bin UntilOp l r) = transProd (delta' r) (transUnion (delta' l) [(Map.empty,Set.singleton (Bin UntilOp l r))])
+
+delta' (Bin Or l r) = transUnion (delta' l) (delta' r)
+delta' (Bin And l r) = transProd (delta' l) (delta' r)
+delta' f = delta f
+
+cform :: Ord  a => LTL a -> Set (Set (LTL a))
+cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
+                                       | e1 <- Set.toList (cform lhs)
+                                       , e2 <- Set.toList (cform rhs) ]
+cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
+cform f = Set.singleton (Set.singleton f)
 
 ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
 ltl2vwaa ltl = VWAA { vwaaTransitions = fmap optimizeVWAATransitions trans'
@@ -173,54 +242,44 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = fmap optimizeVWAATransitions trans'
     inits' = cform ltl
     trans' = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
     
-    cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
-                                           | e1 <- Set.toList (cform lhs)
-                                           , e2 <- Set.toList (cform rhs) ]
-    cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
-    cform f = Set.singleton (Set.singleton f)
-    
-    trans (Ground True) = Map.singleton Map.empty (Set.singleton (Ground True))
-    trans (Ground False) = Map.empty
-    trans (Atom p) = Map.singleton (Map.singleton p True) (Set.singleton (Ground True))
-    trans (Un Not (Atom p)) = Map.singleton (Map.singleton p False) (Set.singleton (Ground True))
-    trans (Un Next f) = Map.fromList [ (Map.empty,xs) | xs <- Set.toList (cform f) ]
-    trans (Bin Until l r) = transUnion (delta r) (transProd (delta l) (Map.singleton Map.empty (Set.singleton (Bin Until l r))))
-    trans (Bin UntilOp l r) = transProd (delta r) (transUnion (delta l) (Map.singleton Map.empty (Set.singleton (Bin UntilOp l r))))
-    
-    delta (Bin Or l r) = transUnion (delta l) (delta r)
-    delta (Bin And l r) = transProd (delta l) (delta r)
-    delta f = trans f
-    
-    transUnion = Map.unionWith transAnd
-    mergeAlphabet a1 a2 = if confl
-                          then Nothing
-                          else Just nmp
-      where (confl,nmp) = Map.mapAccum (\hasC (x,y) -> (hasC || x/=y,x)) False $ Map.unionWith (\(x1,_) (y1,_) -> (x1,y1))
-                          (fmap (\x -> (x,x)) a1)
-                          (fmap (\x -> (x,x)) a2)
-    transProd m1 m2 = Map.fromList [ (na,transAnd e1 e2)
-                                   | (a1,e1) <- Map.toList m1
-                                   , (a2,e2) <- Map.toList m2
-                                   , na <- case mergeAlphabet a1 a2 of
-                                     Nothing -> []
-                                     Just p -> [p]
-                                   ]
-    transAnd s1 s2
-      | Set.toList s1 == [Ground True] = s2
-      | Set.toList s2 == [Ground True] = s1
-      | otherwise = Set.union s1 s2
-    
     buildTrans [] mp = mp
     buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
-      | otherwise = let ts = trans x
-                    in buildTrans (concat [ Set.toList xs | xs <- Map.elems ts ]++xs) (Map.insert x ts mp)
+      | otherwise = let ts = delta x
+                    in buildTrans (concat [ Set.toList c | (_,c) <- ts ]++xs) (Map.insert x ts mp)
     
     isFinal (Bin Until _ _) = True
     isFinal _ = False
     
     getFinals mp = Set.filter isFinal $ Map.keysSet mp
     
+mergeAlphabet :: Ord a => Map a Bool -> Map a Bool -> Maybe (Map a Bool)
+mergeAlphabet a1 a2
+  = if confl
+    then Nothing
+    else Just nmp
+      where (confl,nmp) = Map.mapAccum (\hasC (x,y) -> (hasC || x/=y,x)) False $ Map.unionWith (\(x1,_) (y1,_) -> (x1,y1))
+                          (fmap (\x -> (x,x)) a1)
+                          (fmap (\x -> (x,x)) a2)
+
+transProd :: Ord a => [(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))]
+transProd m1 m2 = [ (na,transAnd e1 e2)
+                  | (a1,e1) <- m1
+                  , (a2,e2) <- m2
+                  , na <- case mergeAlphabet a1 a2 of
+                    Nothing -> []
+                    Just p -> [p]
+                  ]
+
+transAnd :: Ord a => Set (LTL a) -> Set (LTL a) -> Set (LTL a)
+transAnd s1 s2
+  | Set.toList s1 == [Ground True] = s2
+  | Set.toList s2 == [Ground True] = s1
+  | otherwise = Set.union s1 s2
+
+transUnion :: [(Map a Bool,Set (LTL a))] ->[(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))]
+transUnion = (++)
+
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
 ltlToBuchi = undefined
 
