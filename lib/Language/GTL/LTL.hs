@@ -13,14 +13,15 @@ module Language.GTL.LTL(
   translateGBA,
   buchiProduct,
   ltl2vwaa,
-  vwaa2gba
+  vwaa2gba,
+  minimizeGBA
   ) where
 
 import Data.Set as Set
 import Data.Map as Map
 import qualified Data.List as List
 import Data.Foldable
-import Prelude hiding (foldl,mapM,foldl1,concat)
+import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
 
 -- | A LTL formula with atoms of type /a/.
@@ -145,12 +146,12 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
-data VWAA a st = VWAA { vwaaTransitions :: Map st [(Map a Bool,Set st)]
+data VWAA a st = VWAA { vwaaTransitions :: Map st (Set (Map a Bool,Set st))
                       , vwaaInits :: Set (Set st)
                       , vwaaCoFinals :: Set st
                       } deriving (Eq,Ord)
 
-data GBA a st = GBA { gbaTransitions :: Map (Set st) [(Map a Bool,Set st,Set st)]
+data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (Map a Bool,Set st,Set st))
                     , gbaInits :: Set (Set st)
                     } deriving (Eq,Ord)
 
@@ -158,18 +159,53 @@ instance (Show a,Show st,Ord st) => Show (VWAA a st) where
   show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
                                     then "cofinal "
                                     else "") ++ "state "++show st]
-                                  ++ [ "  "++showCond cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- trans ]
+                                  ++ [ "  "++showCond cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- Set.toList trans ]
                                 | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
               ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
 
 instance (Show a,Show st) => Show (GBA a st) where
   show gba = unlines $ (concat [ [ "state "++show st ] ++
-                                 [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- trans ]
+                                 [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
 
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
+
+minimizeGBA :: (Show st,Show a,Ord st,Ord a) => GBA a st -> GBA a st
+minimizeGBA gba = case minimizeGBA' gba of
+  Nothing -> gba
+  Just ngba -> minimizeGBA ngba
+
+minimizeGBA' :: (Show st,Show a,Ord st,Ord a) => GBA a st -> Maybe (GBA a st)
+minimizeGBA' gba = if changed
+                   then Just (GBA { gbaTransitions = Map.fromList ntrans
+                                  , gbaInits = ninit
+                                  })
+                   else Nothing
+  where
+    (changed,ntrans,ninit) = minimizeTrans False [] (Map.toList (gbaTransitions gba)) (gbaInits gba)
+    
+    updateTrans old new = fmap (\(st,t) -> (st,Set.map (\(cond,trg,fin) -> (cond,if trg==old
+                                                                                 then new
+                                                                                 else trg,fin)) t))
+    
+    minimizeTrans ch res [] i = (ch,res,i)
+    minimizeTrans ch res ((st,t):xs) i
+      = let (ch',res',ni,nxs) = minimizeTrans' st t ch ((st,t):res) i [] xs
+        in minimizeTrans ch' res' nxs ni
+    
+    minimizeTrans' st t cch cres ci cxs [] = (cch,cres,ci,cxs)
+    minimizeTrans' st t cch cres ci cxs ((st',t'):ys)
+      = if t==t'
+        then minimizeTrans' st t True 
+             (updateTrans st' st cres)
+             (if Set.member st' ci
+              then Set.insert st (Set.delete st' ci)
+              else ci)
+             (updateTrans st' st cxs)
+             (updateTrans st' st ys)
+        else minimizeTrans' st t cch cres ci ((st',t'):cxs) ys
 
 optimizeVWAATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st)] -> [(Map a Bool,Set st)]
 optimizeVWAATransitions mp = List.filter
@@ -189,7 +225,6 @@ insertGBATransition t@(cond,trg,fin) all@(t'@(cond',trg',fin'):ys)
     && (trg==trg')
     && (Set.isSubsetOf fin fin') = t:ys
   | otherwise = t':(insertGBATransition t ys)
-    
 
 optimizeGBATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
 optimizeGBATransitions = foldl (\ts t -> insertGBATransition t ts) []
@@ -203,11 +238,11 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
     buildTrans (x:xs) mp 
       | Map.member x mp = buildTrans xs mp
       | otherwise = let trans = optimizeGBATransitions $ finalSet $ convertTrans x
-                    in buildTrans ([ trg | (_,trg,_) <- trans ]++xs) (Map.insert x trans mp)
+                    in buildTrans ([ trg | (_,trg,_) <- trans ]++xs) (Map.insert x (Set.fromList trans) mp)
     
     convertTrans sts 
       | Set.null sts = []
-      | otherwise = foldl1 transProd [ (vwaaTransitions aut)!st | st <- Set.toList sts ]
+      | otherwise = foldl1 transProd [ Set.toList $ (vwaaTransitions aut)!st | st <- Set.toList sts ]
     
     finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg)
                                            ) (vwaaCoFinals aut)) 
@@ -234,7 +269,7 @@ cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
 cform f = Set.singleton (Set.singleton f)
 
 ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
-ltl2vwaa ltl = VWAA { vwaaTransitions = fmap optimizeVWAATransitions trans'
+ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
                     , vwaaInits = inits'
                     , vwaaCoFinals = getFinals trans'
                     }
@@ -245,8 +280,8 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = fmap optimizeVWAATransitions trans'
     buildTrans [] mp = mp
     buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
-      | otherwise = let ts = delta x
-                    in buildTrans (concat [ Set.toList c | (_,c) <- ts ]++xs) (Map.insert x ts mp)
+      | otherwise = let ts = optimizeVWAATransitions $ delta x
+                    in buildTrans (concat [ Set.toList c | (_,c) <- ts ]++xs) (Map.insert x (Set.fromList ts) mp)
     
     isFinal (Bin Until _ _) = True
     isFinal _ = False
