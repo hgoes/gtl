@@ -24,7 +24,8 @@ import System.Environment
 import Control.Exception
 import Prelude hiding (catch)
 import Data.List (unfoldr)
-import System.Directory (doesFileExist)
+import System.Directory (findExecutable)
+import System.FilePath
 import Data.Graph.Inductive.Query.Monad (mapSnd)
 
 data TranslationMode
@@ -108,6 +109,7 @@ getOptions = do
   gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
   cflags <- catch (fmap splitOptions $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
   ldflags <- catch (fmap splitOptions $ getEnv "LDFLAGS") (\e -> const (return []) (e::SomeException))
+  scadeRoot <- guessScadeRoot
   let start_opts = defaultOptions { ccBinary = gcc
                                   , ccFlags = cflags
                                   , ldFlags = ldflags
@@ -163,3 +165,15 @@ split p = unfoldr (split' p)
         match [] _ = True
         match _ [] = False
         match (t:ts) (s:ss) = if t == s then match ts ss else False
+
+guessScadeRoot :: IO FilePath
+guessScadeRoot = do
+  scadeExePath <- findExecutable "scade"
+  case scadeExePath of
+    Nothing -> return $ "."
+    Just p -> return $ joinPath $ (filter isPartOfRoot) $ splitPath $ takeDirectory p
+  where
+    isPartOfRoot :: FilePath -> Bool
+    isPartOfRoot "SCADE Suite" = False
+    isPartOfRoot "bin" = False
+    isPartOfRoot _ = True
