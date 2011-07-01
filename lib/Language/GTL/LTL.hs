@@ -244,7 +244,11 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
       | Set.null sts = []
       | otherwise = foldl1 transProd [ Set.toList $ (vwaaTransitions aut)!st | st <- Set.toList sts ]
     
-    finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg)
+    finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg) ||
+                                                  not (List.null [ Map.isSubmapOf cond' cond && 
+                                                                   Set.isSubsetOf trg trg' &&
+                                                                   not (Set.member f trg')
+                                                                 | (cond',trg') <- delta f ])
                                            ) (vwaaCoFinals aut)) 
                      | (cond,trg) <- trans ]
 
