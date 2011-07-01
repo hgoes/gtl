@@ -10,10 +10,14 @@ import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.LTL as LTL
-import Data.Map as Map
-import Data.Set as Set
+import Data.Map as Map hiding (map)
+import Data.Set as Set hiding (map)
 import Data.List as List
 import Control.Monad.Identity
+
+import System.FilePath
+
+import Misc.ProgramOptions
 
 data Scade = Scade deriving (Show)
 
@@ -52,8 +56,39 @@ instance GTLBackend Scade where
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
-        print $ prettyScade [scade]
+        let outputDir = (outputPath opts)
+        writeFile (outputDir </> (gtlName ++ "-" ++ name) <.> "scade") (show $ prettyScade [scade])
+        print inp
+        print outp
+        writeFile (outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade") (show $ prettyScade [generateProver name inp outp])
         return $ Nothing
+
+generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
+generateProver name ins outs
+  = UserOpDecl
+    { userOpKind = Sc.Node
+    , userOpImported = False
+    , userOpInterface = InterfaceStatus Nothing False
+    , userOpName = name ++ "_proof"
+    , userOpSize = Nothing
+    , userOpParams = interfaceToDeclaration ins
+    , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
+                               , Sc.varType = TypeBool
+                               , Sc.varDefault = Nothing
+                               , Sc.varLast = Nothing
+                               }]
+    , userOpNumerics = []
+    , userOpContent = DataDef { dataSignals = []
+                              , dataLocals = interfaceToDeclaration outs
+                              , dataEquations = [
+                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path [name]) (map (IdExpr . Path . (:[]) . fst) ins))
+                                  , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
+                                ]
+                              }
+    }
+
+interfaceToDeclaration :: [(String,Sc.TypeExpr)] -> [VarDecl]
+interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Nothing Nothing | v <- vars]
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
