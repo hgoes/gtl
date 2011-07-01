@@ -28,16 +28,16 @@ import Language.GTL.Target.Printer
 
 import Misc.ProgramOptions
 
-x2s :: FilePath -> IO String
-x2s fp = readProcess "C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2\\SCADE Suite\\bin\\x2s.exe" [fp] ""
+x2s :: Options -> FilePath -> IO String
+x2s opts fp = readProcess ((scadeRoot opts) </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
 
-loadScade :: FilePath -> IO String
-loadScade fp = case takeExtension fp of
+loadScade :: Options -> FilePath -> IO String
+loadScade opts fp = case takeExtension fp of
   ".scade" -> readFile fp
-  ".xscade" -> x2s fp
+  ".xscade" -> x2s opts fp
 
-loadScades :: [FilePath] -> IO String
-loadScades = fmap concat . mapM loadScade
+loadScades :: Options -> [FilePath] -> IO String
+loadScades opts = fmap concat . mapM (loadScade opts)
 
 versionString :: String
 versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
