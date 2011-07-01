@@ -16,19 +16,21 @@ import Data.List as List
 import Control.Monad.Identity
 
 import System.FilePath
+import System.Process (rawSystem)
+import System.Exit (ExitCode(..))
 
 import Misc.ProgramOptions
 
 data Scade = Scade deriving (Show)
 
 instance GTLBackend Scade where
-  data GTLBackendModel Scade = ScadeData String [Sc.Declaration] ScadeTypeMapping
+  data GTLBackendModel Scade = ScadeData String [Sc.Declaration] ScadeTypeMapping FilePath
   backendName Scade = "scade"
   initBackend Scade [file,name] = do
     str <- readFile file
     let decls = scade $ alexScanTokens str
-    return $ ScadeData name decls (scadeTypes decls)
-  typeCheckInterface Scade (ScadeData name decls tps) (ins,outs) = do
+    return $ ScadeData name decls (scadeTypes decls) file
+  typeCheckInterface Scade (ScadeData name decls tps opFile) (ins,outs) = do
     let (sc_ins,sc_outs) = scadeInterface (scadeParseNodeName name) decls
         Just local = scadeMakeLocal (scadeParseNodeName name) tps
     mp_ins <- scadeTypeMap tps local sc_ins
@@ -36,7 +38,7 @@ instance GTLBackend Scade where
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
-  cInterface Scade (ScadeData name decls tps)
+  cInterface Scade (ScadeData name decls tps opFile)
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
       in CInterface { cIFaceIncludes = [name++".h"]
                     , cIFaceStateType = ["outC_"++name]
@@ -52,16 +54,18 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData name decls tps) expr opts gtlName
+  backendVerify Scade (ScadeData name decls tps opFile) expr opts gtlName
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
         let outputDir = (outputPath opts)
-        writeFile (outputDir </> (gtlName ++ "-" ++ name) <.> "scade") (show $ prettyScade [scade])
-        print inp
-        print outp
-        writeFile (outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade") (show $ prettyScade [generateProver name inp outp])
-        return $ Nothing
+            testNodeFile = (gtlName ++ "-" ++ name) <.> "scade"
+            proofNodeFile = (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
+        writeFile (outputDir </> testNodeFile) (show $ prettyScade [scade])
+        writeFile (outputDir </> proofNodeFile) (show $ prettyScade [generateProver name inp outp])
+        case scadeRoot opts of
+          Just p -> verifyScadeNodes p name opFile testNodeFile proofNodeFile
+          Nothing -> return $ Nothing
 
 generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name ins outs
@@ -89,6 +93,13 @@ generateProver name ins outs
 
 interfaceToDeclaration :: [(String,Sc.TypeExpr)] -> [VarDecl]
 interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Nothing Nothing | v <- vars]
+
+verifyScadeNodes :: FilePath -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Bool)
+verifyScadeNodes scadeRoot name opFile testNodeFile proofNodeFile =
+  let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
+  in do
+    exitCode <- rawSystem dv ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", name ++ "_proof_report.xml"]
+    return $ Just $ exitCode == ExitSuccess
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
