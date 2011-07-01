@@ -48,7 +48,7 @@ data Options = Options
                , ccBinary :: String
                , ccFlags :: [String]
                , ldFlags :: [String]
-               , scadeRoot :: String
+               , scadeRoot :: Maybe FilePath
                }
                deriving Show
 
@@ -62,7 +62,7 @@ defaultOptions = Options
   , ccBinary = "gcc"
   , ccFlags = []
   , ldFlags = []
-  , scadeRoot = ""
+  , scadeRoot = Nothing
   }
 
 modes :: [(String,TranslationMode)]
@@ -95,7 +95,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['o'] ["output-directory"] (ReqArg (\path opts -> opts { outputPath = path }) "path") "Path into which the output should be generated"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
-          ,Option []    ["scade-root"] (ReqArg (\path opts -> opts { scadeRoot = path }) "path") "Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
+          ,Option []    ["scade-root"] (ReqArg (\path opts -> opts { scadeRoot = Just path }) "path") "Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
           ]
 
 header :: String
@@ -113,6 +113,7 @@ getOptions = do
   let start_opts = defaultOptions { ccBinary = gcc
                                   , ccFlags = cflags
                                   , ldFlags = ldflags
+                                  , scadeRoot = scadeRoot
                                   }
   case getOpt (ReturnInOrder parseFreeOptions) options args of
     (o, [], []) -> return $ foldl (flip id) start_opts o
@@ -166,12 +167,12 @@ split p = unfoldr (split' p)
         match _ [] = False
         match (t:ts) (s:ss) = if t == s then match ts ss else False
 
-guessScadeRoot :: IO FilePath
+guessScadeRoot :: IO (Maybe FilePath)
 guessScadeRoot = do
   scadeExePath <- findExecutable "scade"
   case scadeExePath of
-    Nothing -> return $ "."
-    Just p -> return $ joinPath $ (filter isPartOfRoot) $ splitPath $ takeDirectory p
+    Nothing -> return Nothing
+    Just p -> return $ Just $ joinPath $ (filter isPartOfRoot) $ splitPath $ takeDirectory p
   where
     isPartOfRoot :: FilePath -> Bool
     isPartOfRoot "SCADE Suite" = False

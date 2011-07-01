@@ -29,7 +29,9 @@ import Language.GTL.Target.Printer
 import Misc.ProgramOptions
 
 x2s :: Options -> FilePath -> IO String
-x2s opts fp = readProcess ((scadeRoot opts) </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
+x2s opts fp = case (scadeRoot opts) of
+  Nothing -> return ""
+  Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
 
 loadScade :: Options -> FilePath -> IO String
 loadScade opts fp = case takeExtension fp of
