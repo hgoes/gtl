@@ -8,12 +8,14 @@ import Language.GTL.Backend
 import Language.GTL.Backend.Scade
 import Language.GTL.Backend.None
 
+import Misc.ProgramOptions as Opts
+
 -- | Essentially a `GTLBackend' with the parameters instantiated, thus eliminating
 --   the type variable.
 data AllBackend = AllBackend
                   { allTypecheck :: ModelInterface -> Either String ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: TypedExpr String -> IO (Maybe Bool)
+                  , allVerifyLocal :: TypedExpr String -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 tryInit :: GTLBackend b => b -> String -> [String] -> IO (Maybe AllBackend)

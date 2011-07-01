@@ -94,7 +94,7 @@ main = do
     Right x -> return x
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
-    Local -> verifyLocal rgtl
+    Local -> verifyLocal opts (dropExtension gtl_file) rgtl
     PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
     {-Tikz -> do
       str <- PrPr.gtlToTikz rgtl

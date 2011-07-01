@@ -6,12 +6,17 @@ import Language.GTL.Model
 import Language.GTL.Backend.All
 import Data.Map as Map
 
+import Misc.ProgramOptions as Opts
+
 -- | Performs the formalism-specific verification algorithms for each model
 --   in the specification to find out if the contract for the model holds.
-verifyLocal :: GTLSpec String -> IO ()
-verifyLocal spec = mapM_ (\(name,mdl) -> do
+verifyLocal :: Opts.Options -- ^ Options
+             -> String -- ^ Name of the GTL file without extension
+             -> GTLSpec String
+             -> IO ()
+verifyLocal opts gtlName spec = mapM_ (\(name,mdl) -> do
                              putStrLn $ "Verifying "++name++":"
-                             res <- allVerifyLocal (gtlModelBackend mdl) (gtlModelContract mdl)
+                             res <- allVerifyLocal (gtlModelBackend mdl) (gtlModelContract mdl) opts gtlName
                              case res of
                                Nothing -> putStrLn "Undecidable"
                                Just True -> putStrLn "Success"
