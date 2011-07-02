@@ -16,7 +16,7 @@ import Data.List as List
 import Control.Monad.Identity
 
 import System.FilePath
-import System.Process (rawSystem)
+import System.Process (proc, createProcess, waitForProcess)
 import System.Exit (ExitCode(..))
 
 import Text.XML.HXT.Core
@@ -110,8 +110,13 @@ verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FileP
 verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
+      verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
   in do
-    exitCode <- rawSystem dv ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
+    print dv
+    print reportFile
+    print verifOpts
+    (_, _, _, p) <- createProcess $ proc dv verifOpts
+    exitCode <- waitForProcess p
     case exitCode of
       ExitFailure _ -> return Nothing
       ExitSuccess -> readReport reportFile
