@@ -22,6 +22,8 @@ import System.Exit (ExitCode(..))
 import Text.XML.HXT.Core
 import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
 import Text.XML.HXT.Arrow.XmlState.TypeDefs (xioUserState)
+import Text.XML.HXT.DOM.TypeDefs ()
+import Data.Tree.NTree.TypeDefs (NTree(..))
 
 import Misc.ProgramOptions
 
@@ -124,7 +126,10 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
 readReport :: FilePath -> IO (Maybe Report)
 readReport reportFile = do
   let defaultReport = Report False
-      reader = readDocument [withShowTree yes] reportFile >>> makeReport
+      reader =
+        readDocument [withShowTree yes, withTrace 1] reportFile
+        >>> withTraceLevel 4 (traceDoc "resulting document")
+        >>> makeReport
   (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
   return $ Just $ xioUserState r
   where
@@ -133,8 +138,27 @@ readReport reportFile = do
     makeReport
       = deep
         (
-          isA $ const True
+          isXTag >>> hasName "prover"
+          >>> getChildren >>> isXTag >>> hasName "property" >>> isVerified
         )
+    isXTag = isA isXTag'
+      where
+        isXTag' :: XmlTree -> Bool
+        isXTag' (NTree (XTag _ _) _) = True
+        isXTag' _ = False
+    isVerified :: IOStateArrow Report XmlTree XmlTree
+    isVerified =
+      traceMsg 1 "Test if verified"
+      >>> hasAttrValue "status" isVerified'
+      >>> traceMsg 1 "Was verified"
+      >>> changeUserState setVerified
+      where
+        isVerified' status
+          | status == "Valid" = True
+          | status == "Falsifiable" = False
+          | otherwise = False
+        setVerified :: XmlTree -> Report -> Report
+        setVerified _ r = r { verified = True }
 
 
 scadeTranslateTypeC :: GTLType -> String
