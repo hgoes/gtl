@@ -19,6 +19,10 @@ import System.FilePath
 import System.Process (rawSystem)
 import System.Exit (ExitCode(..))
 
+import Text.XML.HXT.Core
+import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
+import Text.XML.HXT.Arrow.XmlState.TypeDefs (xioUserState)
+
 import Misc.ProgramOptions
 
 data Scade = Scade deriving (Show)
@@ -59,13 +63,17 @@ instance GTLBackend Scade where
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
       in do
         let outputDir = (outputPath opts)
-            testNodeFile = (gtlName ++ "-" ++ name) <.> "scade"
-            proofNodeFile = (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
-        writeFile (outputDir </> testNodeFile) (show $ prettyScade [scade])
-        writeFile (outputDir </> proofNodeFile) (show $ prettyScade [generateProver name inp outp])
+            testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
+            proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
+        writeFile testNodeFile (show $ prettyScade [scade])
+        writeFile proofNodeFile (show $ prettyScade [generateProver name inp outp])
         case scadeRoot opts of
-          Just p -> verifyScadeNodes p name opFile testNodeFile proofNodeFile
-          Nothing -> return $ Nothing
+          Just p -> do
+            report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+            case report' of
+              Nothing -> return Nothing
+              Just report -> return $ Just $ verified report
+          Nothing -> return Nothing
 
 generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name ins outs
@@ -94,12 +102,35 @@ generateProver name ins outs
 interfaceToDeclaration :: [(String,Sc.TypeExpr)] -> [VarDecl]
 interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Nothing Nothing | v <- vars]
 
-verifyScadeNodes :: FilePath -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Bool)
-verifyScadeNodes scadeRoot name opFile testNodeFile proofNodeFile =
+data Report = Report {
+  verified :: Bool
+}
+
+verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Report)
+verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
+      reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
   in do
-    exitCode <- rawSystem dv ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", name ++ "_proof_report.xml"]
-    return $ Just $ exitCode == ExitSuccess
+    exitCode <- rawSystem dv ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
+    case exitCode of
+      ExitFailure _ -> return Nothing
+      ExitSuccess -> readReport reportFile
+
+readReport :: FilePath -> IO (Maybe Report)
+readReport reportFile = do
+  let defaultReport = Report False
+      reader = readDocument [withShowTree yes] reportFile >>> makeReport
+  (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
+  return $ Just $ xioUserState r
+  where
+    emptyRoot = root [] []
+    makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
+    makeReport
+      = deep
+        (
+          isA $ const True
+        )
+
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
