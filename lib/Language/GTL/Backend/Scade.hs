@@ -23,7 +23,6 @@ import Text.XML.HXT.Core
 import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
 import Text.XML.HXT.Arrow.XmlState.TypeDefs (xioUserState)
 import Text.XML.HXT.DOM.TypeDefs ()
-import Data.Tree.NTree.TypeDefs (NTree(..))
 
 import Misc.ProgramOptions
 
@@ -74,7 +73,9 @@ instance GTLBackend Scade where
             report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
             case report' of
               Nothing -> return Nothing
-              Just report -> return $ Just $ verified report
+              Just report -> do
+                print report
+                return $ Just $ verified report
           Nothing -> return Nothing
 
 generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
@@ -104,9 +105,15 @@ generateProver name ins outs
 interfaceToDeclaration :: [(String,Sc.TypeExpr)] -> [VarDecl]
 interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Nothing Nothing | v <- vars]
 
+-- | List of TCL commands
+type ScadeTick = [String]
+type ScadeTrace = [ScadeTick]
+
 data Report = Report {
-  verified :: Bool
-}
+  verified :: Bool,
+  node :: String,
+  errorTrace :: ScadeTrace
+} deriving Show
 
 verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Report)
 verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
@@ -114,9 +121,6 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
       verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
   in do
-    print dv
-    print reportFile
-    print verifOpts
     (_, _, _, p) <- createProcess $ proc dv verifOpts
     exitCode <- waitForProcess p
     case exitCode of
@@ -125,33 +129,36 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
 
 readReport :: FilePath -> IO (Maybe Report)
 readReport reportFile = do
-  let defaultReport = Report False
+  let defaultReport = Report False "" []
       reader =
-        readDocument [withShowTree yes, withTrace 1] reportFile
-        >>> withTraceLevel 4 (traceDoc "resulting document")
-        >>> makeReport
+        configSysVars [withTrace 1] >>>
+        readDocument [withShowTree yes] reportFile >>>
+        withTraceLevel 4 (traceDoc "resulting document") >>>
+        getChildren >>>
+        makeReport
   (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
   return $ Just $ xioUserState r
   where
     emptyRoot = root [] []
     makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
-    makeReport
-      = deep
-        (
-          isXTag >>> hasName "prover"
-          >>> getChildren >>> isXTag >>> hasName "property" >>> isVerified
-        )
-    isXTag = isA isXTag'
+    makeReport =
+      isElem >>> hasName "prover" >>>
+      getChildren >>>
+      isElem >>> hasName "property" >>>
+      getNodeName <&>
+      isVerified `orElse` generateTrace
+    getNodeName :: IOStateArrow Report XmlTree String
+    getNodeName =
+      isElem >>> hasName "node" >>>
+      getAttrValue "node" >>> changeUserState setNodeName
       where
-        isXTag' :: XmlTree -> Bool
-        isXTag' (NTree (XTag _ _) _) = True
-        isXTag' _ = False
+        setNodeName :: String -> Report -> Report
+        setNodeName nodeName r = r {node = nodeName}
     isVerified :: IOStateArrow Report XmlTree XmlTree
     isVerified =
-      traceMsg 1 "Test if verified"
-      >>> hasAttrValue "status" isVerified'
-      >>> traceMsg 1 "Was verified"
-      >>> changeUserState setVerified
+      traceMsg 1 "Test if verified" >>>
+      hasAttrValue "status" isVerified' >>>
+      changeUserState setVerified
       where
         isVerified' status
           | status == "Valid" = True
@@ -159,7 +166,20 @@ readReport reportFile = do
           | otherwise = False
         setVerified :: XmlTree -> Report -> Report
         setVerified _ r = r { verified = True }
+    generateTrace = deep generateTick
+    generateTick =
+      isElem >>> hasName "tick" >>>
+      getChildren >>>
+      isElem >>> hasName "input" >>> makeSetCommand
+      where
+        makeSetCommand = changeUserState (\_ r -> r {errorTrace = (("SSM::Set " ++ (node r)) : (head $ errorTrace r)) : (tail $ errorTrace r)})
 
+-- | Execute g after f but exactly like &&& but forget the result of f.
+-- Roughly (map snd) . (f &&& g).
+(<&>) :: IOStateArrow s a b -> IOStateArrow s a c -> IOStateArrow s a c
+f <&> g = IOSLA $ \s x -> do
+                    (s', y) <- runIOSLA (f &&& g) s x
+                    return (s', map snd y)
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
