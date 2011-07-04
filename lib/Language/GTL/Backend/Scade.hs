@@ -112,11 +112,12 @@ type ScadeTick = [String]
 type ScadeTrace = [ScadeTick]
 
 data Report = Report {
-  verified :: Bool,
-  node :: String,
-  errorTrace :: ScadeTrace
+  verified :: Bool -- ^ Could expected contract be fulfilled?
+  , node :: String -- ^ The node in test
+  , errorTrace :: ScadeTrace -- ^ In case /verified == True/ contains a list of TCL commands to reproduce the error.
 } deriving Show
 
+-- | Runs the Scade design verifier and reads back its report.
 verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Report)
 verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
@@ -128,6 +129,17 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
       ExitFailure _ -> return Nothing
       ExitSuccess -> readReport reportFile
 
+-- | Read the XML output of the design verifier.
+-- The structure is something like:
+--  <prover ...>
+--    <property name="test_result" status="/s/" node="/n/" ...>
+--      <tick ...>
+--        <input name="/i/"><value type="/t/">v</value>
+--  ...
+-- Where s is "Falsifiable" or "Valid" (Report.verified == True iff s == "Valid"),
+-- n is the name of the tested node (will be in Report.node).
+-- For each tick there will be a ScadeTick in Report.errorTrace and for each
+-- input there will be a set command in that tick. Each tick will be finalized by a cycle command.
 readReport :: FilePath -> IO (Maybe Report)
 readReport reportFile = do
   let defaultReport = Report False "" []
@@ -142,9 +154,9 @@ readReport reportFile = do
     emptyRoot = root [] []
     makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
     makeReport =
-      isElem >>> hasName "prover" >>>
+      isTag "prover" >>>
       getChildren >>>
-      isElem >>> hasName "property" >>>
+      isTag "property" >>>
       getNodeName &&&>
       isVerified `orElse` generateTrace
     getNodeName :: IOStateArrow Report XmlTree String
@@ -163,29 +175,31 @@ readReport reportFile = do
         setVerified _ r = r { verified = True }
     generateTrace = deep generateTick
     generateTick =
-      isElem >>> hasName "tick" >>>
+      isTag "tick" >>>
       startCycle >>>
-      (
-        getChildren >>>
-        isElem >>> hasName "input" >>> makeSetCommand &&&>
-        getChildren >>>
-        isElem >>> hasName "value" >>> getChildren >>> getText >>> valueSetCommand
-      ) &&&>
+      getChildren >>>
+      isTag "input" >>> makeSetCommand &&&>
+      getChildren >>>
+      isTag "value" >>> getChildren >>> valueSetCommand &&&>
       makeCycleCommand
       where
         startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
         makeSetCommand =
           getAttrValue "name" >>>
-          changeUserState (\name r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ name) : (head $ errorTrace r)) : (tail $ errorTrace r)})
+          changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
         valueSetCommand =
-          let
-            traceHead = head . errorTrace
-            traceTail = tail . errorTrace
-            commandHead = head . traceHead
-            commandTail = tail . traceHead
-          in changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
-        makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (head $ errorTrace r)) : (tail $ errorTrace r)})
+          getText >>>
+          changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+        makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (traceHead r)) : (traceTail r)})
+        traceHead = head . errorTrace
+        traceTail = tail . errorTrace
+        commandHead = head . traceHead
+        commandTail = tail . traceHead
     reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
+
+-- | Tests if we are at a node of type
+-- </name/ ...>...
+isTag name = isElem >>> hasName name
 
 -- | Execute f and g on input, use output state of f for g and return
 -- the result only of g.
@@ -200,6 +214,7 @@ IOSLA f &&&> IOSLA g = IOSLA $ \ s x -> do
                    return (s'', y)
 -}
 
+--- | Generate the scenario file for the report.
 generateScenario :: FilePath -> Report -> IO()
 generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
