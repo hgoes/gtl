@@ -149,10 +149,9 @@ readReport reportFile = do
         readDocument [withShowTree yes] reportFile >>>
         getChildren >>>
         makeReport
-  (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
+  (r, _) <- runXIOSState (initialState defaultReport) reader
   return $ Just $ reverseTrace $ xioUserState r
   where
-    emptyRoot = root [] []
     makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
     makeReport =
       isTag "prover" >>>
@@ -166,38 +165,47 @@ readReport reportFile = do
     isVerified :: IOStateArrow Report XmlTree XmlTree
     isVerified =
       hasAttrValue "status" isVerified' >>>
-      changeUserState setVerified
+      changeUserState (\_ r -> r { verified = True })
       where
         isVerified' status
           | status == "Valid" = True
           | status == "Falsifiable" = False
           | otherwise = False
-        setVerified :: XmlTree -> Report -> Report
-        setVerified _ r = r { verified = True }
-    generateTrace = deep generateTick
-    generateTick =
-      isTag "tick" >>>
-      startCycle >>>
-      readCycleActions &&&> makeCycleCommand
+    generateTrace :: IOStateArrow Report XmlTree XmlTree
+    generateTrace = deep readTick
       where
-        startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
-        readCycleActions =
-          getChildren >>>
-          isTag "input" >>> makeSetCommand &&&>
-          getChildren >>>
-          isTag "value" >>> getChildren >>> valueSetCommand
-        makeSetCommand =
-          getAttrValue "name" >>>
-          changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
-        valueSetCommand =
-          getText >>>
-          changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
-        makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (traceHead r)) : (traceTail r)})
-        traceHead = head . errorTrace
-        traceTail = tail . errorTrace
-        commandHead = head . traceHead
-        commandTail = tail . traceHead
+        readTick =
+          isTag "tick" >>>
+          startCycle >>>
+          readCycleActions &&&> makeCycleCommand
+          where
+            startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
+            readCycleActions =
+              getChildren >>>
+              isTag "input" >>> makeSetCommand &&&>
+              getChildren >>>
+              isTag "value" >>> getChildren >>> valueSetCommand
+            -- TCL command generation
+            makeSetCommand =
+              getAttrValue "name" >>>
+              changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
+            valueSetCommand =
+              getText >>>
+              changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (traceHead r)) : (traceTail r)})
+            -- trace access
+            traceHead = head . errorTrace
+            traceTail = tail . errorTrace
+            commandHead = head . traceHead
+            commandTail = tail . traceHead
+    -- After parsing the ticks and the commands in there are in reverse order -> correct that.
+    reverseTrace :: Report -> Report
     reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
+
+runXIOSState :: XIOState s -> IOStateArrow s XmlTree c -> IO (XIOState s, [c])
+runXIOSState s0 f = runIOSLA (emptyRoot >>> f) s0 undefined
+  where
+    emptyRoot = root [] []
 
 -- | Tests if we are at a node of type
 -- </name/ ...>...
