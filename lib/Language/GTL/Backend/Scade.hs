@@ -131,9 +131,8 @@ readReport :: FilePath -> IO (Maybe Report)
 readReport reportFile = do
   let defaultReport = Report False "" []
       reader =
-        configSysVars [withTrace 1] >>>
+        configSysVars [] >>>
         readDocument [withShowTree yes] reportFile >>>
-        -- withTraceLevel 4 (traceDoc "resulting document") >>>
         getChildren >>>
         makeReport
   (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
@@ -149,11 +148,9 @@ readReport reportFile = do
       isVerified `orElse` generateTrace
     getNodeName :: IOStateArrow Report XmlTree String
     getNodeName =
-      traceMsg 1 "Getting node name" >>>
       getAttrValue "node" >>> changeUserState (\name r -> r {node = name})
     isVerified :: IOStateArrow Report XmlTree XmlTree
     isVerified =
-      traceMsg 1 "Test if verified" >>>
       hasAttrValue "status" isVerified' >>>
       changeUserState setVerified
       where
@@ -165,12 +162,10 @@ readReport reportFile = do
         setVerified _ r = r { verified = True }
     generateTrace = deep generateTick
     generateTick =
-      traceMsg 1 "Getting tick" >>>
       isElem >>> hasName "tick" >>>
       startCycle >>>
       (
         getChildren >>>
-        traceMsg 1 "Getting inputs" >>>
         isElem >>> hasName "input" >>> makeSetCommand &&&>
         getChildren >>>
         isElem >>> hasName "value" >>> getChildren >>> getText >>> valueSetCommand
