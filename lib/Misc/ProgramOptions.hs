@@ -95,11 +95,18 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['o'] ["output-directory"] (ReqArg (\path opts -> opts { outputPath = path }) "path") "Path into which the output should be generated"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
-          ,Option []    ["scade-root"] (ReqArg (\path opts -> opts { scadeRoot = Just path }) "path") "Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
           ]
 
 header :: String
-header = "Usage: gtl [OPTION...] gtl-file"
+header = unlines $ [
+    "Usage: gtl [OPTION...] gtl-file"
+    , "Used environment variables:"
+    , " * CC - Path to compiler"
+    , " * CFLAGS - Additional flags to be passed to compiler"
+    , " * LDFLAGS - Additional flags to be passed to linker"
+    , " * SCADE_ROOT - Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
+    , " All environment variables may be passed in the form <Variable>=<Value> as option."
+  ]
 
 usage = usageInfo header options
 
@@ -130,6 +137,7 @@ parseFreeOptions o =
     "CC" -> \opts -> opts { ccBinary = value }
     "CFLAGS" -> \opts -> opts { ccFlags = ccFlags opts ++ (splitOptions $ value) }
     "LDFLAGS" -> \opts -> opts { ldFlags = ldFlags opts ++ (splitOptions $ value) }
+    "SCADE_ROOT" -> \opts -> opts { scadeRoot = Just value }
     otherwise -> if null value
       then (\opts -> if null $ gtlFile opts then opts { gtlFile = optName } else error "Only one file allowed")
       else error $ "Unknown option " ++ optName
@@ -169,10 +177,14 @@ split p = unfoldr (split' p)
 
 guessScadeRoot :: IO (Maybe FilePath)
 guessScadeRoot = do
-  scadeExePath <- findExecutable "scade"
-  case scadeExePath of
-    Nothing -> return Nothing
-    Just p -> return $ Just $ joinPath $ (filter isPartOfRoot) $ splitPath $ takeDirectory p
+  scadeRootEnv <- catch (getEnv "SCADE_ROOT") (\e -> const (return "") (e::SomeException))
+  if null scadeRootEnv then do
+      scadeExePath <- findExecutable "scade"
+      case scadeExePath of
+        Nothing -> return Nothing
+        Just p -> return $ Just $ joinPath $ (filter isPartOfRoot) $ splitPath $ takeDirectory p
+    else
+      return $ Just scadeRootEnv
   where
     isPartOfRoot :: FilePath -> Bool
     isPartOfRoot "SCADE Suite" = False
