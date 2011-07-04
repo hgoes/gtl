@@ -19,7 +19,7 @@ import System.FilePath
 import System.Process (rawSystem)
 import System.Exit (ExitCode(..))
 
-import Text.XML.HXT.Core
+import Text.XML.HXT.Core hiding (when)
 import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
 import Text.XML.HXT.Arrow.XmlState.TypeDefs (xioUserState)
 import Text.XML.HXT.DOM.TypeDefs ()
@@ -66,6 +66,7 @@ instance GTLBackend Scade where
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
+            scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
         writeFile testNodeFile (show $ prettyScade [scade])
         writeFile proofNodeFile (show $ prettyScade [generateProver name inp outp])
         case scadeRoot opts of
@@ -74,7 +75,8 @@ instance GTLBackend Scade where
             case report' of
               Nothing -> return Nothing
               Just report -> do
-                print report
+                when (not (verified report))
+                  (generateScenario scenarioFile report)
                 return $ Just $ verified report
           Nothing -> return Nothing
 
@@ -197,6 +199,10 @@ IOSLA f &&&> IOSLA g = IOSLA $ \ s x -> do
                    (s'', y) <- g s' x
                    return (s'', y)
 -}
+
+generateScenario :: FilePath -> Report -> IO()
+generateScenario scenarioFile report =
+  writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
