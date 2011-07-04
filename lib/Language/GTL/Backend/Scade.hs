@@ -178,15 +178,14 @@ readReport reportFile = do
     generateTick =
       isTag "tick" >>>
       startCycle >>>
-      (
-        getChildren >>>
-        isTag "input" >>> makeSetCommand &&&>
-        getChildren >>>
-        isTag "value" >>> getChildren >>> valueSetCommand
-      ) &&&>
-      makeCycleCommand
+      readCycleActions &&&> makeCycleCommand
       where
         startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
+        readCycleActions =
+          getChildren >>>
+          isTag "input" >>> makeSetCommand &&&>
+          getChildren >>>
+          isTag "value" >>> getChildren >>> valueSetCommand
         makeSetCommand =
           getAttrValue "name" >>>
           changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
