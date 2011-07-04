@@ -75,6 +75,7 @@ instance GTLBackend Scade where
             case report' of
               Nothing -> return Nothing
               Just report -> do
+                print report
                 when (not (verified report))
                   (generateScenario scenarioFile report)
                 return $ Just $ verified report
@@ -177,10 +178,12 @@ readReport reportFile = do
     generateTick =
       isTag "tick" >>>
       startCycle >>>
-      getChildren >>>
-      isTag "input" >>> makeSetCommand &&&>
-      getChildren >>>
-      isTag "value" >>> getChildren >>> valueSetCommand &&&>
+      (
+        getChildren >>>
+        isTag "input" >>> makeSetCommand &&&>
+        getChildren >>>
+        isTag "value" >>> getChildren >>> valueSetCommand
+      ) &&&>
       makeCycleCommand
       where
         startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
