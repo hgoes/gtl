@@ -133,11 +133,11 @@ readReport reportFile = do
       reader =
         configSysVars [withTrace 1] >>>
         readDocument [withShowTree yes] reportFile >>>
-        withTraceLevel 4 (traceDoc "resulting document") >>>
+        -- withTraceLevel 4 (traceDoc "resulting document") >>>
         getChildren >>>
         makeReport
   (r, _) <- runIOSLA (emptyRoot >>> reader) (initialState defaultReport) undefined
-  return $ Just $ xioUserState r
+  return $ Just $ reverseTrace $ xioUserState r
   where
     emptyRoot = root [] []
     makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
@@ -145,15 +145,12 @@ readReport reportFile = do
       isElem >>> hasName "prover" >>>
       getChildren >>>
       isElem >>> hasName "property" >>>
-      getNodeName <&>
+      getNodeName &&&>
       isVerified `orElse` generateTrace
     getNodeName :: IOStateArrow Report XmlTree String
     getNodeName =
-      isElem >>> hasName "node" >>>
-      getAttrValue "node" >>> changeUserState setNodeName
-      where
-        setNodeName :: String -> Report -> Report
-        setNodeName nodeName r = r {node = nodeName}
+      traceMsg 1 "Getting node name" >>>
+      getAttrValue "node" >>> changeUserState (\name r -> r {node = name})
     isVerified :: IOStateArrow Report XmlTree XmlTree
     isVerified =
       traceMsg 1 "Test if verified" >>>
@@ -168,18 +165,44 @@ readReport reportFile = do
         setVerified _ r = r { verified = True }
     generateTrace = deep generateTick
     generateTick =
+      traceMsg 1 "Getting tick" >>>
       isElem >>> hasName "tick" >>>
-      getChildren >>>
-      isElem >>> hasName "input" >>> makeSetCommand
+      startCycle >>>
+      (
+        getChildren >>>
+        traceMsg 1 "Getting inputs" >>>
+        isElem >>> hasName "input" >>> makeSetCommand &&&>
+        getChildren >>>
+        isElem >>> hasName "value" >>> getChildren >>> getText >>> valueSetCommand
+      ) &&&>
+      makeCycleCommand
       where
-        makeSetCommand = changeUserState (\_ r -> r {errorTrace = (("SSM::Set " ++ (node r)) : (head $ errorTrace r)) : (tail $ errorTrace r)})
+        startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
+        makeSetCommand =
+          getAttrValue "name" >>>
+          changeUserState (\name r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ name) : (head $ errorTrace r)) : (tail $ errorTrace r)})
+        valueSetCommand =
+          let
+            traceHead = head . errorTrace
+            traceTail = tail . errorTrace
+            commandHead = head . traceHead
+            commandTail = tail . traceHead
+          in changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+        makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (head $ errorTrace r)) : (tail $ errorTrace r)})
+    reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
 
--- | Execute g after f but exactly like &&& but forget the result of f.
--- Roughly (map snd) . (f &&& g).
-(<&>) :: IOStateArrow s a b -> IOStateArrow s a c -> IOStateArrow s a c
-f <&> g = IOSLA $ \s x -> do
-                    (s', y) <- runIOSLA (f &&& g) s x
-                    return (s', map snd y)
+-- | Execute f and g on input, use output state of f for g and return
+-- the result only of g.
+-- Equivalent to f &&& g >>> arr snd.
+(&&&>) :: IOStateArrow s a b -> IOStateArrow s a c -> IOStateArrow s a c
+f &&&> g = f &&& g >>> arr snd
+{-
+-- For efficiency
+IOSLA f &&&> IOSLA g = IOSLA $ \ s x -> do
+                   (s', _) <- f s  x
+                   (s'', y) <- g s' x
+                   return (s'', y)
+-}
 
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC GTLInt = "kcg_int"
