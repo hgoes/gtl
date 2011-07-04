@@ -16,7 +16,7 @@ import Data.List as List
 import Control.Monad.Identity
 
 import System.FilePath
-import System.Process (rawSystem)
+import System.Process as Proc
 import System.Exit (ExitCode(..))
 
 import Text.XML.HXT.Core hiding (when)
@@ -75,7 +75,6 @@ instance GTLBackend Scade where
             case report' of
               Nothing -> return Nothing
               Just report -> do
-                print report
                 when (not (verified report))
                   (generateScenario scenarioFile report)
                 return $ Just $ verified report
@@ -125,7 +124,14 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
       verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
   in do
-    exitCode <- rawSystem dv verifOpts
+    (_, _, _, p) <- Proc.createProcess $
+                    Proc.CreateProcess {
+                      cmdspec = Proc.RawCommand dv verifOpts
+                      , cwd = Nothing, env = Nothing
+                      , std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe
+                      , close_fds = False
+                    }
+    exitCode <- Proc.waitForProcess p
     case exitCode of
       ExitFailure _ -> return Nothing
       ExitSuccess -> readReport reportFile
