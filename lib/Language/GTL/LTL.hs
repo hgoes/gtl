@@ -14,7 +14,8 @@ module Language.GTL.LTL(
   buchiProduct,
   ltl2vwaa,
   vwaa2gba,
-  minimizeGBA
+  minimizeGBA,
+  gba2ba
   ) where
 
 import Data.Set as Set
@@ -155,6 +156,21 @@ data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (Map a Bool,Set st,Set
                     , gbaInits :: Set (Set st)
                     } deriving (Eq,Ord)
 
+data BA a st = BA { baTransitions :: Map st (Set (Map a Bool,st))
+                  , baInits :: Set st
+                  , baFinals :: Set st
+                  } deriving (Eq,Ord)
+
+instance (Show a,Show st,Ord st) => Show (BA a st) where
+  show ba = unlines $ concat [ [(if Set.member st (baInits ba)
+                                 then "initial "
+                                 else "") ++ (if Set.member st (baFinals ba)
+                                              then "final "
+                                              else "")++
+                                "state "++show st]++
+                               [ "  "++showCond cond++" -> "++show trg | (cond,trg) <- Set.toList trans ]
+                             | (st,trans) <- Map.toList $ baTransitions ba ]
+
 instance (Show a,Show st,Ord st) => Show (VWAA a st) where
   show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
                                     then "cofinal "
@@ -168,6 +184,34 @@ instance (Show a,Show st) => Show (GBA a st) where
                                  [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+
+gba2ba :: (Ord st,Ord a) => GBA a st -> BA a (Set st,Int)
+gba2ba gba = BA { baInits = inits
+                , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
+                , baTransitions = buildTrans (Set.toList inits) Map.empty
+                }
+  where
+    inits = Set.map (\x -> (x,0)) (gbaInits gba)
+    
+    finals = foldl (\f ts -> foldl (\f' (_,_,fins) -> Set.union f' fins) f ts) Set.empty (gbaTransitions gba)
+    finalList = Set.toList finals
+    final_size = Set.size finals
+    
+    buildTrans [] mp = mp
+    buildTrans ((st,i):sts) mp
+      | Map.member (st,i) mp = buildTrans sts mp
+      | otherwise = let ntrans = Set.map (\(cond,trg,fins) -> (cond,(trg,next i fins))) ((gbaTransitions gba)!st)
+                    in buildTrans ([ trg | (_,trg) <- Set.toList ntrans ]++sts) (Map.insert (st,i) ntrans mp)
+    
+    next j fin = let j' = if j==final_size
+                          then 0
+                          else j
+                            
+                     findNext k [] = k
+                     findNext k (f:fs) = if Set.member f fin
+                                         then findNext (k+1) fs
+                                         else k
+                 in findNext j' (drop j' finalList)
 
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
@@ -245,10 +289,12 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
       | otherwise = foldl1 transProd [ Set.toList $ (vwaaTransitions aut)!st | st <- Set.toList sts ]
     
     finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg) ||
-                                                  not (List.null [ Map.isSubmapOf cond' cond && 
+                                                  not (List.null [ (cond,trg')
+                                                                 | (cond',trg') <- delta f, 
+                                                                   Map.isSubmapOf cond' cond && 
                                                                    Set.isSubsetOf trg trg' &&
                                                                    not (Set.member f trg')
-                                                                 | (cond',trg') <- delta f ])
+                                                                 ])
                                            ) (vwaaCoFinals aut)) 
                      | (cond,trg) <- trans ]
 
