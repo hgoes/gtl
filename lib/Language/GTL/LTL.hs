@@ -15,7 +15,9 @@ module Language.GTL.LTL(
   ltl2vwaa,
   vwaa2gba,
   minimizeGBA,
-  gba2ba
+  gba2ba,
+  minimizeBA,
+  optimizeTransitionsBA
   ) where
 
 import Data.Set as Set
@@ -184,6 +186,46 @@ instance (Show a,Show st) => Show (GBA a st) where
                                  [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+
+optimizeTransitionsBA :: (Ord a,Ord st) => BA a st -> BA a st
+optimizeTransitionsBA ba = BA { baTransitions = ntrans
+                              , baInits = baInits ba
+                              , baFinals = baFinals ba
+                              }
+  where
+    ntrans = fmap (\set -> Set.fromList $ minimizeTrans [] (Set.toList set)) (baTransitions ba)
+    
+    minimizeTrans d [] = d
+    minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
+    
+    minimizeTrans' d c st d' [] = minimizeTrans ((c,st):d) d'
+    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' && Map.isSubmapOf c c'
+                                             then minimizeTrans' d c st d' ts
+                                             else minimizeTrans' d c st ((c',st'):d') ts
+
+minimizeBA :: (Ord a,Ord st) => BA a st -> BA a st
+minimizeBA ba = BA { baTransitions = ntrans
+                   , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
+                   , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
+                   }
+  where
+    ntrans = Map.fromList $ minimizeBA' False (Map.toList (baTransitions ba)) []
+    
+    minimizeBA' False d [] = d
+    minimizeBA' True d [] = minimizeBA' False [] d
+    minimizeBA' ch d ((st,trans):xs) = minimizeBA'' ch d st trans [] xs
+    
+    minimizeBA'' ch d st trans d' [] = minimizeBA' ch ((st,trans):d) d'
+    minimizeBA'' ch d st trans d' ((st',trans'):xs) = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
+                                                      then minimizeBA'' True (updateTranss st st' d) st
+                                                           (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs)
+                                                      else minimizeBA'' ch d st trans ((st',trans'):d') xs
+    
+    updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
+                                                       then (cond,st)
+                                                       else (cond,trg)) trans
+    
+    updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
 gba2ba :: (Ord st,Ord a) => GBA a st -> BA a (Set st,Int)
 gba2ba gba = BA { baInits = inits
