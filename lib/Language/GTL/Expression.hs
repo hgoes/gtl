@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable,FlexibleInstances,
   ExistentialQuantification, StandaloneDeriving, TypeSynonymInstances, FlexibleContexts,
-  DeriveFunctor #-}
+  DeriveFunctor,RankNTypes #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
 module Language.GTL.Expression where
@@ -20,6 +20,7 @@ import Data.Foldable
 import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
 import Control.Monad.Error ()
+import Control.Exception
 
 data Fix f = Fix { unfix :: f (Fix f) }
 
@@ -560,3 +561,53 @@ relTurn rel = case rel of
   BinGTEq -> BinLTEq
   BinEq -> BinEq
   BinNEq -> BinNEq
+
+data ExprOrdering = EEQ
+                  | ENEQ
+                  | EGT
+                  | ELT
+                  | EUNK
+                  deriving (Show,Eq,Ord)
+
+toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer) Integer) GTLConstant
+toLinearExpr e = case getValue e of
+  Var v h -> Map.singleton (Map.singleton (v,h) 1) one
+  Value v -> let Just c = getConstant e
+             in Map.singleton Map.empty c
+  BinIntExpr op lhs rhs
+    -> let p1 = toLinearExpr (unfix lhs)
+           p2 = toLinearExpr (unfix rhs)
+       in case op of
+         OpPlus -> Map.unionWith (constantOp (+)) p1 p2
+         OpMinus -> Map.unionWith (constantOp (-)) p1 p2
+         OpMult -> Map.fromList [ (Map.unionWith (+) t1 t2,constantOp (*) c1 c2) | (t1,c1) <- Map.toList p1, (t2,c2) <- Map.toList p2 ]
+  where
+    one = Fix $ case getType e of
+      GTLInt -> GTLIntVal 1
+      GTLByte -> GTLByteVal 1
+      GTLFloat -> GTLFloatVal 1
+
+constantOp :: (forall a. Num a => a -> a -> a)
+              -> GTLConstant -> GTLConstant -> GTLConstant
+constantOp iop x y = Fix $ case unfix x of
+  GTLIntVal x' -> let GTLIntVal y' = unfix y in GTLIntVal (iop x' y')
+  GTLByteVal x' -> let GTLByteVal y' = unfix y in GTLByteVal (iop x' y')
+  GTLFloatVal x' -> let GTLFloatVal y' = unfix y in GTLFloatVal (iop x' y')
+
+compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
+compareExpr e1 e2
+  = assert (getType e1 == getType e2) $
+    let p1 = toLinearExpr e1
+        p2 = toLinearExpr e2
+    in if p1 == p2
+       then EEQ
+       else (if Map.size p1 == 1 && Map.size p2 == 2
+             then (case Map.lookup Map.empty p1 of
+                      Nothing -> EUNK
+                      Just c1 -> case Map.lookup Map.empty p2 of
+                        Nothing -> EUNK
+                        Just c2 -> case compare c1 c2 of
+                          EQ -> EEQ
+                          GT -> EGT
+                          LT -> ELT)
+             else EUNK)
