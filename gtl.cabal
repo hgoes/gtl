@@ -9,7 +9,8 @@ Description:
   synchronous and asynchronous model checking formalisms.
 
 Library
-  Build-Depends:        base,array,containers,language-scade,language-promela,mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal
+  Build-Depends: base,array,containers,language-scade,language-promela,
+    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,pqueue
   Hs-Source-Dirs: lib
   GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
@@ -36,6 +37,7 @@ Library
     Language.GTL.Target.Common
     Language.GTL.Target.UPPAAL
     Language.GTL.Target.Printer
+    Data.Graph.Inductive.Query.MinSpanningPath
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath,language-uppaal
