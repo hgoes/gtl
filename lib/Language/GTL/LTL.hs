@@ -277,12 +277,12 @@ gba2ba gba = BA { baInits = inits
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
 
-minimizeGBA :: (Show st,Show a,Ord st,Ord a) => GBA (Map a Bool) st -> GBA (Map a Bool) st
+minimizeGBA :: (Ord st,Ord b,AtomContainer b a) => GBA b st -> GBA b st
 minimizeGBA gba = case minimizeGBA' gba of
   Nothing -> gba
   Just ngba -> minimizeGBA ngba
 
-minimizeGBA' :: (Ord st,Ord a) => GBA (Map a Bool) st -> Maybe (GBA (Map a Bool) st)
+minimizeGBA' :: (Ord st,Ord b,AtomContainer b a) => GBA b st -> Maybe (GBA b st)
 minimizeGBA' gba = if changed
                    then Just (GBA { gbaTransitions = Map.fromList ntrans
                                   , gbaInits = ninit
