@@ -18,7 +18,8 @@ module Language.GTL.LTL(
   minimizeGBA,
   gba2ba,
   minimizeBA,
-  optimizeTransitionsBA
+  optimizeTransitionsBA,
+  VWAA
   ) where
 
 import Data.Set as Set
@@ -314,29 +315,32 @@ minimizeGBA' gba = if changed
 optimizeVWAATransitions :: (AtomContainer b a,Ord st) => [(b,Set st)] -> [(b,Set st)]
 optimizeVWAATransitions mp = List.filter
                              (\(cond,trg)
-                              -> case List.find (\(cond',trg') -> (case compareAtoms cond cond' of
-                                                                      EEQ -> True
-                                                                      ELT -> True
-                                                                      _ -> False) &&
-                                                                  (Set.isSubsetOf trg' trg)) mp of
+                              -> case List.find (\(cond',trg') -> (compareAtoms cond cond' == ELT)
+                                                                  && (Set.isSubsetOf trg' trg)) mp of
                                    Nothing -> True
                                    Just _ -> False) mp
 
-insertGBATransition :: (Ord a,Ord st) => (Map a Bool,Set st,Set st) -> [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
+insertGBATransition :: (AtomContainer b a,Ord st) => (b,Set st,Set st) -> [(b,Set st,Set st)] -> [(b,Set st,Set st)]
 insertGBATransition x [] = [x]
 insertGBATransition t@(cond,trg,fin) all@(t'@(cond',trg',fin'):ys)
-  | (Map.isSubmapOf cond' cond)
-    && (trg==trg')
-    && (Set.isSubsetOf fin' fin) = all
-  | (Map.isSubmapOf cond cond')
-    && (trg==trg')
-    && (Set.isSubsetOf fin fin') = t:ys
+  | trg==trg' = case compareAtoms cond cond' of
+    EEQ
+      | Set.isSubsetOf fin' fin -> all
+      | Set.isSubsetOf fin fin' -> t:ys
+      | otherwise -> t':(insertGBATransition t ys)
+    ELT
+      | Set.isSubsetOf fin' fin -> all
+      | otherwise -> t':(insertGBATransition t ys)
+    EGT
+      | Set.isSubsetOf fin fin' -> t:ys
+      | otherwise -> t':(insertGBATransition t ys)
+    _ -> t':(insertGBATransition t ys)
   | otherwise = t':(insertGBATransition t ys)
 
-optimizeGBATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
+optimizeGBATransitions :: (AtomContainer b a,Ord st) => [(b,Set st,Set st)] -> [(b,Set st,Set st)]
 optimizeGBATransitions = foldl (\ts t -> insertGBATransition t ts) []
 
-vwaa2gba :: Ord a => VWAA (Map a Bool) (LTL a) -> GBA (Map a Bool) (LTL a)
+vwaa2gba :: (AtomContainer b a,Ord b) => VWAA b (LTL a) -> GBA b (LTL a)
 vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Map.empty
                    , gbaInits = vwaaInits aut
                    }
@@ -354,7 +358,10 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
     finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg) ||
                                                   not (List.null [ (cond,trg')
                                                                  | (cond',trg') <- delta f, 
-                                                                   Map.isSubmapOf cond' cond && 
+                                                                   (case compareAtoms cond cond' of
+                                                                       EEQ -> True
+                                                                       ELT -> True
+                                                                       _ -> False) && 
                                                                    Set.isSubsetOf trg trg' &&
                                                                    not (Set.member f trg')
                                                                  ])
