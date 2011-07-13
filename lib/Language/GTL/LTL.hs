@@ -206,7 +206,7 @@ instance (Show a,Show st) => Show (GBA a st) where
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
 
-optimizeTransitionsBA :: (Ord a,Ord st) => BA (Map a Bool) st -> BA (Map a Bool) st
+optimizeTransitionsBA :: (Ord st,AtomContainer b a,Ord b) => BA b st -> BA b st
 optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               , baInits = baInits ba
                               , baFinals = baFinals ba
@@ -218,11 +218,14 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
     minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
     
     minimizeTrans' d c st d' [] = minimizeTrans ((c,st):d) d'
-    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' && Map.isSubmapOf c c'
+    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' && (case compareAtoms c' c of
+                                                               EEQ -> True
+                                                               ELT -> True
+                                                               _ -> False)
                                              then minimizeTrans' d c st d' ts
                                              else minimizeTrans' d c st ((c',st'):d') ts
 
-minimizeBA :: (Ord a,Ord st) => BA (Map a Bool) st -> BA (Map a Bool) st
+minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
 minimizeBA ba = BA { baTransitions = ntrans
                    , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
@@ -246,7 +249,7 @@ minimizeBA ba = BA { baTransitions = ntrans
     
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
-gba2ba :: (Ord st,Ord a) => GBA (Map a Bool) st -> BA (Map a Bool) (Set st,Int)
+gba2ba :: (Ord st,AtomContainer b a,Ord b) => GBA b st -> BA b (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
                 , baTransitions = buildTrans (Set.toList inits) Map.empty
