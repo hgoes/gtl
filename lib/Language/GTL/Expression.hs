@@ -594,20 +594,42 @@ constantOp iop x y = Fix $ case unfix x of
   GTLByteVal x' -> let GTLByteVal y' = unfix y in GTLByteVal (iop x' y')
   GTLFloatVal x' -> let GTLFloatVal y' = unfix y in GTLFloatVal (iop x' y')
 
+-- TODO: Use a constraint solver here?
 compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
 compareExpr e1 e2
   = assert (getType e1 == getType e2) $
-    let p1 = toLinearExpr e1
-        p2 = toLinearExpr e2
-    in if p1 == p2
-       then EEQ
-       else (if Map.size p1 == 1 && Map.size p2 == 2
-             then (case Map.lookup Map.empty p1 of
-                      Nothing -> EUNK
-                      Just c1 -> case Map.lookup Map.empty p2 of
-                        Nothing -> EUNK
-                        Just c2 -> case compare c1 c2 of
-                          EQ -> EEQ
-                          GT -> EGT
-                          LT -> ELT)
-             else EUNK)
+    case getType e1 of
+      GTLInt -> lincomp
+      GTLByte -> lincomp
+      GTLFloat -> lincomp
+      GTLBool -> case getValue e1 of
+        Var v1 h1 -> case getValue e2 of
+          Var v2 h2 -> if v1==v2 && h1==h2
+                       then EEQ
+                       else EUNK
+          _ -> EUNK
+        BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
+          BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
+            BinEq -> case op2 of
+              BinEq -> case compareExpr l1 l2 of
+                EEQ -> compareExpr r1 r2
+                ENEQ -> case compareExpr r1 r2 of
+                  EEQ -> ENEQ
+                  ENEQ -> EUNK
+                _ -> EUNK
+                  
+    where
+      p1 = toLinearExpr e1
+      p2 = toLinearExpr e2
+      lincomp = if p1 == p2
+                then EEQ
+                else (if Map.size p1 == 1 && Map.size p2 == 2
+                      then (case Map.lookup Map.empty p1 of
+                               Nothing -> EUNK
+                               Just c1 -> case Map.lookup Map.empty p2 of
+                                 Nothing -> EUNK
+                                 Just c2 -> case compare c1 c2 of
+                                   EQ -> EEQ
+                                   GT -> EGT
+                                   LT -> ELT)
+                      else EUNK)

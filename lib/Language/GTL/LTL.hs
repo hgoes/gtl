@@ -1,5 +1,6 @@
 {-| Implements Linear Time Logic and its translation into Buchi-Automaton.
  -}
+{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies #-}
 module Language.GTL.LTL(
   -- * Formulas
   LTL(..),
@@ -26,6 +27,7 @@ import qualified Data.List as List
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
+import Language.GTL.Expression (ExprOrdering(..))
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -149,19 +151,35 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
-data VWAA a st = VWAA { vwaaTransitions :: Map st (Set (Map a Bool,Set st))
+data VWAA a st = VWAA { vwaaTransitions :: Map st (Set (a,Set st))
                       , vwaaInits :: Set (Set st)
                       , vwaaCoFinals :: Set st
                       } deriving (Eq,Ord)
 
-data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (Map a Bool,Set st,Set st))
+data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (a,Set st,Set st))
                     , gbaInits :: Set (Set st)
                     } deriving (Eq,Ord)
 
-data BA a st = BA { baTransitions :: Map st (Set (Map a Bool,st))
+data BA a st = BA { baTransitions :: Map st (Set (a,st))
                   , baInits :: Set st
                   , baFinals :: Set st
                   } deriving (Eq,Ord)
+
+class Ord b => AtomContainer a b | a -> b where
+  atomsTrue :: a
+  atomSingleton :: Bool -> b -> a
+  compareAtoms :: a -> a -> ExprOrdering
+  mergeAtoms :: a -> a -> Maybe a
+
+instance Ord a => AtomContainer (Map a Bool) a where
+  atomsTrue = Map.empty
+  atomSingleton t p = Map.singleton p t
+  compareAtoms x y
+    | x == y = EEQ
+    | Map.isSubmapOf x y = EGT
+    | Map.isSubmapOf y x = ELT
+    | otherwise = ENEQ
+  mergeAtoms = mergeAlphabet
 
 instance (Show a,Show st,Ord st) => Show (BA a st) where
   show ba = unlines $ concat [ [(if Set.member st (baInits ba)
@@ -170,24 +188,24 @@ instance (Show a,Show st,Ord st) => Show (BA a st) where
                                               then "final "
                                               else "")++
                                 "state "++show st]++
-                               [ "  "++showCond cond++" -> "++show trg | (cond,trg) <- Set.toList trans ]
+                               [ "  "++show cond++" -> "++show trg | (cond,trg) <- Set.toList trans ]
                              | (st,trans) <- Map.toList $ baTransitions ba ]
 
 instance (Show a,Show st,Ord st) => Show (VWAA a st) where
   show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
                                     then "cofinal "
                                     else "") ++ "state "++show st]
-                                  ++ [ "  "++showCond cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- Set.toList trans ]
+                                  ++ [ "  "++show cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- Set.toList trans ]
                                 | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
               ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
 
 instance (Show a,Show st) => Show (GBA a st) where
   show gba = unlines $ (concat [ [ "state "++show st ] ++
-                                 [ "  "++showCond cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
+                                 [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
 
-optimizeTransitionsBA :: (Ord a,Ord st) => BA a st -> BA a st
+optimizeTransitionsBA :: (Ord a,Ord st) => BA (Map a Bool) st -> BA (Map a Bool) st
 optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               , baInits = baInits ba
                               , baFinals = baFinals ba
@@ -203,7 +221,7 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
                                              then minimizeTrans' d c st d' ts
                                              else minimizeTrans' d c st ((c',st'):d') ts
 
-minimizeBA :: (Ord a,Ord st) => BA a st -> BA a st
+minimizeBA :: (Ord a,Ord st) => BA (Map a Bool) st -> BA (Map a Bool) st
 minimizeBA ba = BA { baTransitions = ntrans
                    , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
@@ -227,7 +245,7 @@ minimizeBA ba = BA { baTransitions = ntrans
     
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
-gba2ba :: (Ord st,Ord a) => GBA a st -> BA a (Set st,Int)
+gba2ba :: (Ord st,Ord a) => GBA (Map a Bool) st -> BA (Map a Bool) (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
                 , baTransitions = buildTrans (Set.toList inits) Map.empty
@@ -258,12 +276,12 @@ gba2ba gba = BA { baInits = inits
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
 
-minimizeGBA :: (Show st,Show a,Ord st,Ord a) => GBA a st -> GBA a st
+minimizeGBA :: (Show st,Show a,Ord st,Ord a) => GBA (Map a Bool) st -> GBA (Map a Bool) st
 minimizeGBA gba = case minimizeGBA' gba of
   Nothing -> gba
   Just ngba -> minimizeGBA ngba
 
-minimizeGBA' :: (Show st,Show a,Ord st,Ord a) => GBA a st -> Maybe (GBA a st)
+minimizeGBA' :: (Show st,Show a,Ord st,Ord a) => GBA (Map a Bool) st -> Maybe (GBA (Map a Bool) st)
 minimizeGBA' gba = if changed
                    then Just (GBA { gbaTransitions = Map.fromList ntrans
                                   , gbaInits = ninit
@@ -293,10 +311,13 @@ minimizeGBA' gba = if changed
              (updateTrans st' st ys)
         else minimizeTrans' st t cch cres ci ((st',t'):cxs) ys
 
-optimizeVWAATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st)] -> [(Map a Bool,Set st)]
+optimizeVWAATransitions :: (AtomContainer b a,Ord st) => [(b,Set st)] -> [(b,Set st)]
 optimizeVWAATransitions mp = List.filter
                              (\(cond,trg)
-                              -> case List.find (\(cond',trg') -> (Map.isProperSubmapOf cond' cond) &&
+                              -> case List.find (\(cond',trg') -> (case compareAtoms cond cond' of
+                                                                      EEQ -> True
+                                                                      ELT -> True
+                                                                      _ -> False) &&
                                                                   (Set.isSubsetOf trg' trg)) mp of
                                    Nothing -> True
                                    Just _ -> False) mp
@@ -315,7 +336,7 @@ insertGBATransition t@(cond,trg,fin) all@(t'@(cond',trg',fin'):ys)
 optimizeGBATransitions :: (Ord a,Ord st) => [(Map a Bool,Set st,Set st)] -> [(Map a Bool,Set st,Set st)]
 optimizeGBATransitions = foldl (\ts t -> insertGBATransition t ts) []
 
-vwaa2gba :: Ord a => VWAA a (LTL a) -> GBA a (LTL a)
+vwaa2gba :: Ord a => VWAA (Map a Bool) (LTL a) -> GBA (Map a Bool) (LTL a)
 vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Map.empty
                    , gbaInits = vwaaInits aut
                    }
@@ -340,14 +361,14 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
                                            ) (vwaaCoFinals aut)) 
                      | (cond,trg) <- trans ]
 
-delta, delta' :: Ord a => LTL a -> [(Map a Bool,Set (LTL a))]
-delta (Ground True) = [(Map.empty,Set.singleton (Ground True))]
+delta, delta' :: AtomContainer b a => LTL a -> [(b,Set (LTL a))]
+delta (Ground True) = [(atomsTrue,Set.singleton (Ground True))]
 delta (Ground False) = []
-delta (Atom p) = [(Map.singleton p True,Set.singleton (Ground True))]
-delta (Un Not (Atom p)) = [(Map.singleton p False,Set.singleton (Ground True))]
-delta (Un Next f) = [ (Map.empty,xs) | xs <- Set.toList (cform f) ]
-delta (Bin Until l r) = transUnion (delta' r) (transProd (delta' l) [(Map.empty,Set.singleton (Bin Until l r))])
-delta (Bin UntilOp l r) = transProd (delta' r) (transUnion (delta' l) [(Map.empty,Set.singleton (Bin UntilOp l r))])
+delta (Atom p) = [(atomSingleton True p,Set.singleton (Ground True))]
+delta (Un Not (Atom p)) = [(atomSingleton False p,Set.singleton (Ground True))]
+delta (Un Next f) = [ (atomsTrue,xs) | xs <- Set.toList (cform f) ]
+delta (Bin Until l r) = transUnion (delta' r) (transProd (delta' l) [(atomsTrue,Set.singleton (Bin Until l r))])
+delta (Bin UntilOp l r) = transProd (delta' r) (transUnion (delta' l) [(atomsTrue,Set.singleton (Bin UntilOp l r))])
 
 delta' (Bin Or l r) = transUnion (delta' l) (delta' r)
 delta' (Bin And l r) = transProd (delta' l) (delta' r)
@@ -360,7 +381,7 @@ cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
 cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
 cform f = Set.singleton (Set.singleton f)
 
-ltl2vwaa :: Ord a => LTL a -> VWAA a (LTL a)
+ltl2vwaa :: (Ord b,AtomContainer b a) => LTL a -> VWAA b (LTL a)
 ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
                     , vwaaInits = inits'
                     , vwaaCoFinals = getFinals trans'
@@ -389,11 +410,11 @@ mergeAlphabet a1 a2
                           (fmap (\x -> (x,x)) a1)
                           (fmap (\x -> (x,x)) a2)
 
-transProd :: Ord a => [(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))]
+transProd :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transProd m1 m2 = [ (na,transAnd e1 e2)
                   | (a1,e1) <- m1
                   , (a2,e2) <- m2
-                  , na <- case mergeAlphabet a1 a2 of
+                  , na <- case mergeAtoms a1 a2 of
                     Nothing -> []
                     Just p -> [p]
                   ]
@@ -404,7 +425,7 @@ transAnd s1 s2
   | Set.toList s2 == [Ground True] = s1
   | otherwise = Set.union s1 s2
 
-transUnion :: [(Map a Bool,Set (LTL a))] ->[(Map a Bool,Set (LTL a))] -> [(Map a Bool,Set (LTL a))]
+transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transUnion = (++)
 
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
