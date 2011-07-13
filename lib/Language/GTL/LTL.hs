@@ -19,7 +19,10 @@ module Language.GTL.LTL(
   gba2ba,
   minimizeBA,
   optimizeTransitionsBA,
-  VWAA
+  VWAA,
+  GBA,
+  BA,
+  ltl2ba
   ) where
 
 import Data.Set as Set
@@ -437,6 +440,19 @@ transAnd s1 s2
 
 transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transUnion = (++)
+
+ltl2ba :: (AtomContainer b a,Ord b) => LTL a -> BA b Integer
+ltl2ba = renameStates . optimizeTransitionsBA . minimizeBA . gba2ba . minimizeGBA . vwaa2gba . ltl2vwaa
+
+renameStates :: Ord st => BA a st -> BA a Integer
+renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions ba)
+                      trans' = fmap (\trg -> Set.mapMonotonic (\(c,t) -> (c,stmp!t)) trg) $ Map.mapKeysMonotonic (\k -> stmp!k) (baTransitions ba)
+                      inits' = Set.mapMonotonic (stmp!) (baInits ba)
+                      fins' = Set.mapMonotonic (stmp!) (baFinals ba)
+                  in BA { baTransitions = trans'
+                        , baInits = inits'
+                        , baFinals = fins'
+                        }
 
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
 ltlToBuchi = undefined
