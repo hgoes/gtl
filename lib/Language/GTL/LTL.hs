@@ -282,7 +282,7 @@ minimizeGBA gba = case minimizeGBA' gba of
   Nothing -> gba
   Just ngba -> minimizeGBA ngba
 
-minimizeGBA' :: (Show st,Show a,Ord st,Ord a) => GBA (Map a Bool) st -> Maybe (GBA (Map a Bool) st)
+minimizeGBA' :: (Ord st,Ord a) => GBA (Map a Bool) st -> Maybe (GBA (Map a Bool) st)
 minimizeGBA' gba = if changed
                    then Just (GBA { gbaTransitions = Map.fromList ntrans
                                   , gbaInits = ninit
