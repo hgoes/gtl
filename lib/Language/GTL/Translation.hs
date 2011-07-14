@@ -4,7 +4,8 @@
  -}
 module Language.GTL.Translation(
   gtlToBuchi,
-  gtlToLTL
+  gtlToLTL,
+  gtl2ba
   ) where
 
 import Language.GTL.Expression as GTL
@@ -56,6 +57,7 @@ instance Ord v => AtomContainer [TypedExpr v] (TypedExpr v) where
           ELT -> compareAtoms' ELT xs ys
           ENEQ -> ENEQ
           _ -> EUNK
+        Just (p',ys') -> compareAtoms' p' xs ys'
       compareAtoms'' p x [] = Nothing
       compareAtoms'' p x (y:ys) = case compareExpr x y of
         EEQ -> Just (p,ys)

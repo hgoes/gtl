@@ -602,22 +602,33 @@ compareExpr e1 e2
       GTLInt -> lincomp
       GTLByte -> lincomp
       GTLFloat -> lincomp
-      GTLBool -> case getValue e1 of
-        Var v1 h1 -> case getValue e2 of
-          Var v2 h2 -> if v1==v2 && h1==h2
-                       then EEQ
-                       else EUNK
+      GTLBool -> case getValue e2 of
+        UnBoolExpr Not (Fix e2') -> case compareExpr e1 e2' of
+          EEQ -> ENEQ
           _ -> EUNK
-        BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
-          BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
-            BinEq -> case op2 of
-              BinEq -> case compareExpr l1 l2 of
-                EEQ -> compareExpr r1 r2
-                ENEQ -> case compareExpr r1 r2 of
-                  EEQ -> ENEQ
-                  ENEQ -> EUNK
-                _ -> EUNK
-                  
+        _ -> case getValue e1 of
+          Var v1 h1 -> case getValue e2 of
+            Var v2 h2 -> if v1==v2 && h1==h2
+                         then EEQ
+                         else EUNK
+            _ -> EUNK
+          BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
+            BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
+              BinEq -> case op2 of
+                BinEq -> case compareExpr l1 l2 of
+                  EEQ -> compareExpr r1 r2
+                  ENEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    ENEQ -> EUNK
+                    _ -> EUNK
+          UnBoolExpr Not (Fix p) -> case getValue e2 of
+            UnBoolExpr Not (Fix p') -> case compareExpr p p' of
+              ELT -> EGT
+              EGT -> ELT
+              r -> r
+            _ -> case compareExpr p e2 of
+              EEQ -> ENEQ
+              _ -> EUNK
     where
       p1 = toLinearExpr e1
       p2 = toLinearExpr e2
