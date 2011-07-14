@@ -55,6 +55,14 @@ data UnOp = Not
           | Next
           deriving (Eq,Ord)
 
+mapLTL :: (Ord a,Ord b) => (a -> b) -> LTL a -> LTL b
+mapLTL f (Atom x) = Atom (f x)
+mapLTL f (Bin op l r) = Bin op (mapLTL f l) (mapLTL f r)
+mapLTL f (Un op x) = Un op (mapLTL f x)
+mapLTL f (Ground p) = Ground p
+mapLTL f (LTLAutomaton b) = LTLAutomaton $ fmap (\st -> st { vars = mapLTL f (vars st) }) b
+mapLTL f (LTLSimpleAutomaton b) = LTLSimpleAutomaton $ fmap (\st -> st { vars = Set.map f (vars st) }) b
+
 binPrec :: BinOp -> Int
 binPrec And = 7
 binPrec Or = 6
