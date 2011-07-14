@@ -1,4 +1,5 @@
-{-# LANGUAGE GADTs, ExistentialQuantification, StandaloneDeriving, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs, ExistentialQuantification, StandaloneDeriving, ScopedTypeVariables,
+    TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 {-| Translates GTL expressions into LTL formula.
  -}
 module Language.GTL.Translation(
@@ -34,6 +35,53 @@ gtlToBuchi f expr = mapM (\co -> do
 ---- | Extract all variables with their history level from an atom.
 --getAtomVars :: GTLAtom v -> [(v,Integer)]
 --getAtomVars (GTLBoolExpr e _) = getVarsBoolExpr e
+
+instance Ord v => AtomContainer [TypedExpr v] (TypedExpr v) where
+  atomsTrue = []
+  atomSingleton True x = [x]
+  atomSingleton False x = [distributeNot x]
+  compareAtoms x y = compareAtoms' EEQ x y
+    where
+      compareAtoms' p [] [] = p
+      compareAtoms' p [] _  = case p of
+        EEQ -> EGT
+        EGT -> EGT
+        _ -> EUNK
+      compareAtoms' p (x:xs) ys = case compareAtoms'' p x ys of
+        Nothing -> case p of
+          EEQ -> compareAtoms' ELT xs ys
+          ELT -> compareAtoms' ELT xs ys
+          ENEQ -> ENEQ
+          _ -> EUNK
+      compareAtoms'' p x [] = Nothing
+      compareAtoms'' p x (y:ys) = case compareExpr x y of
+        EEQ -> Just (p,ys)
+        ELT -> case p of
+          EEQ -> Just (ELT,ys)
+          ELT -> Just (ELT,ys)
+          _ -> Just (EUNK,ys)
+        EGT -> case p of
+          EEQ -> Just (EGT,ys)
+          EGT -> Just (EGT,ys)
+          _ -> Just (EUNK,ys)
+        ENEQ -> Just (ENEQ,ys)
+        EUNK -> case compareAtoms'' p x ys of
+          Nothing -> Nothing
+          Just (p',ys') -> Just (p',y:ys')
+  mergeAtoms [] ys = Just ys
+  mergeAtoms (x:xs) ys = case mergeAtoms' x ys of
+    Nothing -> Nothing
+    Just ys' -> mergeAtoms xs ys'
+    where
+      mergeAtoms' x [] = Just [x]
+      mergeAtoms' x (y:ys) = case compareExpr x y of
+        EEQ -> Just (y:ys)
+        ELT -> Just (x:ys)
+        EGT -> Just (y:ys)
+        EUNK -> case mergeAtoms' x ys of
+          Nothing -> Nothing
+          Just ys' -> Just (y:ys')
+        ENEQ -> Nothing
 
 -- | Translate a GTL expression into a LTL formula.
 gtlToLTL :: Ord v => TypedExpr v -> LTL (TypedExpr v)
