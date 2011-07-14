@@ -26,6 +26,7 @@ type InputMap = Map TargetVar (Integer,GTLType)
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
                    , tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
+                   --, tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
                    , tmodelVerify :: TypedExpr TargetVar
                    } deriving Show
 

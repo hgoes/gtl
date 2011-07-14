@@ -24,7 +24,8 @@ module Language.GTL.LTL(
   BA,
   ltl2ba,
   AtomContainer(..),
-  mapLTL
+  mapLTL,
+  baProduct
   ) where
 
 import Data.Set as Set
@@ -463,6 +464,38 @@ renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions
                         , baInits = inits'
                         , baFinals = fins'
                         }
+
+baProduct :: (Ord a,Ord st,Ord st') => AtomContainer a b => BA a st -> BA a st' -> BA a (st,st',Bool)
+baProduct b1 b2 = BA { baTransitions = trans'
+                     , baInits = Set.fromList inits'
+                     , baFinals = fins'
+                     }
+  where
+    inits' = [ (i1,i2,False) 
+             | i1 <- Set.toList (baInits b1),
+               i2 <- Set.toList (baInits b2)
+             ]
+             
+    trans' = traceStates inits' Map.empty
+    
+    fins' = Set.filter (\(st1,st2,i) -> i && Set.member st2 (baFinals b2)) $ Map.keysSet trans'
+    
+    traceStates [] mp = mp
+    traceStates (x@(s1,s2,i):xs) mp
+      | Map.member x mp = traceStates xs mp
+      | otherwise = let t1 = (baTransitions b1)!s1
+                        t2 = (baTransitions b2)!s2
+                        trgs = [ (c,(nst1,nst2,if ((not i) && (Set.member nst1 (baFinals b1)))
+                                                  || (i && (Set.member nst2 (baFinals b2)))
+                                               then not i
+                                               else i))
+                               | (c1,nst1) <- Set.toList t1
+                               , (c2,nst2) <- Set.toList t2 
+                               , c <- case mergeAtoms c1 c2 of
+                                 Nothing -> []
+                                 Just x -> [x]
+                               ]
+                    in traceStates ((fmap snd trgs)++xs) (Map.insert (s1,s2,i) (Set.fromList trgs) mp)
 
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
 ltlToBuchi = undefined
