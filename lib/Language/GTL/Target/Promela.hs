@@ -91,7 +91,7 @@ translateVerify e = case getValue e of
 
 translateTExprs :: [TypedExpr TargetVar] -> Maybe Pr.AnyExpression
 translateTExprs [] = Nothing
-translateTExprs xs = Just $ translateTExpr $ foldl1 gtlAnd xs
+translateTExprs xs = Just $ translateTExpr $ foldl1 gand xs
 
 translateConstant :: GTLType -> GTLValue r -> Pr.AnyExpression
 translateConstant _ (GTLIntVal x) = Pr.ConstExpr $ Pr.ConstInt x

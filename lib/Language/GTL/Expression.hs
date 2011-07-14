@@ -105,8 +105,8 @@ instance (Binary r,Binary v) => Binary (Term v r) where
         aut <- get
         return $ Automaton aut
 
-var :: v -> Integer -> TypedExpr v
-var name lvl = Typed GTLBool (Var name lvl)
+var :: GTLType -> v -> Integer -> TypedExpr v
+var t name lvl = Typed t (Var name lvl)
 
 constant :: ToGTL a => a -> TypedExpr v
 constant x = Typed (gtlTypeOf x) (Value (toGTL x))
@@ -115,9 +115,16 @@ gnot :: TypedExpr v -> TypedExpr v
 gnot expr
   | getType expr == GTLBool = Typed GTLBool (UnBoolExpr Not (Fix expr))
 
-gtlAnd :: TypedExpr v -> TypedExpr v -> TypedExpr v
-gtlAnd x y
+gand :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gand x y
   | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
+
+geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
+geq x y
+  | getType x == getType y = Typed GTLBool (BinRelExpr BinEq (Fix x) (Fix y))
+
+enumConst :: [String] -> String -> TypedExpr v
+enumConst tp v = Typed (GTLEnum tp) (Value (GTLEnumVal v))
 
 instance Binary (a r) => Binary (Typed a r) where
   put x = put (getType x) >> put (getValue x)
@@ -629,6 +636,15 @@ compareExpr e1 e2
             _ -> case compareExpr p e2 of
               EEQ -> ENEQ
               _ -> EUNK
+      _ -> case getValue e1 of
+        Value c1 -> case getValue e2 of
+          Value c2 -> if c1 == c2
+                      then EEQ
+                      else ENEQ
+          _ -> EUNK
+        _ -> if getValue e1 == getValue e2
+             then EEQ
+             else EUNK
     where
       p1 = toLinearExpr e1
       p2 = toLinearExpr e2

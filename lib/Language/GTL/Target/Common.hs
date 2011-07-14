@@ -260,8 +260,8 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
       GTLArrayVal vs -> getValue $ flattenExpr f is (unfix $ vs `genericIndex` i)
       GTLTupleVal vs -> getValue $ flattenExpr f is (unfix $ vs `genericIndex` i)
   BinBoolExpr op l r -> BinBoolExpr op (Fix $ flattenExpr f idx $ unfix l) (Fix $ flattenExpr f idx $ unfix r)
-  BinRelExpr rel l r -> getValue $ foldl1 gtlAnd [ Typed GTLBool (BinRelExpr rel (Fix el) (Fix er))
-                                                 | (el,er) <- zip (unpackExpr f idx (unfix l)) (unpackExpr f idx (unfix r)) ]
+  BinRelExpr rel l r -> getValue $ foldl1 gand [ Typed GTLBool (BinRelExpr rel (Fix el) (Fix er))
+                                               | (el,er) <- zip (unpackExpr f idx (unfix l)) (unpackExpr f idx (unfix r)) ]
   BinIntExpr op l r -> BinIntExpr op (Fix $ flattenExpr f idx $ unfix l) (Fix $ flattenExpr f idx $ unfix r)
   UnBoolExpr op ne -> UnBoolExpr op (Fix $ flattenExpr f idx $ unfix ne)
   IndexExpr e i -> getValue $ flattenExpr f (i:idx) (unfix e)
