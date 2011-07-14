@@ -36,6 +36,9 @@ gtlToBuchi f expr = mapM (\co -> do
 --getAtomVars :: GTLAtom v -> [(v,Integer)]
 --getAtomVars (GTLBoolExpr e _) = getVarsBoolExpr e
 
+gtl2ba :: Ord v => TypedExpr v -> BA [TypedExpr v] Integer
+gtl2ba e = ltl2ba $ gtlToLTL e
+
 instance Ord v => AtomContainer [TypedExpr v] (TypedExpr v) where
   atomsTrue = []
   atomSingleton True x = [x]

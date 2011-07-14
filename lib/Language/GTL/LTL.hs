@@ -23,7 +23,8 @@ module Language.GTL.LTL(
   GBA,
   BA,
   ltl2ba,
-  AtomContainer(..)
+  AtomContainer(..),
+  mapLTL
   ) where
 
 import Data.Set as Set
