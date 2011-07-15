@@ -167,20 +167,6 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
-data VWAA a st = VWAA { vwaaTransitions :: Map st (Set (a,Set st))
-                      , vwaaInits :: Set (Set st)
-                      , vwaaCoFinals :: Set st
-                      } deriving (Eq,Ord)
-
-data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (a,Set st,Set st))
-                    , gbaInits :: Set (Set st)
-                    } deriving (Eq,Ord)
-
-data BA a st = BA { baTransitions :: Map st (Set (a,st))
-                  , baInits :: Set st
-                  , baFinals :: Set st
-                  } deriving (Eq,Ord)
-
 class Ord b => AtomContainer a b | a -> b where
   atomsTrue :: a
   atomSingleton :: Bool -> b -> a
@@ -196,33 +182,6 @@ instance Ord a => AtomContainer (Map a Bool) a where
     | Map.isSubmapOf y x = ELT
     | otherwise = ENEQ
   mergeAtoms = mergeAlphabet
-
-baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
-baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }
-
-instance (Show a,Show st,Ord st) => Show (BA a st) where
-  show ba = unlines $ concat [ [(if Set.member st (baInits ba)
-                                 then "initial "
-                                 else "") ++ (if Set.member st (baFinals ba)
-                                              then "final "
-                                              else "")++
-                                "state "++show st]++
-                               [ "  "++show cond++" -> "++show trg | (cond,trg) <- Set.toList trans ]
-                             | (st,trans) <- Map.toList $ baTransitions ba ]
-
-instance (Show a,Show st,Ord st) => Show (VWAA a st) where
-  show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
-                                    then "cofinal "
-                                    else "") ++ "state "++show st]
-                                  ++ [ "  "++show cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- Set.toList trans ]
-                                | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
-              ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
-
-instance (Show a,Show st) => Show (GBA a st) where
-  show gba = unlines $ (concat [ [ "state "++show st ] ++
-                                 [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
-                               | (st,trans) <- Map.toList (gbaTransitions gba) ])++
-             ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
 
 optimizeTransitionsBA :: (Ord st,AtomContainer b a,Ord b) => BA b st -> BA b st
 optimizeTransitionsBA ba = BA { baTransitions = ntrans

@@ -3,8 +3,9 @@ module Language.GTL.Buchi where
 import Data.Map as Map
 import Data.Set as Set
 import Data.Foldable
-import Prelude hiding (foldl)
+import Prelude hiding (foldl,concat)
 import Data.Binary
+import qualified Data.List as List
 
 -- | A simple generalized buchi automaton.
 type Buchi a = GBuchi Integer a (Set Integer)
@@ -119,3 +120,46 @@ buchiMapStates f buchi = Map.fromList [ (f name,co { successors = Set.map f (suc
 
 buchiMapVars :: (a -> b) -> GBuchi st a f -> GBuchi st b f
 buchiMapVars f = fmap (\co -> co { vars = f (vars co) })
+
+-- NEW IMPLEMENTATION:
+
+data VWAA a st = VWAA { vwaaTransitions :: Map st (Set (a,Set st))
+                      , vwaaInits :: Set (Set st)
+                      , vwaaCoFinals :: Set st
+                      } deriving (Eq,Ord)
+
+data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (a,Set st,Set st))
+                    , gbaInits :: Set (Set st)
+                    } deriving (Eq,Ord)
+
+data BA a st = BA { baTransitions :: Map st (Set (a,st))
+                  , baInits :: Set st
+                  , baFinals :: Set st
+                  } deriving (Eq,Ord)
+
+instance (Show a,Show st,Ord st) => Show (BA a st) where
+  show ba = unlines $ concat [ [(if Set.member st (baInits ba)
+                                 then "initial "
+                                 else "") ++ (if Set.member st (baFinals ba)
+                                              then "final "
+                                              else "")++
+                                "state "++show st]++
+                               [ "  "++show cond++" -> "++show trg | (cond,trg) <- Set.toList trans ]
+                             | (st,trans) <- Map.toList $ baTransitions ba ]
+
+instance (Show a,Show st,Ord st) => Show (VWAA a st) where
+  show vwaa = unlines $ (concat [ [(if Set.member st (vwaaCoFinals vwaa)
+                                    then "cofinal "
+                                    else "") ++ "state "++show st]
+                                  ++ [ "  "++show cond++" -> "++(show $ Set.toList trg) | (cond,trg) <- Set.toList trans ]
+                                | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
+              ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
+
+instance (Show a,Show st) => Show (GBA a st) where
+  show gba = unlines $ (concat [ [ "state "++show st ] ++
+                                 [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
+                               | (st,trans) <- Map.toList (gbaTransitions gba) ])++
+             ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+
+baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
+baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }

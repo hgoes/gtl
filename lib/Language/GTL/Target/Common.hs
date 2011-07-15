@@ -9,7 +9,6 @@ import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Translation
 import Language.GTL.Buchi
-import Language.GTL.LTL
 
 import Data.Set as Set
 import Data.Map as Map
