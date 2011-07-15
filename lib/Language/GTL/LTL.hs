@@ -1,6 +1,6 @@
 {-| Implements Linear Time Logic and its translation into Buchi-Automaton.
  -}
-{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies,FlexibleContexts #-}
 module Language.GTL.LTL(
   -- * Formulas
   LTL(..),
@@ -415,10 +415,16 @@ transAnd s1 s2
 transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transUnion = (++)
 
-ltl2ba :: (AtomContainer b a,Ord b) => LTL a -> BA b Integer
-ltl2ba = renameStates . optimizeTransitionsBA . minimizeBA . gba2ba . minimizeGBA . vwaa2gba . ltl2vwaa . distributeNegation
+ltl2ba :: AtomContainer [a] a => LTL a -> BA [a] Integer
+ltl2ba f = let (f',auts) = extractAutomata f
+               mprod b1 b2 = renameStates $ baProduct b1 b2
+           in case f' of
+             Nothing -> foldl1 mprod auts
+             Just rf -> foldl mprod (renameStates $ optimizeTransitionsBA $
+                                     minimizeBA $ gba2ba $ minimizeGBA $
+                                     vwaa2gba $ ltl2vwaa $ distributeNegation rf) auts
 
-baProduct :: (Ord a,Ord st,Ord st') => AtomContainer a b => BA a st -> BA a st' -> BA a (st,st',Bool)
+baProduct :: (Ord a,Ord st,Ord st',AtomContainer a b) => BA a st -> BA a st' -> BA a (st,st',Bool)
 baProduct b1 b2 = BA { baTransitions = trans'
                      , baInits = Set.fromList inits'
                      , baFinals = fins'
@@ -452,6 +458,18 @@ baProduct b1 b2 = BA { baTransitions = trans'
 
 ltlToBuchi :: (Ord a,Show a) => (a -> a) -> LTL a -> Buchi (Set (a,Bool))
 ltlToBuchi = undefined
+
+extractAutomata :: LTL a -> (Maybe (LTL a),[BA [a] Integer])
+extractAutomata (LTLAutomaton buchi) = (Nothing,[buchi])
+extractAutomata (Bin And l r) = let (ml,al) = extractAutomata l
+                                    (mr,ar) = extractAutomata r
+                                in (case ml of
+                                       Nothing -> mr
+                                       Just rl -> case mr of
+                                         Nothing -> Just rl
+                                         Just rr -> Just (Bin And rl rr),al++ar)
+extractAutomata x = (Just x,[])
+
 
 {-
 type NodeSet a = Map (Set (LTL a),Set (LTL a)) (Integer,Set Integer,Set Integer,Set Integer)
