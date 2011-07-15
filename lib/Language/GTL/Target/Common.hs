@@ -5,10 +5,11 @@
 module Language.GTL.Target.Common where
 
 import Language.GTL.Model
-import Language.GTL.Expression
+import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Translation
 import Language.GTL.Buchi
+import Language.GTL.LTL
 
 import Data.Set as Set
 import Data.Map as Map
@@ -25,8 +26,8 @@ type InputMap = Map TargetVar (Integer,GTLType)
 
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
-                   , tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
-                   --, tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
+                   --, tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
+                   , tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
                    , tmodelVerify :: TypedExpr TargetVar
                    } deriving Show
 
@@ -38,7 +39,7 @@ data Restriction v = Restriction
                      , forbiddenValues :: Set (GTLValue ())
                      , equals :: [TypedExpr v]
                      , unequals :: [TypedExpr v]
-                     } deriving Show
+                     } deriving (Show,Eq,Ord)
 
 emptyRestriction :: GTLType -> Restriction v
 emptyRestriction tp = Restriction tp [] [] Nothing Set.empty [] []
@@ -148,7 +149,7 @@ buildTargetModel spec inmp outmp
                       ]
        , tmodelProcs = Map.mapWithKey (\name inst
                                        -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                          in translateGBA $ runIdentity $ 
+                                          in {-translateGBA $ runIdentity $ 
                                              gtlToBuchi (\atm -> let (restr,cond) = translateAtoms
                                                                                     (\v idx -> (name,v,idx))
                                                                                     (\(n,v,is) i -> (n,v,i:is))
@@ -171,8 +172,31 @@ buildTargetModel spec inmp outmp
                                                                                     Nothing -> (Set.empty,Nothing)
                                                                                     Just (p1,p2,_) -> (p1,p2)
                                                                             ],cond)
-                                                        )
-                                             (gtlModelContract mdl)
+                                                        )-}
+                                           baMapAlphabet (\atm -> let (restr,cond) = translateAtoms
+                                                                                     (\v idx -> (name,v,idx))
+                                                                                     (\(n,v,is) i -> (n,v,i:is))
+                                                                                     (Just (name,mdl)
+                                                                                     ) atm
+                                                                      rrestr = completeRestrictions restr (Map.fromList 
+                                                                                                          [ ((name,var,idx),rtp)
+                                                                                                          | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
+                                                                                                            (rtp,idx) <- flattenVar tp []
+                                                                                                          ]) outmp
+                                                                      in ([ ([ (tvar,case Map.lookup tvar inmp of
+                                                                                     Nothing -> error (show (tvar,var,r))
+                                                                                     Just (p,_) -> p
+                                                                                 )
+                                                                               | tvar <- Set.toList tvars
+                                                                               ] ++ (case nvr of
+                                                                                        Nothing -> []
+                                                                                        Just lvl -> [(var,lvl)]),r)
+                                                                            | (var,r) <- Map.toList rrestr,
+                                                                              let (tvars,nvr) = case Map.lookup var outmp of
+                                                                                    Nothing -> (Set.empty,Nothing)
+                                                                                    Just (p1,p2,_) -> (p1,p2)
+                                                                            ],cond)
+                                                         ) $ gtl2ba $ gtlModelContract mdl
                                       )
                        (gtlSpecInstances spec)
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
@@ -318,7 +342,7 @@ translateAtom f g mmdl expr t idx
                                         then Right chk
                                         else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
     IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
-    UnBoolExpr Not p -> translateAtom f g mmdl (unfix p) (not t) idx
+    UnBoolExpr GTL.Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
 translateExpr :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
 translateExpr f g mmdl expr = case getValue expr of

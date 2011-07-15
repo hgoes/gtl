@@ -21,11 +21,12 @@ module Language.GTL.LTL(
   optimizeTransitionsBA,
   VWAA,
   GBA,
-  BA,
+  BA(..),
   ltl2ba,
   AtomContainer(..),
   mapLTL,
-  baProduct
+  baProduct,
+  baMapAlphabet
   ) where
 
 import Data.Set as Set
@@ -195,6 +196,9 @@ instance Ord a => AtomContainer (Map a Bool) a where
     | Map.isSubmapOf y x = ELT
     | otherwise = ENEQ
   mergeAtoms = mergeAlphabet
+
+baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
+baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }
 
 instance (Show a,Show st,Ord st) => Show (BA a st) where
   show ba = unlines $ concat [ [(if Set.member st (baInits ba)
@@ -453,7 +457,7 @@ transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b
 transUnion = (++)
 
 ltl2ba :: (AtomContainer b a,Ord b) => LTL a -> BA b Integer
-ltl2ba = renameStates . optimizeTransitionsBA . minimizeBA . gba2ba . minimizeGBA . vwaa2gba . ltl2vwaa
+ltl2ba = renameStates . optimizeTransitionsBA . minimizeBA . gba2ba . minimizeGBA . vwaa2gba . ltl2vwaa . distributeNegation
 
 renameStates :: Ord st => BA a st -> BA a Integer
 renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions ba)

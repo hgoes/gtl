@@ -40,14 +40,14 @@ translateTarget tm
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
                   | (pname,buchi) <- Map.toList (tmodelProcs tm),
-                    let st_locs = [ noPos $ Location { locId = ("l"++show s1++"_"++show s2)
+                    let st_locs = [ {-noPos $ Location { locId = ("l"++show s1++"_"++show s2)
                                                      , locName = Just (noPos $ "l"++show s1++"_"++show s2)
                                                      , locLabels = []
                                                      , locUrgent = False
                                                      , locCommited = False
                                                      , locColor = Nothing
                                                      }
-                                  | ((s1,s2),st) <- Map.toList buchi
+                                  | ((s1,s2),st) <- Map.toList buchi-}
                                   ],
                     let start_loc = [ noPos $ Location { locId = "start"
                                                        , locName = Just $ noPos "start"
@@ -56,7 +56,7 @@ translateTarget tm
                                                        , locCommited = False
                                                        , locColor = Nothing
                                                        } ],
-                    let start_trans = [ noPos $ Transition { transId = Nothing
+                    let start_trans = [ {-noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
                                                            , transTarget = "l"++show s1++"_"++show s2
                                                            , transLabel = translateRestrictions 0 (fst (vars st)) ++
@@ -64,8 +64,8 @@ translateTarget tm
                                                            , transNails = []
                                                            , transColor = Nothing
                                                            }
-                                      | ((s1,s2),st) <- Map.toList buchi, isStart st ],
-                    let st_trans = [ noPos $ Transition { transId = Nothing 
+                                      | ((s1,s2),st) <- Map.toList buchi, isStart st-} ],
+                    let st_trans = [ {-noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s1++"_"++show s2 
                                                         , transTarget = "l"++show t1++"_"++show t2
                                                         , transLabel = translateRestrictions 0 (fst (vars nst)) ++
@@ -75,7 +75,7 @@ translateTarget tm
                                                         }
                                    | ((s1,s2),st) <- Map.toList buchi,
                                      (t1,t2) <- Set.toList (successors st), 
-                                     let nst = buchi!(t1,t2)
+                                     let nst = buchi!(t1,t2)-}
                                      ]
                   ]
 

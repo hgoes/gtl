@@ -628,6 +628,10 @@ compareExpr e1 e2
                     EEQ -> ENEQ
                     ENEQ -> EUNK
                     _ -> EUNK
+                  _ -> EUNK
+                _ -> EUNK
+              _ -> EUNK
+            _ -> EUNK
           UnBoolExpr Not (Fix p) -> case getValue e2 of
             UnBoolExpr Not (Fix p') -> case compareExpr p p' of
               ELT -> EGT
