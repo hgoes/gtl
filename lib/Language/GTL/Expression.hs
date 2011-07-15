@@ -123,6 +123,10 @@ geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 geq x y
   | getType x == getType y = Typed GTLBool (BinRelExpr BinEq (Fix x) (Fix y))
 
+gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gneq x y
+  | getType x == getType y = Typed GTLBool (BinRelExpr BinNEq (Fix x) (Fix y))
+
 enumConst :: [String] -> String -> TypedExpr v
 enumConst tp v = Typed (GTLEnum tp) (Value (GTLEnumVal v))
 
@@ -627,6 +631,14 @@ compareExpr e1 e2
                   ENEQ -> case compareExpr r1 r2 of
                     EEQ -> ENEQ
                     ENEQ -> EUNK
+                    _ -> EUNK
+                  _ -> EUNK
+                BinNEq -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    _ -> ELT
+                  ENEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
                     _ -> EUNK
                   _ -> EUNK
                 _ -> EUNK
