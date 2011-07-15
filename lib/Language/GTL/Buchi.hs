@@ -137,6 +137,17 @@ data BA a st = BA { baTransitions :: Map st (Set (a,st))
                   , baFinals :: Set st
                   } deriving (Eq,Ord)
 
+instance (Binary a,Binary st,Ord a,Ord st) => Binary (BA a st) where
+  put ba = do
+    put (baTransitions ba)
+    put (baInits ba)
+    put (baFinals ba)
+  get = do
+    trans <- get
+    inits <- get
+    fins <- get
+    return $ BA trans inits fins
+
 instance (Show a,Show st,Ord st) => Show (BA a st) where
   show ba = unlines $ concat [ [(if Set.member st (baInits ba)
                                  then "initial "
@@ -163,3 +174,13 @@ instance (Show a,Show st) => Show (GBA a st) where
 
 baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
 baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }
+
+renameStates :: Ord st => BA a st -> BA a Integer
+renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions ba)
+                      trans' = fmap (\trg -> Set.mapMonotonic (\(c,t) -> (c,stmp!t)) trg) $ Map.mapKeysMonotonic (\k -> stmp!k) (baTransitions ba)
+                      inits' = Set.mapMonotonic (stmp!) (baInits ba)
+                      fins' = Set.mapMonotonic (stmp!) (baFinals ba)
+                  in BA { baTransitions = trans'
+                        , baInits = inits'
+                        , baFinals = fins'
+                        }

@@ -108,7 +108,7 @@ gtlToLTL expr
       GTL.Next -> LTL.Un LTL.Next (gtlToLTL (unfix p))
       GTL.Finally Nothing -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
     IndexExpr _ _ -> Atom expr
-    Automaton buchi -> LTLSimpleAutomaton (simpleAutomaton buchi)
+    Automaton buchi -> LTLAutomaton (baMapAlphabet (fmap unfix) $ renameStates buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]

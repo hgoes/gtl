@@ -25,7 +25,6 @@ type InputMap = Map TargetVar (Integer,GTLType)
 
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
-                   --, tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
                    , tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
                    , tmodelVerify :: TypedExpr TargetVar
                    } deriving Show
@@ -275,7 +274,7 @@ allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,
 allPossibleIdx (GTLTuple tps) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
 allPossibleIdx tp = [(tp,[])]
 
-flattenExpr :: (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
+flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
 flattenExpr f idx e = Typed (getType e) $ case getValue e of
   Var v i -> Var (f v idx) i
   Value v -> case idx of
@@ -289,9 +288,9 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
   BinIntExpr op l r -> BinIntExpr op (Fix $ flattenExpr f idx $ unfix l) (Fix $ flattenExpr f idx $ unfix r)
   UnBoolExpr op ne -> UnBoolExpr op (Fix $ flattenExpr f idx $ unfix ne)
   IndexExpr e i -> getValue $ flattenExpr f (i:idx) (unfix e)
-  Automaton buchi -> Automaton (buchiMapVars (Fix . flattenExpr f idx . unfix) buchi)
+  Automaton buchi -> Automaton (baMapAlphabet (fmap $ Fix . flattenExpr f idx . unfix) buchi)
 
-unpackExpr :: (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
+unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
   Var v lvl -> case getType e of
     GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl)) | j <- [0..(sz-1)] ]
@@ -313,7 +312,7 @@ translateAtoms f g mmdl
               Left nrestr -> (foldl (\mp (var,re) -> Map.insertWith (\x y -> let Just p = plusRestriction x y in p) var re mp) restrs nrestr,expr)
               Right ne -> (restrs,ne++expr)) (Map.empty,[])
 
-translateAtom :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
+translateAtom :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
                  -> Either [(b,Restriction b)] [TypedExpr b]
 translateAtom f g mmdl expr t idx
   = case getValue expr of
@@ -343,7 +342,7 @@ translateAtom f g mmdl expr t idx
     IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
     UnBoolExpr GTL.Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
-translateExpr :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
+translateExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
 translateExpr f g mmdl expr = case getValue expr of
   Var var 0 -> case mmdl of
     Nothing -> Right $ translateCheckExpr f Nothing expr []
@@ -355,7 +354,7 @@ translateExpr f g mmdl expr = case getValue expr of
     Right _ -> Right $ translateCheckExpr f mmdl (unfix e) [i]
   _ -> Right $ translateCheckExpr f mmdl expr []
 
-translateCheckExpr :: (Ord a) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
+translateCheckExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
 translateCheckExpr f mmdl expr idx = case getValue expr of
     Var var lvl -> case mmdl of
       Nothing -> [Typed (getType expr) (Var (f var (reverse idx)) lvl)]

@@ -42,8 +42,7 @@ data LTL a = Atom a
            | Bin BinOp (LTL a) (LTL a)
            | Un UnOp (LTL a)
            | Ground Bool
-           | LTLAutomaton (GBuchi String (LTL a) Bool)
-           | LTLSimpleAutomaton (GBuchi Integer (Set a) Bool)
+           | LTLAutomaton (BA [a] Integer)
            deriving (Eq,Ord)
 
 -- | Minimal set of binary operators for LTL.
@@ -63,8 +62,8 @@ mapLTL f (Atom x) = Atom (f x)
 mapLTL f (Bin op l r) = Bin op (mapLTL f l) (mapLTL f r)
 mapLTL f (Un op x) = Un op (mapLTL f x)
 mapLTL f (Ground p) = Ground p
-mapLTL f (LTLAutomaton b) = LTLAutomaton $ fmap (\st -> st { vars = mapLTL f (vars st) }) b
-mapLTL f (LTLSimpleAutomaton b) = LTLSimpleAutomaton $ fmap (\st -> st { vars = Set.map f (vars st) }) b
+mapLTL f (LTLAutomaton b) = LTLAutomaton $ b { baTransitions = fmap (Set.map (\(cond,trg) -> (fmap f cond,trg))) (baTransitions b) }
+--mapLTL f (LTLSimpleAutomaton b) = LTLSimpleAutomaton $ fmap (\st -> st { vars = Set.map f (vars st) }) b
 
 binPrec :: BinOp -> Int
 binPrec And = 7
@@ -122,7 +121,7 @@ distributeNegation (Ground p) = Ground p
 distributeNegation (Bin op l r) = Bin op (distributeNegation l) (distributeNegation r)
 distributeNegation (Un Not x) = pushNegation x
 distributeNegation (Un op x) = Un op (distributeNegation x)
-distributeNegation aut@(LTLSimpleAutomaton _) = aut
+--distributeNegation aut@(LTLSimpleAutomaton _) = aut
 distributeNegation aut@(LTLAutomaton _) = aut
 
 pushNegation :: LTL a -> LTL a
@@ -137,9 +136,10 @@ pushNegation (Bin op l r) = Bin (case op of
                             (pushNegation r)
 pushNegation (Un Not x) = distributeNegation x
 pushNegation (Un Next x) = Un Next (pushNegation x)
-pushNegation (LTLSimpleAutomaton _) = error "Complementing automata is not yet implemented"
+--pushNegation (LTLSimpleAutomaton _) = error "Complementing automata is not yet implemented"
 pushNegation (LTLAutomaton _) = error "Complementing automata is not yet implemented"
 
+{-
 -- | Extracts all until constructs from a LTL formula.
 --   Each until gets a unique `Integer' identifier.
 untils :: Ord a => LTL a -> (Map (LTL a,LTL a) Integer,Integer)
@@ -155,11 +155,11 @@ untils = untils' 0
                                  (mpr,nr) = untils' nl r
                              in (Map.union mpl mpr,nr+1)
     untils' n (Un op x) = untils' n x
-    untils' n (LTLSimpleAutomaton _) = (Map.empty,n)
+    --untils' n (LTLSimpleAutomaton _) = (Map.empty,n)
     untils' n (LTLAutomaton buchi) = foldl (\(mp,n) co -> let (nmp,n') = untils' n (vars co)
                                                           in (Map.union mp nmp,n')
                                            ) (Map.empty,0)
-                                     (Map.elems buchi)
+                                     (Map.elems buchi)-}
 
 ltlAtoms :: Ord b => (a -> [b]) -> LTL a -> Set b
 ltlAtoms f (Atom x) = Set.fromList (f x)
@@ -417,16 +417,6 @@ transUnion = (++)
 
 ltl2ba :: (AtomContainer b a,Ord b) => LTL a -> BA b Integer
 ltl2ba = renameStates . optimizeTransitionsBA . minimizeBA . gba2ba . minimizeGBA . vwaa2gba . ltl2vwaa . distributeNegation
-
-renameStates :: Ord st => BA a st -> BA a Integer
-renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions ba)
-                      trans' = fmap (\trg -> Set.mapMonotonic (\(c,t) -> (c,stmp!t)) trg) $ Map.mapKeysMonotonic (\k -> stmp!k) (baTransitions ba)
-                      inits' = Set.mapMonotonic (stmp!) (baInits ba)
-                      fins' = Set.mapMonotonic (stmp!) (baFinals ba)
-                  in BA { baTransitions = trans'
-                        , baInits = inits'
-                        , baFinals = fins'
-                        }
 
 baProduct :: (Ord a,Ord st,Ord st') => AtomContainer a b => BA a st -> BA a st' -> BA a (st,st',Bool)
 baProduct b1 b2 = BA { baTransitions = trans'
