@@ -674,7 +674,7 @@ compareExpr e1 e2
       p2 = toLinearExpr e2
       lincomp = if p1 == p2
                 then EEQ
-                else (if Map.size p1 == 1 && Map.size p2 == 2
+                else (if Map.size p1 == 1 && Map.size p2 == 1
                       then (case Map.lookup Map.empty p1 of
                                Nothing -> EUNK
                                Just c1 -> case Map.lookup Map.empty p2 of
