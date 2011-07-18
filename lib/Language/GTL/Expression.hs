@@ -631,6 +631,18 @@ compareExpr e1 e2
                          then EEQ
                          else EUNK
             _ -> EUNK
+          Value c1 -> case getValue e2 of
+            Value c2 -> if c1 == c2
+                        then EEQ
+                        else EUNK
+            _ -> EUNK
+          IndexExpr (Fix ee1) i1 -> case getValue e2 of
+            IndexExpr (Fix ee2) i2 -> case compareExpr ee1 ee2 of
+              EEQ -> if i1==i2
+                     then EEQ
+                     else EUNK
+              _ -> EUNK
+            _ -> EUNK
           BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
             BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
               BinEq -> case op2 of
@@ -647,6 +659,16 @@ compareExpr e1 e2
                     _ -> ELT
                   ENEQ -> case compareExpr r1 r2 of
                     EEQ -> ENEQ
+                    _ -> EUNK
+                  _ -> EUNK
+                _ -> EUNK
+              BinNEq -> case op2 of
+                BinNEq -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> EEQ
+                    ENEQ -> if getType l1 == GTLBool
+                            then ENEQ
+                            else EUNK
                     _ -> EUNK
                   _ -> EUNK
                 _ -> EUNK
