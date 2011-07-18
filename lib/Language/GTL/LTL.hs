@@ -118,7 +118,6 @@ distributeNegation (Ground p) = Ground p
 distributeNegation (Bin op l r) = Bin op (distributeNegation l) (distributeNegation r)
 distributeNegation (Un Not x) = pushNegation x
 distributeNegation (Un op x) = Un op (distributeNegation x)
---distributeNegation aut@(LTLSimpleAutomaton _) = aut
 distributeNegation aut@(LTLAutomaton _) = aut
 
 pushNegation :: LTL a -> LTL a

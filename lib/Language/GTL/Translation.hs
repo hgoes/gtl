@@ -108,7 +108,7 @@ gtlToLTL expr
       GTL.Next -> LTL.Un LTL.Next (gtlToLTL (unfix p))
       GTL.Finally Nothing -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
     IndexExpr _ _ -> Atom expr
-    Automaton buchi -> LTLAutomaton (baMapAlphabet (fmap unfix) $ renameStates buchi)
+    Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]
@@ -120,6 +120,17 @@ gtlToLTL expr
         (Value (GTLTupleVal xs),_) -> zipWith (\x i -> Typed GTLBool (BinRelExpr rel x (Fix $ Typed (getType $ unfix x) (IndexExpr (Fix rhs) i)))) xs [0..]
         (_,Value (GTLTupleVal ys)) -> zipWith (\i y -> Typed GTLBool (BinRelExpr rel (Fix $ Typed (getType $ unfix y) (IndexExpr (Fix lhs) i)) y)) [0..] ys
         _ -> [Typed GTLBool (BinRelExpr rel (Fix lhs) (Fix rhs))]
+
+expandAutomaton :: (Ord t,Ord v) => BA [TypedExpr v] t -> BA [TypedExpr v] t
+expandAutomaton ba = ba { baTransitions = fmap (\ts -> Set.fromList 
+                                                       [ (Set.toList cond,trg)
+                                                       | (cs,trg) <- Set.toList ts,
+                                                         let cs_expr = case cs of
+                                                               [] -> Typed GTLBool (Value (GTLBoolVal True))
+                                                               [c] -> c
+                                                               _ -> foldl1 (\x y -> Typed GTLBool (BinBoolExpr GTL.And (Fix x) (Fix y))) cs,
+                                                         cond <- expandExpr cs_expr
+                                                       ]) (baTransitions ba) }
 
 expandExpr :: Ord v => TypedExpr v -> [Set (TypedExpr v)]
 expandExpr expr
