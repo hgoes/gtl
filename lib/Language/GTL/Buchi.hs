@@ -184,3 +184,4 @@ renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions
                         , baInits = inits'
                         , baFinals = fins'
                         }
+

@@ -16,7 +16,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.List (genericLength,elemIndex)
 
 import Language.Promela.Syntax as Pr
-import Language.GTL.LTL
+import Language.GTL.Buchi
 import Language.GTL.Expression as GTL
 import Language.GTL.Types
 
@@ -116,16 +116,12 @@ traceElemToC f [] = "1"
 traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats)
 
 -- | Convert a trace into a buchi automaton that checks for conformance to that trace.
-traceToBuchi :: CNameGen -> Trace -> Buchi (Maybe String)
-traceToBuchi f trace = let states = zipWith (\n st -> (n,BuchiState { isStart = n==0
-                                                                    , vars = Just $ traceElemToC f st
-                                                                    , finalSets = Set.empty
-                                                                    , successors = Set.singleton (n+1)
-                                                                    })) [0..] trace
-                           len = genericLength trace
-                           end = (len,BuchiState { isStart = len==0
-                                                 , vars = Nothing
-                                                 , finalSets = Set.singleton (-1)
-                                                 , successors = Set.singleton len
-                                                 })
-                       in Map.fromList (end:states)
+traceToBuchi :: Trace -> BA [TypedExpr (String,String)] Integer
+traceToBuchi trace = BA { baTransitions = Map.fromList $ end:trans
+                        , baInits = Set.singleton 0
+                        , baFinals = Set.singleton len
+                        }
+  where
+    len = genericLength trace
+    trans = zipWith (\n st -> (n,Set.singleton (st,n+1))) [0..] trace
+    end = (len,Set.singleton ([],len))
