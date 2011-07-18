@@ -11,7 +11,6 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
 import Language.GTL.Types
 import Language.GTL.Target.Common
-import qualified Language.GTL.LTL as LTL
 
 import Data.Set as Set
 import Data.Map as Map
@@ -44,8 +43,8 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                                  | (tvars,restr) <- outp ])++
                                                       [Pr.StmtGoto ("st"++show trg)]
                                                      ]
-                                                   | ist <- Set.toList $ LTL.baInits buchi,
-                                                     ((outp,cond),trg) <- Set.toList $ (LTL.baTransitions buchi)!ist
+                                                   | ist <- Set.toList $ baInits buchi,
+                                                     ((outp,cond),trg) <- Set.toList $ (baTransitions buchi)!ist
                                                    ]
                                             ] ++
                                             [ Pr.StmtLabel ("st"++show st) $
@@ -58,7 +57,7 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                                                      ]
                                                    | ((outp,cond),trg) <- Set.toList trans
                                                    ]
-                                            | (st,trans) <- Map.toList (LTL.baTransitions buchi)
+                                            | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
                           }
             | (pname,buchi) <- Map.toList $ tmodelProcs tm ]
