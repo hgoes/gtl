@@ -3,8 +3,6 @@
 {-| Translates GTL expressions into LTL formula.
  -}
 module Language.GTL.Translation(
-  gtlToBuchi,
-  gtlToLTL,
   gtl2ba
   ) where
 
@@ -13,30 +11,13 @@ import Language.GTL.Types as GTL
 import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
 import Data.Foldable
-import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,mapM)
-import Data.List (genericLength)
 
 import Data.Set as Set
-import Data.Map as Map
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtlToBuchi :: (Monad m,Show v,Ord v) => ([GTL.TypedExpr v] -> m a) -> GTL.TypedExpr v -> m (Buchi a)
-gtlToBuchi f expr = mapM (\co -> do
-                             nvars <- f (fmap (\(at,p) -> if p
-                                                          then at
-                                                          else distributeNot at
-                                              ) $ Set.toList (vars co))
-                             return $ co { vars = nvars }
-                         ) $
-                    ltlToBuchi GTL.distributeNot (gtlToLTL expr)
-
----- | Extract all variables with their history level from an atom.
---getAtomVars :: GTLAtom v -> [(v,Integer)]
---getAtomVars (GTLBoolExpr e _) = getVarsBoolExpr e
-
 gtl2ba :: Ord v => TypedExpr v -> BA [TypedExpr v] Integer
 gtl2ba e = ltl2ba $ gtlToLTL e
 
@@ -153,28 +134,3 @@ expandExpr expr
       GTL.Always -> error "Can't use always in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
     Automaton _ -> error "Can't use automata in state formulas yet"
-
-simpleAutomaton :: Ord  v => GBuchi Integer (Fix (Typed (Term v))) f -> GBuchi Integer (Set (TypedExpr v)) f
-simpleAutomaton buchi
-  = let expandState st = [ BuchiState { isStart = isStart st
-                                      , vars = nvar
-                                      , finalSets = finalSets st
-                                      , successors = Set.fromList $ concat [ mapping!succ | succ <- Set.toList (successors st) ]
-                                      }
-                         | nvar <- expandExpr (unfix $ vars st) ]
-        (mapping,_,res) = Map.foldrWithKey (\name co (mp,n,stmp) -> let sts = zip [n..] (expandState co)
-                                                                        len = genericLength sts
-                                                                    in (Map.insert name (fmap fst sts) mp,
-                                                                        n+len,
-                                                                        foldl (\stmp' (cn,cco) -> Map.insert cn cco stmp') stmp sts)
-                                           ) (Map.empty,0,Map.empty) buchi
-    in res
-
-
-
-buchiSwitch :: Ord a => GBuchi a b f -> GBuchi a b f
-buchiSwitch buchi = Map.foldrWithKey (\name co mp->
-                                       foldl (\mp2 succ ->
-                                               Map.adjust (\co2 -> co2 { successors = Set.insert name (successors co2) }) succ mp2
-                                             ) mp (successors co))
-                    (fmap (\co -> co { successors = Set.empty }) buchi) buchi

@@ -9,12 +9,9 @@ import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
-import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List
-import Control.Monad.Identity
 
 data Scade = Scade deriving (Show)
 
