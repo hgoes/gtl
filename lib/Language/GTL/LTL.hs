@@ -185,11 +185,12 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
     minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
     
     minimizeTrans' d c st d' [] = minimizeTrans ((c,st):d) d'
-    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' && (case compareAtoms c' c of
-                                                               EEQ -> True
-                                                               ELT -> True
-                                                               _ -> False)
-                                             then minimizeTrans' d c st d' ts
+    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' 
+                                             then (case compareAtoms c' c of
+                                                      EEQ -> minimizeTrans' d c st d' ts
+                                                      ELT -> minimizeTrans' d c st d' ts
+                                                      EGT -> minimizeTrans' d c' st' d' ts
+                                                      _ -> minimizeTrans' d c st ((c',st'):d') ts)
                                              else minimizeTrans' d c st ((c',st'):d') ts
 
 minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
