@@ -13,6 +13,28 @@ import Language.GTL.Target.Common
 import Data.List (genericLength,genericReplicate,elemIndex)
 import Data.Map as Map
 import Data.Set as Set
+import Data.Monoid
+
+data TransitionContent = TransCont
+                         { tcSelections :: [U.Expression]
+                         , tcGuards :: [U.Expression]
+                         , tcUpdates :: [U.Expression]
+                         } deriving Show
+
+instance Monoid TransitionContent where
+  mempty = TransCont [] [] []
+  mappend (TransCont s1 g1 u1) (TransCont s2 g2 u2) = TransCont (s1++s2) (g1++g2) (u1++u2)
+
+toLabels :: TransitionContent -> [Positional Label]
+toLabels tc = (case tcSelections tc of
+                  [] -> []
+                  xs -> [noPos $ Label Selection xs]) ++
+              (case tcGuards tc of
+                  [] -> []
+                  xs -> [noPos $ Label Guard xs]) ++
+              (case tcUpdates tc of
+                  [] -> []
+                  xs -> [noPos $ Label Assignment xs])
 
 -- | Translate a GTL specification to a UPPAAL specification.
 translateSpec :: GTLSpec String -> U.Specification
@@ -59,7 +81,7 @@ translateTarget tm
                     let start_trans = [ noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
                                                            , transTarget = "l"++show trg
-                                                           , transLabel = translateRestrictions 0 restr ++
+                                                           , transLabel = toLabels $ translateRestrictions 0 restr `mappend`
                                                                           translateConditions conds
                                                            , transNails = []
                                                            , transColor = Nothing
@@ -71,7 +93,7 @@ translateTarget tm
                     let st_trans = [ noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s 
                                                         , transTarget = "l"++show t
-                                                        , transLabel = translateRestrictions 0 restr ++
+                                                        , transLabel = toLabels $ translateRestrictions 0 restr `mappend`
                                                                        translateConditions conds
                                                         , transNails = []
                                                         , transColor = Nothing
@@ -82,48 +104,46 @@ translateTarget tm
                   ]
 
 -- | Translate a list of conditional expressions into edge guards.
-translateConditions :: [TypedExpr TargetVar] -> [Positional Label]
-translateConditions conds = [noPos (Label Guard [ translateExpression e ])
-                            | e <- conds ]
+translateConditions :: [TypedExpr TargetVar] -> TransitionContent
+translateConditions conds = mempty { tcGuards = [ translateExpression e | e <- conds ] }
 
 -- | Translate a list of output restrictions into edge updates.
-translateRestrictions :: Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> [Positional Label]
-translateRestrictions _ [] = []
+translateRestrictions :: Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> TransitionContent
+translateRestrictions _ [] = mempty
 translateRestrictions i ((tvars,restr):xs)
-  = (translateRestriction i restr) ++
-    (translateUpdate i tvars)++
+  = (translateRestriction i restr) `mappend`
+    (translateUpdate i tvars) `mappend`
     (translateRestrictions (i+1) xs)
 
 -- | Assign a temporary variable to a list of output variables.
 translateUpdate :: Integer -- ^ Numbering of the variable
                    -> [(TargetVar,Integer)] -- ^ List of output variables including their history level
-                   -> [Positional Label]
-translateUpdate i vars = [noPos (Label Assignment [ExprAssign Assign
-                                                   (ExprIndex (ExprId (varString var)) (ExprNat j))
-                                                   (if j==0
-                                                    then ExprId ("tmp"++show i)
-                                                    else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
-                                                  | (var,lvl) <- vars, j <- reverse [0..lvl] ])]
+                   -> TransitionContent
+translateUpdate i vars = mempty { tcUpdates = [ ExprAssign Assign
+                                                (ExprIndex (ExprId (varString var)) (ExprNat j))
+                                                (if j==0
+                                                 then ExprId ("tmp"++show i)
+                                                 else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
+                                              | (var,lvl) <- vars, j <- reverse [0..lvl] ]
+                                }
 
 -- | Translate a single output restriction into a temporary variable that non-deterministically gets assigned the allowed values.
-translateRestriction :: Integer -> Restriction TargetVar -> [Positional Label]
+translateRestriction :: Integer -> Restriction TargetVar -> TransitionContent
 translateRestriction i restr
-  = [noPos (Label Selection [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]])
-    ,noPos (Label Guard $ 
-            [ ExprBinary (if ins then U.BinGTE else U.BinGT) (ExprId ("tmp"++show i)) (translateExpression lower)
-            | (ins,lower) <- lowerLimits restr
-            ] ++
-            [ ExprBinary (if ins then U.BinLTE else U.BinLT) (ExprId ("tmp"++show i)) (translateExpression upper)
-            | (ins,upper) <- upperLimits restr
-            ] ++
-            [ ExprBinary U.BinEq (ExprId ("tmp"++show i)) (translateExpression e)
-            | e <- equals restr
-            ] ++
-            [ ExprBinary U.BinNEq (ExprId ("tmp"++show i)) (translateExpression e)
-            | e <- unequals restr
-            ]
-           )
-    ]
+  = mempty { tcSelections = [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]]
+           , tcGuards = [ ExprBinary (if ins then U.BinGTE else U.BinGT) (ExprId ("tmp"++show i)) (translateExpression lower)
+                        | (ins,lower) <- lowerLimits restr
+                        ] ++
+                        [ ExprBinary (if ins then U.BinLTE else U.BinLT) (ExprId ("tmp"++show i)) (translateExpression upper)
+                        | (ins,upper) <- upperLimits restr
+                        ] ++
+                        [ ExprBinary U.BinEq (ExprId ("tmp"++show i)) (translateExpression e)
+                        | e <- equals restr
+                        ] ++
+                        [ ExprBinary U.BinNEq (ExprId ("tmp"++show i)) (translateExpression e)
+                        | e <- unequals restr
+                        ]
+           }
 
 -- | Translate a GTLValue into a UPPAAL expression.
 translateConstant :: GTLType -> GTLValue r -> Expression
