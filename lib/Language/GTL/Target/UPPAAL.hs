@@ -40,14 +40,14 @@ translateTarget tm
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
                   | (pname,buchi) <- Map.toList (tmodelProcs tm),
-                    let st_locs = [ {-noPos $ Location { locId = ("l"++show s1++"_"++show s2)
-                                                     , locName = Just (noPos $ "l"++show s1++"_"++show s2)
+                    let st_locs = [ noPos $ Location { locId = ("l"++show name)
+                                                     , locName = Just (noPos $ "l"++show name)
                                                      , locLabels = []
                                                      , locUrgent = False
                                                      , locCommited = False
                                                      , locColor = Nothing
                                                      }
-                                  | ((s1,s2),st) <- Map.toList buchi-}
+                                  | name <- Map.keys (baTransitions buchi)
                                   ],
                     let start_loc = [ noPos $ Location { locId = "start"
                                                        , locName = Just $ noPos "start"
@@ -56,27 +56,29 @@ translateTarget tm
                                                        , locCommited = False
                                                        , locColor = Nothing
                                                        } ],
-                    let start_trans = [ {-noPos $ Transition { transId = Nothing
+                    let start_trans = [ noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
-                                                           , transTarget = "l"++show s1++"_"++show s2
-                                                           , transLabel = translateRestrictions 0 (fst (vars st)) ++
-                                                                          translateConditions (snd (vars st))
+                                                           , transTarget = "l"++show trg
+                                                           , transLabel = translateRestrictions 0 restr ++
+                                                                          translateConditions conds
                                                            , transNails = []
                                                            , transColor = Nothing
                                                            }
-                                      | ((s1,s2),st) <- Map.toList buchi, isStart st-} ],
-                    let st_trans = [ {-noPos $ Transition { transId = Nothing 
-                                                        , transSource = "l"++show s1++"_"++show s2 
-                                                        , transTarget = "l"++show t1++"_"++show t2
-                                                        , transLabel = translateRestrictions 0 (fst (vars nst)) ++
-                                                                       translateConditions (snd (vars nst))
+                                      | i <- Set.toList (baInits buchi),
+                                        let ts = (baTransitions buchi)!i,
+                                        ((restr,conds),trg) <- Set.toList ts
+                                      ],
+                    let st_trans = [ noPos $ Transition { transId = Nothing 
+                                                        , transSource = "l"++show s 
+                                                        , transTarget = "l"++show t
+                                                        , transLabel = translateRestrictions 0 restr ++
+                                                                       translateConditions conds
                                                         , transNails = []
                                                         , transColor = Nothing
                                                         }
-                                   | ((s1,s2),st) <- Map.toList buchi,
-                                     (t1,t2) <- Set.toList (successors st), 
-                                     let nst = buchi!(t1,t2)-}
-                                     ]
+                                   | (s,trans) <- Map.toList (baTransitions buchi),
+                                     ((restr,conds),t) <- Set.toList trans
+                                   ]
                   ]
 
 -- | Translate a list of conditional expressions into edge guards.
