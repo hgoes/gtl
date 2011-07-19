@@ -28,7 +28,7 @@ Library
     Language.GTL.Expression
     Language.GTL.Buchi
     Language.GTL.Types
-    Language.GTL.Target.PromelaCUDD
+    --Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
     --Language.GTL.Target.PrettyPrinter
