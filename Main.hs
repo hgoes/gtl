@@ -33,25 +33,6 @@ x2s opts fp = case (scadeRoot opts) of
   Nothing -> return ""
   Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
 
-modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),{-("promela-buddy",PromelaBuddy),-}{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL)]
-
-modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
-modeString def [] = ""
-modeString def [(name,md)] = show name ++ (if md==def
-                                           then "(default)"
-                                           else "")
-modeString def names = buildOr names
-  where
-    buildOr ((name,md):names) = show name ++ (if md==def
-                                              then "(default)"
-                                              else "")++
-                                case names of
-                                  [(name2,md2)] -> " or " ++ show name2 ++ (if md2==def
-                                                                            then "(default)"
-                                                                            else "")
-                                  _ -> ", "++buildOr names
-
 versionString :: String
 versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
                 ++(case tag of
