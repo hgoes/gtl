@@ -58,7 +58,7 @@ translateTarget tm
                          Nothing -> Nothing
                          Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant tp $ unfix $ head $ Set.toList iset)]
                   | (var,lvl,tp,init) <- tmodelVars tm ]
-      templates = [Template (noPos $ pname++"_tmpl") Nothing [] 
+      templates = [Template (noPos $ pname++"_tmpl") Nothing []
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
                   | (pname,buchi) <- Map.toList (tmodelProcs tm),
@@ -175,7 +175,7 @@ translateExpression expr = case getValue expr of
                                                   G.OpDiv -> U.BinDiv) (translateExpression l) (translateExpression r)
   UnBoolExpr op (Fix e) -> ExprUnary (case op of
                                          G.Not -> U.UnNot) (translateExpression e)
-                                                  
+
 -- | Translate a GTL type into a UPPAAL type.
 convertType :: GTLType -> TypeId
 convertType GTLInt = TypeInt Nothing

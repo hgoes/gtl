@@ -1,14 +1,12 @@
 {-# LANGUAGE CPP #-}
 module Main where
 
-import System.Console.GetOpt
-import System.Environment
 import System.FilePath
 import System.Process
 import Control.Monad (when)
 import System.Exit
-import Control.Exception
-import Prelude hiding (catch)
+import System.Directory
+import System.IO.Error
 
 import Language.GTL.Parser.Lexer as GTL
 import Language.GTL.Parser as GTL
@@ -28,36 +26,12 @@ import Language.GTL.Target.Promela as PrNat
 import Language.GTL.Target.UPPAAL as UPP
 import Language.GTL.Target.Printer
 
-data TranslationMode
-     = NativeC
-     | Local
-     | PromelaBuddy
---     | Tikz
-     | Pretty
-     | Native
-     | UPPAAL
-     deriving (Show,Eq)
+import Misc.ProgramOptions
 
-data Options = Options
-               { mode :: TranslationMode
-               , traceFile :: Maybe FilePath
-               , keepTmpFiles :: Bool
-               , showHelp :: Bool
-               , showVersion :: Bool
-               , ccBinary :: String
-               , ccFlags :: [String]
-               }
-               deriving Show
-
-defaultOptions = Options
-  { mode = Native
-  , traceFile = Nothing
-  , keepTmpFiles = False
-  , showHelp = False
-  , showVersion = False
-  , ccBinary = "gcc"
-  , ccFlags = []
-  }
+x2s :: Options -> FilePath -> IO String
+x2s opts fp = case (scadeRoot opts) of
+  Nothing -> return ""
+  Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
 
 modes :: [(String,TranslationMode)]
 modes = [("native-c",NativeC),("local",Local),{-("promela-buddy",PromelaBuddy),-}{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL)]
@@ -77,46 +51,6 @@ modeString def names = buildOr names
                                                                             then "(default)"
                                                                             else "")
                                   _ -> ", "++buildOr names
-
-
-options :: [OptDescr (Options -> Options)]
-options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
-                                             Just rmode -> opt { mode = rmode }
-                                             Nothing -> error $ "Unknown mode "++show str
-                                         ) "mode"
-                                 ) ("The tranlation mode ("++modeString (mode defaultOptions) modes++")")
-          ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
-          ,Option ['k'] ["keep"] (NoArg (\opt -> opt { keepTmpFiles = True })) "Keep temporary files"
-          ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
-          ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
-          ]
-
-x2s :: FilePath -> IO String
-x2s fp = readProcess "C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2\\SCADE Suite\\bin\\x2s.exe" [fp] ""
-
-loadScade :: FilePath -> IO String
-loadScade fp = case takeExtension fp of
-  ".scade" -> readFile fp
-  ".xscade" -> x2s fp
-
-loadScades :: [FilePath] -> IO String
-loadScades = fmap concat . mapM loadScade
-
-header :: String
-header = "Usage: gtl [OPTION...] gtl-file"
-
-getOptions :: IO (Options,String)
-getOptions = do
-  args <- getArgs
-  gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
-  cflags <- catch (fmap words $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
-  let start_opts = defaultOptions { ccBinary = gcc
-                                  , ccFlags = cflags
-                                  }
-  case getOpt Permute options args of
-    (o,[n1],[]) -> return (foldl (flip id) start_opts o,n1)
-    (o,_,[]) -> return (foldl (flip id) start_opts o,error "Exactly one argument required")
-    (_,_,errs) -> ioError (userError $ concat errs ++ usageInfo header options)
 
 versionString :: String
 versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
@@ -149,13 +83,23 @@ versionString = "This is the GALS Translation Language of version "++version++".
 #endif
 
 main = do
-  (opts,gtl_file) <- getOptions
+  opts <- getOptions
   when (showHelp opts) $ do
-    putStr (usageInfo header options)
+    putStr usage
     exitSuccess
   when (showVersion opts) $ do
     putStrLn versionString
     exitSuccess
+  let gtl_file = gtlFile opts
+  print $ ccFlags opts
+  print $ ldFlags opts
+  when (gtl_file == "") $ do
+    ioError $ userError "No GTL file given"
+  exists <- doesFileExist gtl_file
+  when (not exists) $ do
+    ioError . userError $ (gtl_file ++ " does not exist.")
+  (createDirectoryIfMissing True $ outputPath opts)
+    `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file
   mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
   rgtl <- case mgtl of
@@ -163,12 +107,12 @@ main = do
     Right x -> return x
   case mode opts of
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
-    Local -> verifyLocal rgtl
-    --PromelaBuddy -> PrBd.verifyModel (keepTmpFiles opts) (ccBinary opts) (ccFlags opts) (dropExtension gtl_file) rgtl
+    Local -> verifyLocal opts (dropExtension gtl_file) rgtl
+    --PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
     {-Tikz -> do
       str <- PrPr.gtlToTikz rgtl
       putStrLn str-}
     Pretty -> putStrLn (simplePrettyPrint rgtl)
-    Native -> print (prettyPromela $ PrNat.translateSpec rgtl)
+    Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
     UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
   return ()

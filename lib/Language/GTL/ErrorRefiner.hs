@@ -31,10 +31,11 @@ type CNameGen = String -> String -> Integer -> String
 
 -- | Parse a SPIN trace file by calling it with the spin interpreter and parsing the output.
 --   Produces a list of tuples where the first component is the name of the component that
---   just performed a step and the second one is the state number that it transitioned into.
-parseTrace :: FilePath -- ^ The promela file of the model
+--   just performed a step and the second one is the state identifier that it transitioned into.
+parseTrace :: Read s =>
+              FilePath -- ^ The promela file of the model
               -> FilePath -- ^ The path to the promela trail file
-              -> IO [(String,Integer)]
+              -> IO [(String,s)]
 parseTrace promela trail = do
   outp <- readProcess "spin" ["-T","-k",trail,promela] ""
   return $ mapMaybe (\ln -> case words ln of
@@ -62,6 +63,14 @@ readBDDTraces fp = do
 atomToC :: CNameGen -- ^ Function to generate C-names
            -> TypedExpr (String,String) -- ^ GTL atom to convert
            -> String
+{-<<<<<<< HEAD
+atomToC f (GTLRel rel lhs rhs) = (exprToC f lhs) ++ (relToC rel) ++ (exprToC f rhs)
+atomToC f (GTLElem (q,n) vals b) = (if b then "(" else "!(") ++
+                                   (foldl1 (\x y -> x++"||"++y) (fmap (\v -> "("++(f q n 0) ++ "=="++show v ++ ")") vals)) ++
+                                   ")"
+atomToC f (GTLVar (q,n) h b) = (if b then "" else "!") ++ (f q n h)
+=======
+-}
 atomToC f expr = case getValue expr of
   Var (q,n) l -> f q n l
   Value val -> valueToC (getType expr) val

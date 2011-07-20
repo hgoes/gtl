@@ -9,6 +9,8 @@ import Data.Map as Map
 import Data.Traversable
 import Prelude hiding (mapM)
 
+import Misc.ProgramOptions as Opts
+
 type ModelInterface = (Map String GTLType,Map String GTLType)
 
 -- | A GTLBackend is a synchronized formalism that can be used to specify models and perform verification.
@@ -30,7 +32,10 @@ class GTLBackend b where
                 -> CInterface
   -- | Perform a backend-specific model checking algorithm.
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
-  backendVerify :: b -> GTLBackendModel b -> TypedExpr String -> IO (Maybe Bool)
+  backendVerify :: b -> GTLBackendModel b -> TypedExpr String
+                -> Opts.Options -- ^ Options
+                -> String -- ^ Name of the GTL file without extension
+                -> IO (Maybe Bool)
 
 -- | A C-interface is information that is needed to integrate a C-state machine.
 data CInterface = CInterface

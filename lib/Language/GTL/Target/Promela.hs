@@ -11,6 +11,9 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
 import Language.GTL.Types
 import Language.GTL.Target.Common
+import Language.GTL.ErrorRefiner
+
+import Control.Monad.Identity
 
 import Data.Set as Set
 import Data.Map as Map
@@ -19,6 +22,33 @@ import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1,mapM)
 import Data.Maybe
 import Data.Int
+
+import Misc.ProgramOptions as Opts
+import Misc.VerificationEnvironment
+
+-- | Do a complete verification of a given GTL file
+verifyModel :: Opts.Options -- ^ Options
+               -> String -- ^ Name of the GTL file without extension
+               -> GTLSpec String -- ^ The GTL file contents
+               -> IO ()
+verifyModel opts name spec = do
+  let pr = translateSpec spec
+      model = buildTargetModel spec (buildInputMap spec) (buildOutputMap spec)
+  traceFiles <- runVerification opts name pr
+  parseTraces opts name traceFiles (traceToAtoms model)
+
+-- | Given a list of transitions, give a list of atoms that have to hold for each transition.
+traceToAtoms :: TargetModel -- ^ The program to work on
+                -> [(String,(Integer, Int))] -- ^ The transitions, given in the form (model,transition-number)
+                -> Trace --[[GTLAtom (String,String)]]
+traceToAtoms model trace = fmap transitionToAtoms trace
+  where
+    transitionToAtoms :: (String, (Integer, Int)) -> [TypedExpr (String, String)]
+    transitionToAtoms (mdl, st) =
+      let stateMachine = (tmodelProcs model) ! mdl
+          entr = stateMachine ! st
+          ats = atoms $ vars entr
+      in fmap (mapGTLVars (\n -> (mdl,n))) ats
 
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
