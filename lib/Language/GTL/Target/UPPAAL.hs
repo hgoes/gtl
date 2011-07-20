@@ -112,9 +112,29 @@ translateConditions conds = mempty { tcGuards = [ translateExpression e | e <- c
 translateRestrictions :: Integer -> [([(TargetVar,Integer)],Restriction TargetVar)] -> TransitionContent
 translateRestrictions _ [] = mempty
 translateRestrictions i ((tvars,restr):xs)
-  = (translateRestriction i restr) `mappend`
-    (translateUpdate i tvars) `mappend`
-    (translateRestrictions (i+1) xs)
+  = case allowedValues restr of
+  Just vals -> if Set.size vals == 1
+               then (mempty { tcUpdates = [ ExprAssign Assign 
+                                            (ExprIndex (ExprId (varString var)) (ExprNat j))
+                                            (if j==0
+                                                 then translateConstant (restrictionType restr) val
+                                                 else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
+                                          | (var,lvl) <- tvars, j <- reverse [0..lvl], val <- Set.toList vals ] }) `mappend`
+                    (translateRestrictions i xs)
+               else def
+  Nothing -> case equals restr of
+    [val] -> (mempty { tcUpdates = [ ExprAssign Assign 
+                                     (ExprIndex (ExprId (varString var)) (ExprNat j))
+                                     (if j==0
+                                      then translateExpression val
+                                      else ExprIndex (ExprId (varString var)) (ExprNat (j-1)))
+                                   | (var,lvl) <- tvars, j <- reverse [0..lvl] ] }) `mappend`
+             (translateRestrictions i xs)
+    _ -> def
+  where
+    def = (translateRestriction i restr) `mappend`
+          (translateUpdate i tvars) `mappend`
+          (translateRestrictions (i+1) xs)
 
 -- | Assign a temporary variable to a list of output variables.
 translateUpdate :: Integer -- ^ Numbering of the variable
