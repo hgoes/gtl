@@ -1,7 +1,11 @@
+{-| Provides some common code that can be shared between multiple translation targets.
+    As most translation targets operate on the notion of states and variables, the code to
+    generate those can be shared between almost all targets.
+ -}
 module Language.GTL.Target.Common where
 
 import Language.GTL.Model
-import Language.GTL.Expression
+import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Translation
 import Language.GTL.Buchi
@@ -13,6 +17,7 @@ import Control.Monad.Identity
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1)
 
+-- | A qualified variable with instance name, variable name and index.
 type TargetVar = (String,String,[Integer])
 
 type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType)
@@ -20,7 +25,7 @@ type InputMap = Map TargetVar (Integer,GTLType)
 
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
-                   , tmodelProcs :: Map String (GBuchi (Integer,Int) ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Bool)
+                   , tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
                    , tmodelVerify :: TypedExpr TargetVar
                    } deriving Show
 
@@ -32,26 +37,69 @@ data Restriction v = Restriction
                      , forbiddenValues :: Set (GTLValue ())
                      , equals :: [TypedExpr v]
                      , unequals :: [TypedExpr v]
-                     } deriving Show
+                     } deriving (Show,Eq,Ord)
 
 emptyRestriction :: GTLType -> Restriction v
 emptyRestriction tp = Restriction tp [] [] Nothing Set.empty [] []
 
-plusRestriction :: Restriction v -> Restriction v -> Restriction v
+insertLimit :: Ord v => Bool -> (Bool,TypedExpr v) -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)]
+insertLimit upper l [] = [l]
+insertLimit upper (inc,l) rest@((inc',l'):ls)
+  = if inc /= inc'
+    then (inc',l'):insertLimit upper (inc,l) ls
+    else (case compareExpr l l' of
+             EEQ -> rest
+             EGT -> if upper
+                    then rest
+                    else insertLimit upper (inc,l) ls
+             ELT -> if upper
+                    then insertLimit upper (inc,l) ls
+                    else rest
+             _ -> (inc',l'):insertLimit upper (inc,l) ls)
+
+insertRestriction :: Ord v => Bool -> TypedExpr v -> [TypedExpr v] -> Maybe [TypedExpr v]
+insertRestriction _ e [] = return [e]
+insertRestriction eq e (x:xs) = case compareExpr e x of
+  EUNK -> do
+    r <- insertRestriction eq e xs
+    return (x:r)
+  EEQ -> return (x:xs)
+  _ -> if eq then Nothing else (do
+                                   r <- insertRestriction eq e xs
+                                   return (x:r))  
+
+mergeLimits :: Ord v => Bool -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)]
+mergeLimits upper xs ys = foldl (\ys' x -> insertLimit upper x ys') ys xs
+
+mergeRestrictions :: Ord v => Bool -> [TypedExpr v] -> [TypedExpr v] -> Maybe [TypedExpr v]
+mergeRestrictions eq xs ys = foldl (\ys' x -> case ys' of
+                                       Nothing -> Nothing
+                                       Just ys'' -> insertRestriction eq x ys'') (Just ys) xs
+
+plusRestriction :: Ord v => Restriction v -> Restriction v -> Maybe (Restriction v)
 plusRestriction r1 r2
   | restrictionType r1 == restrictionType r2
-    = Restriction { restrictionType = restrictionType r1
-                  , upperLimits = (upperLimits r1)++(upperLimits r2)
-                  , lowerLimits = (lowerLimits r1)++(lowerLimits r2)
-                  , allowedValues = case allowedValues r1 of
-                    Nothing -> allowedValues r2
-                    Just a1 -> case allowedValues r2 of
-                      Nothing -> Just a1
-                      Just a2 -> Just (Set.intersection a1 a2)
-                  , forbiddenValues = Set.union (forbiddenValues r1) (forbiddenValues r2)
-                  , equals = (equals r1)++(equals r2)
-                  , unequals = (unequals r1)++(unequals r2)
-                  }
+    = do
+      let nupper = mergeLimits True (upperLimits r1) (upperLimits r2)
+          nlower = mergeLimits False (lowerLimits r1) (lowerLimits r2)
+      nallowed <- case allowedValues r1 of
+        Nothing -> return $ allowedValues r2
+        Just a1 -> case allowedValues r2 of
+          Nothing -> return $ Just a1
+          Just a2 -> let s = Set.intersection a1 a2
+                     in if Set.null s
+                        then Nothing
+                        else return $ Just s
+      nequals <- mergeRestrictions True (equals r1) (equals r2)
+      nunequals <- mergeRestrictions False (unequals r1) (unequals r2)
+      return $ Restriction { restrictionType = restrictionType r1
+                           , upperLimits = nupper
+                           , lowerLimits = nlower
+                           , allowedValues = nallowed
+                           , forbiddenValues = Set.union (forbiddenValues r1) (forbiddenValues r2)
+                           , equals = nequals
+                           , unequals = nunequals
+                           }
   | otherwise = error $ "Merging restrictions of type "++show (restrictionType r1)++" and "++show (restrictionType r2)
 
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
@@ -99,7 +147,7 @@ buildTargetModel spec inmp outmp
                       ]
        , tmodelProcs = Map.mapWithKey (\name inst
                                        -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                          in translateGBA $ runIdentity $ 
+                                          in {-translateGBA $ runIdentity $ 
                                              gtlToBuchi (\atm -> let (restr,cond) = translateAtoms
                                                                                     (\v idx -> (name,v,idx))
                                                                                     (\(n,v,is) i -> (n,v,i:is))
@@ -122,8 +170,31 @@ buildTargetModel spec inmp outmp
                                                                                     Nothing -> (Set.empty,Nothing)
                                                                                     Just (p1,p2,_) -> (p1,p2)
                                                                             ],cond)
-                                                        )
-                                             (gtlModelContract mdl)
+                                                        )-}
+                                           baMapAlphabet (\atm -> let (restr,cond) = translateAtoms
+                                                                                     (\v idx -> (name,v,idx))
+                                                                                     (\(n,v,is) i -> (n,v,i:is))
+                                                                                     (Just (name,mdl)
+                                                                                     ) atm
+                                                                      rrestr = completeRestrictions restr (Map.fromList 
+                                                                                                          [ ((name,var,idx),rtp)
+                                                                                                          | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
+                                                                                                            (rtp,idx) <- flattenVar tp []
+                                                                                                          ]) outmp
+                                                                      in ([ ([ (tvar,case Map.lookup tvar inmp of
+                                                                                     Nothing -> error (show (tvar,var,r))
+                                                                                     Just (p,_) -> p
+                                                                                 )
+                                                                               | tvar <- Set.toList tvars
+                                                                               ] ++ (case nvr of
+                                                                                        Nothing -> []
+                                                                                        Just lvl -> [(var,lvl)]),r)
+                                                                            | (var,r) <- Map.toList rrestr,
+                                                                              let (tvars,nvr) = case Map.lookup var outmp of
+                                                                                    Nothing -> (Set.empty,Nothing)
+                                                                                    Just (p1,p2,_) -> (p1,p2)
+                                                                            ],cond)
+                                                         ) $ gtl2ba $ gtlModelContract mdl
                                       )
                        (gtlSpecInstances spec)
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
@@ -203,7 +274,7 @@ allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,
 allPossibleIdx (GTLTuple tps) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
 allPossibleIdx tp = [(tp,[])]
 
-flattenExpr :: (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
+flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
 flattenExpr f idx e = Typed (getType e) $ case getValue e of
   Var v i -> Var (f v idx) i
   Value v -> case idx of
@@ -212,14 +283,14 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
       GTLArrayVal vs -> getValue $ flattenExpr f is (unfix $ vs `genericIndex` i)
       GTLTupleVal vs -> getValue $ flattenExpr f is (unfix $ vs `genericIndex` i)
   BinBoolExpr op l r -> BinBoolExpr op (Fix $ flattenExpr f idx $ unfix l) (Fix $ flattenExpr f idx $ unfix r)
-  BinRelExpr rel l r -> getValue $ foldl1 gtlAnd [ Typed GTLBool (BinRelExpr rel (Fix el) (Fix er))
-                                                 | (el,er) <- zip (unpackExpr f idx (unfix l)) (unpackExpr f idx (unfix r)) ]
+  BinRelExpr rel l r -> getValue $ foldl1 gand [ Typed GTLBool (BinRelExpr rel (Fix el) (Fix er))
+                                               | (el,er) <- zip (unpackExpr f idx (unfix l)) (unpackExpr f idx (unfix r)) ]
   BinIntExpr op l r -> BinIntExpr op (Fix $ flattenExpr f idx $ unfix l) (Fix $ flattenExpr f idx $ unfix r)
   UnBoolExpr op ne -> UnBoolExpr op (Fix $ flattenExpr f idx $ unfix ne)
   IndexExpr e i -> getValue $ flattenExpr f (i:idx) (unfix e)
-  Automaton buchi -> Automaton (buchiMapVars (Fix . flattenExpr f idx . unfix) buchi)
+  Automaton buchi -> Automaton (baMapAlphabet (fmap $ Fix . flattenExpr f idx . unfix) buchi)
 
-unpackExpr :: (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
+unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
   Var v lvl -> case getType e of
     GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl)) | j <- [0..(sz-1)] ]
@@ -238,10 +309,10 @@ unpackExpr f i e = case getValue e of
 translateAtoms :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> [TypedExpr a] -> (Map b (Restriction b),[TypedExpr b])
 translateAtoms f g mmdl
   = foldl (\(restrs,expr) e -> case translateAtom f g mmdl e True [] of
-              Left nrestr -> (foldl (\mp (var,re) -> Map.insertWith plusRestriction var re mp) restrs nrestr,expr)
+              Left nrestr -> (foldl (\mp (var,re) -> Map.insertWith (\x y -> let Just p = plusRestriction x y in p) var re mp) restrs nrestr,expr)
               Right ne -> (restrs,ne++expr)) (Map.empty,[])
 
-translateAtom :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
+translateAtom :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Bool -> [Integer]
                  -> Either [(b,Restriction b)] [TypedExpr b]
 translateAtom f g mmdl expr t idx
   = case getValue expr of
@@ -269,9 +340,9 @@ translateAtom f g mmdl expr t idx
                                         then Right chk
                                         else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
     IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
-    UnBoolExpr Not p -> translateAtom f g mmdl (unfix p) (not t) idx
+    UnBoolExpr GTL.Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
-translateExpr :: (Ord a) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
+translateExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
 translateExpr f g mmdl expr = case getValue expr of
   Var var 0 -> case mmdl of
     Nothing -> Right $ translateCheckExpr f Nothing expr []
@@ -283,7 +354,7 @@ translateExpr f g mmdl expr = case getValue expr of
     Right _ -> Right $ translateCheckExpr f mmdl (unfix e) [i]
   _ -> Right $ translateCheckExpr f mmdl expr []
 
-translateCheckExpr :: (Ord a) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
+translateCheckExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
 translateCheckExpr f mmdl expr idx = case getValue expr of
     Var var lvl -> case mmdl of
       Nothing -> [Typed (getType expr) (Var (f var (reverse idx)) lvl)]

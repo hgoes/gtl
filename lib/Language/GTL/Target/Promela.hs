@@ -35,29 +35,29 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypeArguments = []
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
-                          , proctypeSteps = fmap Pr.toStep $
-                                            [ prIf [[ prAtomic $ (case translateTExprs (snd $ vars st) of
-                                                            Nothing -> []
-                                                            Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
-                                                        (catMaybes [ translateTRestr tvars restr
-                                                                   | (tvars,restr) <- (fst $ vars st) ])++
-                                                        [Pr.StmtGoto ("st_"++show s1++"_"++show s2)]
-                                                      | ((s1,s2),st) <- Map.toList buchi, isStart st
-                                                      ]
-                                                 ]
-                                            ] ++
-                                            [ Pr.StmtLabel ("st_"++show s1++"_"++show s2) $
-                                              prIf [[ prAtomic $ (case translateTExprs (snd $ vars nst) of
-                                                           Nothing -> []
-                                                           Just cond -> [Pr.StmtExpr $ Pr.ExprAny cond])++
-                                                       (catMaybes [ translateTRestr tvars restr
-                                                                  | (tvars,restr) <- (fst $ vars nst) ])++
-                                                       [Pr.StmtGoto ("st_"++show t1++"_"++show t2)]
-                                                     | (t1,t2) <- Set.toList (successors st),
-                                                       let nst = buchi!(t1,t2)
+                          , proctypeSteps = fmap Pr.toStep $ 
+                                            [ prIf [ [prAtomic $ (case translateTExprs cond of
+                                                                     Nothing -> []
+                                                                     Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
+                                                      (catMaybes [ translateTRestr tvars restr
+                                                                 | (tvars,restr) <- outp ])++
+                                                      [Pr.StmtGoto ("st"++show trg)]
                                                      ]
-                                              ]
-                                            | ((s1,s2),st) <- Map.toList buchi
+                                                   | ist <- Set.toList $ baInits buchi,
+                                                     ((outp,cond),trg) <- Set.toList $ (baTransitions buchi)!ist
+                                                   ]
+                                            ] ++
+                                            [ Pr.StmtLabel ("st"++show st) $
+                                              prIf [ [prAtomic $ (case translateTExprs cond of
+                                                                     Nothing -> []
+                                                                     Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
+                                                      (catMaybes [ translateTRestr tvars restr
+                                                                 | (tvars,restr) <- outp ])++
+                                                      [Pr.StmtGoto ("st"++show trg)]
+                                                     ]
+                                                   | ((outp,cond),trg) <- Set.toList trans
+                                                   ]
+                                            | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
                           }
             | (pname,buchi) <- Map.toList $ tmodelProcs tm ]
@@ -91,7 +91,7 @@ translateVerify e = case getValue e of
 
 translateTExprs :: [TypedExpr TargetVar] -> Maybe Pr.AnyExpression
 translateTExprs [] = Nothing
-translateTExprs xs = Just $ translateTExpr $ foldl1 gtlAnd xs
+translateTExprs xs = Just $ translateTExpr $ foldl1 gand xs
 
 translateConstant :: GTLType -> GTLValue r -> Pr.AnyExpression
 translateConstant _ (GTLIntVal x) = Pr.ConstExpr $ Pr.ConstInt x
@@ -236,7 +236,9 @@ buildTGenerator tp upper lower check to
                                                                  GTLBool -> 0
                                                              )
                                  )
-               (prSequence . assign inst var idx lvl)
+               (\x -> case assign inst var idx lvl x of
+                   [stp] -> stp
+                   stps -> prSequence stps)
                rlower]++
                [prDo $ [[Pr.StmtExpr $ Pr.ExprAny $ rupper trg]++
                         (outputTAssignNow to (Pr.BinExpr Pr.BinPlus trg (Pr.ConstExpr $ Pr.ConstInt 1)))

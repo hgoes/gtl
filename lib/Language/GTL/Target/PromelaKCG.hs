@@ -10,6 +10,7 @@ import Language.GTL.Backend
 import Language.GTL.Backend.All
 import Language.GTL.ErrorRefiner
 import Language.GTL.Translation
+import Language.GTL.Buchi
 import Language.GTL.LTL
 
 import qualified Language.Promela.Syntax as Pr
@@ -62,33 +63,30 @@ neverClaim :: Trace -- ^ The trace
               -> Map String (GTLModel String) -- ^ All models
               -> Pr.Module
 neverClaim trace f mdls
-  = let traceAut = traceToBuchi (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
-                                           in varName iface q v l) trace
-        states = Map.toList $ translateGBA $ buchiProduct (ltlToBuchi distributeNot $ gtlToLTL $ gnot f) traceAut
-        showSt ((i,j),k) = show i++ "_"++show j++"_"++show k
-        init = Pr.prIf [ [Pr.StmtGoto $ "st"++showSt i]  | (i,st) <- states, isStart st ]
-        steps = [ Pr.StmtLabel ("st"++showSt i)
-                  (let cexprr = case snd (vars st) of
-                         Nothing -> []
-                         Just e -> [e]
-                       inner = case cexprl ++ cexprr of
-                         [] -> jump
-                         cexprs -> Pr.prSequence
-                                   [Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cexprs
-                                   ,jump]
-                       jump = Pr.prIf
-                              [ [Pr.StmtGoto $ "st"++showSt j]
-                              | j <- Set.toList (successors st)]
-                              
-                       cexprl = [ atomToC (\q v l -> let iface = allCInterface $ gtlModelBackend (mdls!q)
-                                                     in varName iface q v l) ratom
-                                | (atom,en) <- Set.toList $ fst $ vars st,
-                                  let ratom = if en then atom else distributeNot atom ]
-                   in if finalSets st
-                      then Pr.StmtLabel ("accept"++showSt i) inner
-                      else inner)
-                | (i,st) <- states ]
-    in Pr.prNever $ [init]++steps
+  = let cname q v l = let iface = allCInterface $ gtlModelBackend (mdls!q)
+                      in varName iface q v l
+        traceAut = traceToBuchi trace
+        allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname) exprs of
+                                   [] -> Nothing
+                                   cs -> Just $ Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cs
+                               ) $ renameStates $ baProduct (gtl2ba (gnot f)) traceAut
+        
+        init = Pr.prIf [ [ Pr.prAtomic $ (case cond of
+                                             Nothing -> []
+                                             Just p -> [p])++[Pr.StmtGoto ("st"++show trg)] ]
+                       | st <- Set.toList (baInits allAut),
+                         let ts = (baTransitions allAut)!st,
+                         (cond,trg) <- Set.toList ts
+                       ]
+        sts = [ Pr.StmtLabel ("st"++show st) $ (\x -> if Set.member st (baFinals allAut)
+                                                      then Pr.StmtLabel ("accept"++show st) x
+                                                      else x) $
+                Pr.prIf [ [ Pr.prAtomic $ (case cond of
+                                              Nothing -> []
+                                              Just p -> [p]) ++ [Pr.StmtGoto ("st"++show trg)] ]
+                        | (cond,trg) <- Set.toList ts ]
+              | (st,ts) <- Map.toList (baTransitions allAut)]
+    in Pr.prNever $ init:sts
 
 
 -- | Create promela processes for each component in a GTL specification.

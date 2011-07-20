@@ -9,11 +9,9 @@ import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
-import Language.GTL.LTL as LTL
+import Language.GTL.Buchi
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List
-import Control.Monad.Identity
 
 data Scade = Scade deriving (Show)
 
@@ -50,7 +48,7 @@ instance GTLBackend Scade where
                     }
   backendVerify Scade (ScadeData name decls tps) expr 
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (runIdentity $ gtlToBuchi (return . Set.fromList) expr)
+          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba expr)
       in do
         print $ prettyScade [scade]
         return $ Nothing
@@ -184,7 +182,7 @@ buildTest opname ins outs = UserOpDecl
 buchiToScade :: String -- ^ Name of the resulting SCADE node
                 -> Map String TypeExpr -- ^ Input variables
                 -> Map String TypeExpr -- ^ Output variables
-                -> Buchi (Set (TypedExpr String)) -- ^ The buchi automaton
+                -> BA [TypedExpr String] Integer -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
   = UserOpDecl
@@ -211,7 +209,7 @@ buchiToScade name ins outs buchi
     }
 
 -- | The starting state for a contract automaton.
-startState :: Buchi (Set (TypedExpr String)) -> Sc.State
+startState :: BA [TypedExpr String] Integer -> Sc.State
 startState buchi = Sc.State
   { stateInitial = True
   , stateFinal = False
@@ -220,8 +218,10 @@ startState buchi = Sc.State
                         , dataLocals = []
                         , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
                         }
-  , stateUnless = [ stateToTransition i st
-                  | (i,st) <- List.filter (isStart . snd) (Map.toList buchi) ]++
+  , stateUnless = [ stateToTransition cond trg
+                  | i <- Set.toList (baInits buchi),
+                    (cond,trg) <- Set.toList ((baTransitions buchi)!i)
+                  ]++
                   [failTransition]
   , stateUntil = []
   , stateSynchro = Nothing
@@ -248,7 +248,7 @@ failState = Sc.State
   }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-buchiToStates :: Buchi (Set (TypedExpr String)) -> [Sc.State]
+buchiToStates :: BA [TypedExpr String] Integer -> [Sc.State]
 buchiToStates buchi = startState buchi :
                       failState :
                       [ Sc.State
@@ -259,21 +259,21 @@ buchiToStates buchi = startState buchi :
                                              , dataLocals = []
                                              , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
                                              }
-                       , stateUnless = [ stateToTransition to (buchi!to)
-                                       | to <- Set.toList $ successors st ] ++
+                       , stateUnless = [ stateToTransition cond trg
+                                       | (cond,trg) <- Set.toList trans ] ++
                                        [failTransition]
                        , stateUntil = []
                        , stateSynchro = Nothing
                        }
-                     | (num,st) <- Map.toList buchi ]
+                     | (num,trans) <- Map.toList (baTransitions buchi) ]
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: Integer -> BuchiState st (Set (TypedExpr String)) f -> Sc.Transition
-stateToTransition name st
+stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
+stateToTransition cond trg
   = Transition
-    (relsToExpr $ Set.toList (vars st))
+    (relsToExpr cond)
     Nothing
-    (TargetFork Restart ("st"++show name))
+    (TargetFork Restart ("st"++show trg))
 
 exprToScade :: TypedExpr String -> Sc.Expr
 exprToScade expr = case getValue expr of

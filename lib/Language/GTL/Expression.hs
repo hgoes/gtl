@@ -31,7 +31,7 @@ data Term v r = Var v Integer
               | BinIntExpr IntOp r r
               | UnBoolExpr UnBoolOp r
               | IndexExpr r Integer
-              | Automaton (GBuchi Integer r Bool)
+              | Automaton (BA [r] String)
               deriving (Eq,Ord)
 
 type GTLConstant = Fix GTLValue
@@ -61,7 +61,7 @@ instance Functor a => Functor (Typed a) where
                    , getValue = fmap f (getValue t)
                    }
 
-instance (Binary r,Binary v) => Binary (Term v r) where
+instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
   put (Var v l) = put (0::Word8) >> put v >> put l
   put (Value val) = put (1::Word8) >> put val
   put (BinBoolExpr op l r) = put (2::Word8) >> put op >> put l >> put r
@@ -105,8 +105,8 @@ instance (Binary r,Binary v) => Binary (Term v r) where
         aut <- get
         return $ Automaton aut
 
-var :: v -> Integer -> TypedExpr v
-var name lvl = Typed GTLBool (Var name lvl)
+var :: GTLType -> v -> Integer -> TypedExpr v
+var t name lvl = Typed t (Var name lvl)
 
 constant :: ToGTL a => a -> TypedExpr v
 constant x = Typed (gtlTypeOf x) (Value (toGTL x))
@@ -115,9 +115,20 @@ gnot :: TypedExpr v -> TypedExpr v
 gnot expr
   | getType expr == GTLBool = Typed GTLBool (UnBoolExpr Not (Fix expr))
 
-gtlAnd :: TypedExpr v -> TypedExpr v -> TypedExpr v
-gtlAnd x y
+gand :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gand x y
   | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
+
+geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
+geq x y
+  | getType x == getType y = Typed GTLBool (BinRelExpr BinEq (Fix x) (Fix y))
+
+gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gneq x y
+  | getType x == getType y = Typed GTLBool (BinRelExpr BinNEq (Fix x) (Fix y))
+
+enumConst :: [String] -> String -> TypedExpr v
+enumConst tp v = Typed (GTLEnum tp) (Value (GTLEnumVal v))
 
 instance Binary (a r) => Binary (Typed a r) where
   put x = put (getType x) >> put (getValue x)
@@ -126,7 +137,7 @@ instance Binary (a r) => Binary (Typed a r) where
     val <- get
     return (Typed tp val)
 
-instance Binary v => Binary (Fix (Typed (Term v))) where
+instance (Binary v,Ord v) => Binary (Fix (Typed (Term v))) where
   put = put . unfix
   get = fmap Fix get
 
@@ -147,6 +158,12 @@ instance Eq v => Eq (Fix (Typed (Term v))) where
 
 instance Ord v => Ord (Fix (Typed (Term v))) where
   compare e1 e2 = compare (getValue $ unfix e1) (getValue $ unfix e2)
+
+instance Eq v => Eq (Fix (Term v)) where
+  e1 == e2 = (unfix e1) == (unfix e2)
+
+instance Ord v => Ord (Fix (Term v)) where
+  compare e1 e2 = compare (unfix e1) (unfix e2)
 
 instance Eq (Fix GTLValue) where
   e1 == e2 = (unfix e1) == (unfix e2)
@@ -201,7 +218,7 @@ getConstant e = case getValue e of
 typeCheck :: (Ord v,Show v) => Map v GTLType -> Set [String] -> Expr v -> Either String (TypedExpr v)
 typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) >>= return.Fix) (getType . unfix) (show . untyped . unfix) varmp enums
 
-typeCheck' :: (Ord v,Show v)
+typeCheck' :: (Ord v,Show v,Ord r2)
               => (r1 -> Either String r2)
               -> (r2 -> GTLType)
               -> (r2 -> String)
@@ -265,18 +282,21 @@ typeCheck' mu mutp mus varmp enums (IndexExpr p idx) = do
                     else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
     _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
 typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
-  nbuchi <- mapM (\st -> do
-                     nvars <- mu (vars st)
-                     return $ st { vars = nvars }) buchi
-  return $ Typed GTLBool (Automaton nbuchi)
+  ntrans <- mapM (\trans -> do
+                     trans' <- mapM (\(cond,trg) -> do
+                                        ncond <- mapM mu cond
+                                        return (ncond,trg)
+                                    ) (Set.toList trans)
+                     return $ Set.fromList trans') (baTransitions buchi)
+  return $ Typed GTLBool (Automaton $ buchi { baTransitions = ntrans })
 
 untyped :: TypedExpr v -> Expr v
 untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
 
-parseTerm :: (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Expr v)
+parseTerm :: Ord v => (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Expr v)
 parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f ex
 
-parseTerm' :: (ExistsBinding v -> GExpr -> Either String r)
+parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
               -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
 parseTerm' mu f ex (GBin op l r) = do
   rec_l <- mu ex l
@@ -327,33 +347,28 @@ parseTerm' mu f ex (GExists b q n expr) = case q of
     var <- f q n
     parseTerm' mu f (Map.insert b (var,0) ex) expr
 parseTerm' mu f ex (GAutomaton sts) = do
-  (buchi,_,_) <- foldlM (\(cbuchi,ccur,cmp) state -> do
-                            (res,nbuchi,ncur,nmp) <- parseState state Nothing ccur cmp cbuchi
-                            return (nbuchi,ncur,nmp)
-                        ) (Map.empty,0,Map.empty) [ state | state <- sts, stateInitial state ]
-  return $ Automaton buchi
-    where
-      parseState st cond cur mp buchi = case Map.lookup (stateName st,cond) mp of
-        Just res -> return (res,buchi,cur,mp)
-        Nothing -> do
-          let (exprs,nexts) = partitionEithers (stateContent st)
-          let rexprs = case cond of
-                Nothing -> exprs
-                Just jcond -> jcond:exprs
-          (nbuchi,ncur,nmp,succ) <- foldrM (\(nxt,nxt_cond) (cbuchi,ccur,cmp,succ) -> case find (\cst -> (stateName cst) == nxt) sts of
-                                               Nothing -> Left ("Undefined state: "++nxt)
-                                               Just rst -> do
-                                                 (res,nbuchi,ncur,nmp) <- parseState rst nxt_cond ccur cmp cbuchi
-                                                 return (nbuchi,ncur,nmp,Set.insert res succ)
-                                           ) (buchi,cur+1,Map.insert (stateName st,cond) cur mp,Set.empty) nexts
-          varExpr <- case rexprs of
-                [] -> mu ex (GConstBool True)
-                _ -> mu ex (foldl1 (GBin GOpAnd) rexprs)
-          return (cur,Map.insert cur (BuchiState { isStart = (stateInitial st) && isNothing cond
-                                                 , vars = varExpr
-                                                 , finalSets = stateFinal st
-                                                 , successors = succ
-                                                 }) nbuchi,ncur,nmp)
+  stmp <- foldlM (\mp st -> do
+                    let (exprs,nexts) = partitionEithers (stateContent st)
+                    rexpr <- mapM (mu ex) exprs
+                    rnexts <- mapM (\(trg,cond) -> do
+                                       rcond <- case cond of
+                                         Nothing -> return Nothing
+                                         Just cond' -> do
+                                           r <- mu ex cond'
+                                           return $ Just r
+                                       return (rcond,trg)
+                                   ) nexts
+                    return $ Map.insert (stateName st) (stateInitial st,stateFinal st,rexpr,rnexts) mp
+                ) Map.empty sts
+  return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> Set.fromList [ (case cond of
+                                                                                      Nothing -> tcond
+                                                                                      Just t -> t:tcond,trg)
+                                                                                | (cond,trg) <- nxts, 
+                                                                                  let (_,_,tcond,_) = stmp!trg
+                                                                                ]) stmp
+                          , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
+                          , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
+                          }
 parseTerm' mu f ex (GIndex expr ind) = do
   rind <- case ind of
     GConst x -> return x
@@ -406,7 +421,10 @@ getTermVars mu expr = case getValue expr of
   BinIntExpr op l r -> (mu l)++(mu r)
   UnBoolExpr op p -> mu p
   IndexExpr e i -> fmap (\(v,idx,lvl,tp) -> (v,i:idx,lvl,tp)) (mu e)
-  Automaton buchi -> concat $ fmap (\st -> mu (vars st)) (Map.elems buchi)
+  Automaton buchi -> concat [ concat $ fmap mu cond
+                            | trans <- Map.elems (baTransitions buchi), 
+                              (cond,_) <- Set.toList trans
+                            ]
 
 getValueVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,[Integer],Integer,GTLType)]
 getValueVars mu (GTLArrayVal xs) = concat (fmap mu xs)
@@ -414,10 +432,10 @@ getValueVars mu (GTLTupleVal xs) = concat (fmap mu xs)
 getValueVars _ _ = []
 
 -- | Change the type of the variables in an expression.
-mapGTLVars :: (v -> w) -> TypedExpr v -> TypedExpr w
+mapGTLVars :: (Ord v,Ord w) => (v -> w) -> TypedExpr v -> TypedExpr w
 mapGTLVars f expr = Typed (getType expr) (mapTermVars f (Fix . mapGTLVars f . unfix) (getValue expr))
 
-mapTermVars :: (v -> w) -> (r1 -> r2) -> Term v r1 -> Term w r2
+mapTermVars :: (Ord r1,Ord r2) => (v -> w) -> (r1 -> r2) -> Term v r1 -> Term w r2
 mapTermVars f mu (Var name lvl) = Var (f name) lvl
 mapTermVars f mu (Value x) = Value (mapValueVars mu x)
 mapTermVars f mu (BinBoolExpr op l r) = BinBoolExpr op (mu l) (mu r)
@@ -425,7 +443,8 @@ mapTermVars f mu (BinRelExpr rel l r) = BinRelExpr rel (mu l) (mu r)
 mapTermVars f mu (BinIntExpr op l r) = BinIntExpr op (mu l) (mu r)
 mapTermVars f mu (UnBoolExpr op p) = UnBoolExpr op (mu p)
 mapTermVars f mu (IndexExpr e i) = IndexExpr (mu e) i
-mapTermVars f mu (Automaton buchi) = Automaton $ fmap (\st -> st { vars = mu (vars st) }) buchi
+mapTermVars f mu (Automaton buchi)
+  = Automaton $ buchi { baTransitions = fmap (Set.map (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
 
 mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2
 mapValueVars mu (GTLIntVal x) = GTLIntVal x
@@ -594,20 +613,87 @@ constantOp iop x y = Fix $ case unfix x of
   GTLByteVal x' -> let GTLByteVal y' = unfix y in GTLByteVal (iop x' y')
   GTLFloatVal x' -> let GTLFloatVal y' = unfix y in GTLFloatVal (iop x' y')
 
+-- TODO: Use a constraint solver here?
 compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
 compareExpr e1 e2
   = assert (getType e1 == getType e2) $
-    let p1 = toLinearExpr e1
-        p2 = toLinearExpr e2
-    in if p1 == p2
-       then EEQ
-       else (if Map.size p1 == 1 && Map.size p2 == 2
-             then (case Map.lookup Map.empty p1 of
-                      Nothing -> EUNK
-                      Just c1 -> case Map.lookup Map.empty p2 of
-                        Nothing -> EUNK
-                        Just c2 -> case compare c1 c2 of
-                          EQ -> EEQ
-                          GT -> EGT
-                          LT -> ELT)
-             else EUNK)
+    case getType e1 of
+      GTLInt -> lincomp
+      GTLByte -> lincomp
+      GTLFloat -> lincomp
+      GTLBool -> case getValue e2 of
+        UnBoolExpr Not (Fix e2') -> case compareExpr e1 e2' of
+          EEQ -> ENEQ
+          _ -> EUNK
+        _ -> case getValue e1 of
+          Var v1 h1 -> case getValue e2 of
+            Var v2 h2 -> if v1==v2 && h1==h2
+                         then EEQ
+                         else EUNK
+            _ -> EUNK
+          Value c1 -> case getValue e2 of
+            Value c2 -> if c1 == c2
+                        then EEQ
+                        else EUNK
+            _ -> EUNK
+          IndexExpr (Fix ee1) i1 -> case getValue e2 of
+            IndexExpr (Fix ee2) i2 -> case compareExpr ee1 ee2 of
+              EEQ -> if i1==i2
+                     then EEQ
+                     else EUNK
+              _ -> EUNK
+            _ -> EUNK
+          BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
+            BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
+              BinEq -> case op2 of
+                BinEq -> case compareExpr l1 l2 of
+                  EEQ -> compareExpr r1 r2
+                  ENEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    ENEQ -> EUNK
+                    _ -> EUNK
+                  _ -> EUNK
+                BinNEq -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    _ -> ELT
+                  ENEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    _ -> EUNK
+                  _ -> EUNK
+                _ -> EUNK
+              BinNEq -> case op2 of
+                BinNEq -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> EEQ
+                    ENEQ -> if getType l1 == GTLBool
+                            then ENEQ
+                            else EUNK
+                    _ -> EUNK
+                  _ -> EUNK
+                _ -> EUNK
+              _ -> EUNK
+            _ -> EUNK
+          UnBoolExpr Not (Fix p) -> case getValue e2 of
+            UnBoolExpr Not (Fix p') -> case compareExpr p p' of
+              ELT -> EGT
+              EGT -> ELT
+              r -> r
+            _ -> case compareExpr p e2 of
+              EEQ -> ENEQ
+              _ -> EUNK
+      _ -> case getValue e1 of
+        Value c1 -> case getValue e2 of
+          Value c2 -> if c1 == c2
+                      then EEQ
+                      else ENEQ
+          _ -> EUNK
+        _ -> if getValue e1 == getValue e2
+             then EEQ
+             else EUNK
+    where
+      p1 = toLinearExpr e1
+      p2 = toLinearExpr e2
+      lincomp = if p1 == p2
+                then EEQ
+                else EUNK

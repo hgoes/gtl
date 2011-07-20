@@ -254,9 +254,9 @@ parseGTLExpr :: AtomCache -- ^ A cache of already parsed atoms
                 -> TypedExpr (Maybe String,String) -- ^ The atom to parse
                 -> ((Integer,Bool),AtomCache)
 parseGTLExpr cache arg expr = let (idx,isinp,res) = case getValue expr of
-                                    Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant True)
+                                    Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var GTLBool name lvl) (GTL.constant True)
                                     UnBoolExpr GTL.Not nexpr -> case getValue (unfix nexpr) of 
-                                      Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var name lvl) (GTL.constant False)
+                                      Var name lvl -> parseGTLRelation cache arg BinEq (GTL.var GTLBool name lvl) (GTL.constant False)
                                     BinRelExpr rel l r -> parseGTLRelation cache arg rel (unfix l) (unfix r)
                               in ((idx,isinp),Map.insert expr (idx,isinp,res) cache)
 
