@@ -72,8 +72,6 @@ main = do
     putStrLn versionString
     exitSuccess
   let gtl_file = gtlFile opts
-  print $ ccFlags opts
-  print $ ldFlags opts
   when (gtl_file == "") $ do
     ioError $ userError "No GTL file given"
   exists <- doesFileExist gtl_file
