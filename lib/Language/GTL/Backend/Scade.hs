@@ -10,10 +10,8 @@ import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.Buchi
-import Language.GTL.LTL as LTL
 import Data.Map as Map hiding (map)
 import Data.Set as Set hiding (map)
-import Data.List as List
 import Control.Monad.Identity
 
 import System.FilePath

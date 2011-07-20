@@ -54,7 +54,7 @@ data Options = Options
 
 defaultOptions = Options
   { gtlFile = ""
-  , mode = PromelaBuddy
+  , mode = Native
   , traceFile = Nothing
   , outputPath = "."
   , showHelp = False

@@ -9,6 +9,7 @@ import Language.GTL.Expression as G
 import Language.GTL.Buchi
 import Language.UPPAAL.Syntax as U
 import Language.GTL.Target.Common
+import Language.GTL.Restriction
 
 import Data.List (genericLength,genericReplicate,elemIndex)
 import Data.Map as Map
@@ -81,25 +82,25 @@ translateTarget tm
                     let start_trans = [ noPos $ Transition { transId = Nothing
                                                            , transSource = "start"
                                                            , transTarget = "l"++show trg
-                                                           , transLabel = toLabels $ translateRestrictions 0 restr `mappend`
-                                                                          translateConditions conds
+                                                           , transLabel = toLabels $ translateRestrictions 0 (tcOutputs cond) `mappend`
+                                                                          translateConditions (tcAtoms cond)
                                                            , transNails = []
                                                            , transColor = Nothing
                                                            }
                                       | i <- Set.toList (baInits buchi),
                                         let ts = (baTransitions buchi)!i,
-                                        ((restr,conds),trg) <- Set.toList ts
+                                        (cond,trg) <- Set.toList ts
                                       ],
                     let st_trans = [ noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s 
                                                         , transTarget = "l"++show t
-                                                        , transLabel = toLabels $ translateRestrictions 0 restr `mappend`
-                                                                       translateConditions conds
+                                                        , transLabel = toLabels $ translateRestrictions 0 (tcOutputs cond) `mappend`
+                                                                       translateConditions (tcAtoms cond)
                                                         , transNails = []
                                                         , transColor = Nothing
                                                         }
                                    | (s,trans) <- Map.toList (baTransitions buchi),
-                                     ((restr,conds),t) <- Set.toList trans
+                                     (cond,t) <- Set.toList trans
                                    ]
                   ]
 

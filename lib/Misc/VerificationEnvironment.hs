@@ -88,11 +88,10 @@ runVerification opts name pr = do
 -- that have to hold in that transition sequence into a fileType
 -- /name/.gtltrace. That can be read back to do a conditional run.
 parseTraces
-  :: Read s =>
-  Options -- ^ Program options (uses outputPath)
+  :: Options -- ^ Program options (uses outputPath)
   -> String -- ^ Name of the GTL file without extension
   -> [String] -- ^ Generated trace files
-  -> ([(String, s)] -> Trace) -- ^ Function that converts a list of transitions to trace i.e. a list of atoms that have to hold in each transition. /s/ is the transition index.
+  -> ([(String, Integer, Integer)] -> Trace) -- ^ Function that converts a list of transitions to trace i.e. a list of atoms that have to hold in each transition. /s/ is the transition index.
     -> IO()
 parseTraces opts name traceFiles f = do
   currentDir <- getCurrentDirectory
