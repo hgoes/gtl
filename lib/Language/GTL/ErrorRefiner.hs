@@ -69,6 +69,7 @@ atomToC f expr = case getValue expr of
   BinIntExpr op l r -> "("++atomToC f (unfix l)++intOpToC op++atomToC f (unfix r)++")"
   UnBoolExpr GTL.Not p -> "!"++atomToC f (unfix p)
 
+-- | Convert a GTL value to a C value
 valueToC :: GTLType -> GTLValue a -> String      
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x

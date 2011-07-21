@@ -22,26 +22,33 @@ import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
 import Control.Monad.Error ()
 import Control.Exception
 
+-- | A fixpoint data structure.
+--   Allows the construction of infinite data types from finite constructors.
 data Fix f = Fix { unfix :: f (Fix f) }
 
-data Term v r = Var v Integer
-              | Value (GTLValue r)
-              | BinBoolExpr BoolOp r r
-              | BinRelExpr Relation r r
-              | BinIntExpr IntOp r r
-              | UnBoolExpr UnBoolOp r
-              | IndexExpr r Integer
-              | Automaton (BA [r] String)
+-- | Represents a GTL term without recursion, which can be added by applying the 'Fix' constructor.
+data Term v r = Var v Integer -- ^ A variable with a name and a history level
+              | Value (GTLValue r) -- ^ A value which may contain more terms
+              | BinBoolExpr BoolOp r r -- ^ A logical binary expression
+              | BinRelExpr Relation r r -- ^ A relation between two terms
+              | BinIntExpr IntOp r r -- ^ An arithmetic expression
+              | UnBoolExpr UnBoolOp r -- ^ A unary logical expression
+              | IndexExpr r Integer -- ^ Use an index to access a subcomponent of an expression
+              | Automaton (BA [r] String) -- ^ A automaton specifying a temporal logical condition
               deriving (Eq,Ord)
 
+-- | A constant is a value applied to the 'Fix' constructor
 type GTLConstant = Fix GTLValue
 
+-- | An expression is a recursive term
 type Expr v = Term v (Fix (Term v))
 
+-- | Used to supply type information to expressions
 data Typed a r = Typed { getType :: GTLType
                        , getValue :: a r
                        } deriving (Eq,Ord)
 
+-- | A typed expression is a recursive term with type informations
 type TypedExpr v = Typed (Term v) (Fix (Typed (Term v)))
 
 instance Show (Fix GTLValue) where
@@ -105,28 +112,35 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
         aut <- get
         return $ Automaton aut
 
+-- | Construct a variable of a given type
 var :: GTLType -> v -> Integer -> TypedExpr v
 var t name lvl = Typed t (Var name lvl)
 
+-- | Create a GTL value from a haskell constant
 constant :: ToGTL a => a -> TypedExpr v
 constant x = Typed (gtlTypeOf x) (Value (toGTL x))
 
+-- | Negate a given expression
 gnot :: TypedExpr v -> TypedExpr v
 gnot expr
   | getType expr == GTLBool = Typed GTLBool (UnBoolExpr Not (Fix expr))
 
+-- | Create the logical conjunction of two expressions
 gand :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gand x y
   | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
 
+-- | Create an equality relation between two expressions
 geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 geq x y
   | getType x == getType y = Typed GTLBool (BinRelExpr BinEq (Fix x) (Fix y))
 
+-- | Create an unequality relation between two expressions
 gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gneq x y
   | getType x == getType y = Typed GTLBool (BinRelExpr BinNEq (Fix x) (Fix y))
 
+-- | Create a enumeration value for a given enumeration type
 enumConst :: [String] -> String -> TypedExpr v
 enumConst tp v = Typed (GTLEnum tp) (Value (GTLEnumVal v))
 
@@ -171,6 +185,7 @@ instance Eq (Fix GTLValue) where
 instance Ord (Fix GTLValue) where
   compare e1 e2 = compare (unfix e1) (unfix e2)
 
+-- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
 showTerm f (Var name lvl) = show name ++ (if lvl==0
                                           then ""
@@ -200,14 +215,26 @@ showTerm f (UnBoolExpr op p) = "(" ++ (case op of
                                           Next -> "next ") ++ (f p) ++ ")"
 showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
 
-enforceType :: String -> GTLType -> GTLType -> Either String ()
+-- | Helper function for type checking: If the two supplied types are the same,
+--   return 'Right' (), otherwise generate an error using the supplied identifier.
+enforceType :: String -- ^ A string representation of the type checked entity
+               -> GTLType -- ^ The actual type of the entity
+               -> GTLType -- ^ The expected type
+               -> Either String ()
 enforceType expr ac tp = if ac == tp
                          then Right ()
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
-makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String v) -> Map v GTLType -> Set [String] -> GExpr -> Either String (TypedExpr v)
+-- | Convert a untyped, generalized expression into a typed expression by performing type checking
+makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String v) -- ^ A function to create variable names from qualified and unqualified variables
+                 -> Map v GTLType -- ^ A type mapping for variables
+                 -> Set [String] -- ^ All possible enum types
+                 -> GExpr -- ^ The generalized expression to type check
+                 -> Either String (TypedExpr v)
 makeTypedExpr f varmp enums expr = parseTerm f Map.empty expr >>= typeCheck varmp enums
 
+-- | Convert an expression into a constant, if it is one.
+--   If not, return 'Nothing'.
 getConstant :: TypedExpr v -> Maybe GTLConstant
 getConstant e = case getValue e of
   Value p -> do
@@ -215,167 +242,177 @@ getConstant e = case getValue e of
     return $ Fix np
   _ -> Nothing
 
-typeCheck :: (Ord v,Show v) => Map v GTLType -> Set [String] -> Expr v -> Either String (TypedExpr v)
+-- | Type-check an untyped expression.
+typeCheck :: (Ord v,Show v) => Map v GTLType -- ^ A type mapping for all variables
+             -> Set [String] -- ^ A set of all allowed enum types
+             -> Expr v -- ^ The untyped expression
+             -> Either String (TypedExpr v)
 typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) >>= return.Fix) (getType . unfix) (show . untyped . unfix) varmp enums
+  where
+    typeCheck' :: (Ord v,Show v,Ord r2)
+                  => (r1 -> Either String r2)
+                  -> (r2 -> GTLType)
+                  -> (r2 -> String)
+                  -> Map v GTLType -> Set [String] -> Term v r1 -> Either String (Typed (Term v) r2)
+    typeCheck' mu mutp mus varmp enums (Var x lvl) = case Map.lookup x varmp of
+      Nothing -> Left $ "Unknown variable "++show x
+      Just tp -> return $ Typed tp (Var x lvl)
+    typeCheck' mu mutp mus varmp enums (Value val) = case val of
+      GTLIntVal i -> return $ Typed GTLInt (Value $ GTLIntVal i)
+      GTLByteVal i -> return $ Typed GTLByte (Value $ GTLByteVal i)
+      GTLBoolVal i -> return $ Typed GTLBool (Value $ GTLBoolVal i)
+      GTLFloatVal i -> return $ Typed GTLFloat (Value $ GTLFloatVal i)
+      GTLEnumVal x -> case find (elem x) enums of
+        Nothing -> Left $ "Unknown enum value "++show x
+        Just e -> return $ Typed (GTLEnum e) (Value $ GTLEnumVal x)
+      GTLArrayVal vals -> do
+        res <- mapM mu vals
+        case res of
+          [] -> Left "Empty arrays not allowed"
+          (x:xs) -> mapM_ (\tp -> if (mutp tp)==(mutp x)
+                                  then return ()
+                                  else Left "Not all array elements have the same type") xs
+        return $ Typed (GTLArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
+      GTLTupleVal vals -> do
+        tps <- mapM mu vals
+        return $ Typed (GTLTuple (fmap mutp tps)) (Value $ GTLTupleVal tps)
+    typeCheck' mu mutp mus varmp enums (BinBoolExpr op l r) = do
+      ll <- mu l
+      rr <- mu r
+      enforceType (mus ll) (mutp ll) GTLBool
+      enforceType (mus rr) (mutp rr) GTLBool
+      return $ Typed GTLBool (BinBoolExpr op ll rr)
+    typeCheck' mu mutp mus varmp enums (BinRelExpr rel l r) = do
+      ll <- mu l
+      rr <- mu r
+      if rel==BinEq || rel==BinNEq
+        then (do
+                 enforceType (mus rr) (mutp rr) (mutp ll))
+        else (do
+                 enforceType (mus ll) (mutp ll) GTLInt
+                 enforceType (mus rr) (mutp rr) GTLInt)
+      return $ Typed GTLBool (BinRelExpr rel ll rr)
+    typeCheck' mu mutp mus varmp enums (BinIntExpr op l r) = do
+      ll <- mu l
+      rr <- mu r
+      enforceType (mus ll) (mutp ll) GTLInt
+      enforceType (mus rr) (mutp rr) GTLInt
+      return $ Typed GTLInt (BinIntExpr op ll rr)
+    typeCheck' mu mutp mus varmp enums (UnBoolExpr op p) = do
+      pp <- mu p
+      enforceType (mus pp) (mutp pp) GTLBool
+      return $ Typed GTLBool (UnBoolExpr op pp)
+    typeCheck' mu mutp mus varmp enums (IndexExpr p idx) = do
+      pp <- mu p
+      case mutp pp of
+        GTLArray sz tp -> if idx < sz
+                          then return $ Typed tp (IndexExpr pp idx)
+                          else Left $ "Index "++show idx++" out of bounds "++show sz
+        GTLTuple tps -> if idx < genericLength tps
+                        then return $ Typed (tps `genericIndex` idx) (IndexExpr pp idx)
+                        else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
+        _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
+    typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
+      ntrans <- mapM (\trans -> do
+                         trans' <- mapM (\(cond,trg) -> do
+                                            ncond <- mapM mu cond
+                                            return (ncond,trg)
+                                        ) (Set.toList trans)
+                         return $ Set.fromList trans') (baTransitions buchi)
+      return $ Typed GTLBool (Automaton $ buchi { baTransitions = ntrans })
 
-typeCheck' :: (Ord v,Show v,Ord r2)
-              => (r1 -> Either String r2)
-              -> (r2 -> GTLType)
-              -> (r2 -> String)
-              -> Map v GTLType -> Set [String] -> Term v r1 -> Either String (Typed (Term v) r2)
-typeCheck' mu mutp mus varmp enums (Var x lvl) = case Map.lookup x varmp of
-  Nothing -> Left $ "Unknown variable "++show x
-  Just tp -> return $ Typed tp (Var x lvl)
-typeCheck' mu mutp mus varmp enums (Value val) = case val of
-  GTLIntVal i -> return $ Typed GTLInt (Value $ GTLIntVal i)
-  GTLByteVal i -> return $ Typed GTLByte (Value $ GTLByteVal i)
-  GTLBoolVal i -> return $ Typed GTLBool (Value $ GTLBoolVal i)
-  GTLFloatVal i -> return $ Typed GTLFloat (Value $ GTLFloatVal i)
-  GTLEnumVal x -> case find (elem x) enums of
-    Nothing -> Left $ "Unknown enum value "++show x
-    Just e -> return $ Typed (GTLEnum e) (Value $ GTLEnumVal x)
-  GTLArrayVal vals -> do
-    res <- mapM mu vals
-    case res of
-      [] -> Left "Empty arrays not allowed"
-      (x:xs) -> mapM_ (\tp -> if (mutp tp)==(mutp x)
-                              then return ()
-                              else Left "Not all array elements have the same type") xs
-    return $ Typed (GTLArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
-  GTLTupleVal vals -> do
-    tps <- mapM mu vals
-    return $ Typed (GTLTuple (fmap mutp tps)) (Value $ GTLTupleVal tps)
-typeCheck' mu mutp mus varmp enums (BinBoolExpr op l r) = do
-  ll <- mu l
-  rr <- mu r
-  enforceType (mus ll) (mutp ll) GTLBool
-  enforceType (mus rr) (mutp rr) GTLBool
-  return $ Typed GTLBool (BinBoolExpr op ll rr)
-typeCheck' mu mutp mus varmp enums (BinRelExpr rel l r) = do
-  ll <- mu l
-  rr <- mu r
-  if rel==BinEq || rel==BinNEq
-    then (do
-             enforceType (mus rr) (mutp rr) (mutp ll))
-    else (do
-             enforceType (mus ll) (mutp ll) GTLInt
-             enforceType (mus rr) (mutp rr) GTLInt)
-  return $ Typed GTLBool (BinRelExpr rel ll rr)
-typeCheck' mu mutp mus varmp enums (BinIntExpr op l r) = do
-  ll <- mu l
-  rr <- mu r
-  enforceType (mus ll) (mutp ll) GTLInt
-  enforceType (mus rr) (mutp rr) GTLInt
-  return $ Typed GTLInt (BinIntExpr op ll rr)
-typeCheck' mu mutp mus varmp enums (UnBoolExpr op p) = do
-  pp <- mu p
-  enforceType (mus pp) (mutp pp) GTLBool
-  return $ Typed GTLBool (UnBoolExpr op pp)
-typeCheck' mu mutp mus varmp enums (IndexExpr p idx) = do
-  pp <- mu p
-  case mutp pp of
-    GTLArray sz tp -> if idx < sz
-                      then return $ Typed tp (IndexExpr pp idx)
-                      else Left $ "Index "++show idx++" out of bounds "++show sz
-    GTLTuple tps -> if idx < genericLength tps
-                    then return $ Typed (tps `genericIndex` idx) (IndexExpr pp idx)
-                    else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
-    _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
-typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
-  ntrans <- mapM (\trans -> do
-                     trans' <- mapM (\(cond,trg) -> do
-                                        ncond <- mapM mu cond
-                                        return (ncond,trg)
-                                    ) (Set.toList trans)
-                     return $ Set.fromList trans') (baTransitions buchi)
-  return $ Typed GTLBool (Automaton $ buchi { baTransitions = ntrans })
-
+-- | Discard type information for an expression
 untyped :: TypedExpr v -> Expr v
 untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
 
-parseTerm :: Ord v => (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Expr v)
+-- | Convert a generalized expression into a regular one.
+parseTerm :: Ord v => (Maybe String -> String -> Either String v) -- ^ A function to create variable names from qualified or unqualified variables
+             -> ExistsBinding v -- ^ All existentially bound variables
+             -> GExpr -- ^ The generalized expression
+             -> Either String (Expr v)
 parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f ex
+  where
+    parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
+                  -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
+    parseTerm' mu f ex (GBin op l r) = do
+      rec_l <- mu ex l
+      rec_r <- mu ex r
+      case toBoolOp op of
+        Just rop -> return $ BinBoolExpr rop rec_l rec_r
+        Nothing -> case toRelOp op of
+          Just rop -> return $ BinRelExpr rop rec_l rec_r
+          Nothing -> case toIntOp op of
+            Just rop -> return $ BinIntExpr rop rec_l rec_r
+            Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
+    parseTerm' mu f ex (GUn op p) = do
+      rec <- mu (case op of
+                    GOpNext -> fmap (\(v,lvl) -> (v,lvl+1)) ex
+                    _ -> ex
+                ) p
+      return $ UnBoolExpr (case op of
+                              GOpAlways -> Always
+                              GOpNext -> Next
+                              GOpNot -> Not
+                              GOpFinally t -> Finally t
+                          ) rec
+    parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
+    parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
+    parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
+    parseTerm' mu f ex (GTuple args) = do
+      res <- mapM (mu ex) args
+      return $ Value (GTLTupleVal res)
+    parseTerm' mu f ex (GArray args) = do
+      res <- mapM (mu ex) args
+      return $ Value (GTLArrayVal res)
+    parseTerm' mu f ex (GVar q n) = case q of
+      Nothing -> case Map.lookup n ex of
+        Nothing -> do
+          var <- f q n
+          return $ Var var 0
+        Just (r,lvl) -> return $ Var r lvl
+      Just _ -> do
+        var <- f q n
+        return $ Var var 0
+    parseTerm' mu f ex (GExists b q n expr) = case q of
+      Nothing -> case Map.lookup n ex of
+        Nothing -> do
+          var <- f q n
+          parseTerm' mu f (Map.insert b (var,0) ex) expr
+        Just (v,lvl) -> parseTerm' mu f (Map.insert b (v,lvl) ex) expr
+      Just _ -> do
+        var <- f q n
+        parseTerm' mu f (Map.insert b (var,0) ex) expr
+    parseTerm' mu f ex (GAutomaton sts) = do
+      stmp <- foldlM (\mp st -> do
+                         let (exprs,nexts) = partitionEithers (stateContent st)
+                         rexpr <- mapM (mu ex) exprs
+                         rnexts <- mapM (\(trg,cond) -> do
+                                            rcond <- case cond of
+                                              Nothing -> return Nothing
+                                              Just cond' -> do
+                                                r <- mu ex cond'
+                                                return $ Just r
+                                            return (rcond,trg)
+                                        ) nexts
+                         return $ Map.insert (stateName st) (stateInitial st,stateFinal st,rexpr,rnexts) mp
+                     ) Map.empty sts
+      return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> Set.fromList [ (case cond of
+                                                                                          Nothing -> tcond
+                                                                                          Just t -> t:tcond,trg)
+                                                                                    | (cond,trg) <- nxts, 
+                                                                                      let (_,_,tcond,_) = stmp!trg
+                                                                                    ]) stmp
+                              , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
+                              , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
+                              }
+    parseTerm' mu f ex (GIndex expr ind) = do
+      rind <- case ind of
+        GConst x -> return x
+        _ -> Left $ "Index must be an integer"
+      rexpr <- mu ex expr
+      return $ IndexExpr rexpr (fromIntegral rind)
 
-parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
-              -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
-parseTerm' mu f ex (GBin op l r) = do
-  rec_l <- mu ex l
-  rec_r <- mu ex r
-  case toBoolOp op of
-    Just rop -> return $ BinBoolExpr rop rec_l rec_r
-    Nothing -> case toRelOp op of
-      Just rop -> return $ BinRelExpr rop rec_l rec_r
-      Nothing -> case toIntOp op of
-        Just rop -> return $ BinIntExpr rop rec_l rec_r
-        Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
-parseTerm' mu f ex (GUn op p) = do
-  rec <- mu (case op of
-                GOpNext -> fmap (\(v,lvl) -> (v,lvl+1)) ex
-                _ -> ex
-            ) p
-  return $ UnBoolExpr (case op of
-                          GOpAlways -> Always
-                          GOpNext -> Next
-                          GOpNot -> Not
-                          GOpFinally t -> Finally t
-                      ) rec
-parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
-parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
-parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
-parseTerm' mu f ex (GTuple args) = do
-  res <- mapM (mu ex) args
-  return $ Value (GTLTupleVal res)
-parseTerm' mu f ex (GArray args) = do
-  res <- mapM (mu ex) args
-  return $ Value (GTLArrayVal res)
-parseTerm' mu f ex (GVar q n) = case q of
-  Nothing -> case Map.lookup n ex of
-    Nothing -> do
-      var <- f q n
-      return $ Var var 0
-    Just (r,lvl) -> return $ Var r lvl
-  Just _ -> do
-    var <- f q n
-    return $ Var var 0
-parseTerm' mu f ex (GExists b q n expr) = case q of
-  Nothing -> case Map.lookup n ex of
-    Nothing -> do
-      var <- f q n
-      parseTerm' mu f (Map.insert b (var,0) ex) expr
-    Just (v,lvl) -> parseTerm' mu f (Map.insert b (v,lvl) ex) expr
-  Just _ -> do
-    var <- f q n
-    parseTerm' mu f (Map.insert b (var,0) ex) expr
-parseTerm' mu f ex (GAutomaton sts) = do
-  stmp <- foldlM (\mp st -> do
-                    let (exprs,nexts) = partitionEithers (stateContent st)
-                    rexpr <- mapM (mu ex) exprs
-                    rnexts <- mapM (\(trg,cond) -> do
-                                       rcond <- case cond of
-                                         Nothing -> return Nothing
-                                         Just cond' -> do
-                                           r <- mu ex cond'
-                                           return $ Just r
-                                       return (rcond,trg)
-                                   ) nexts
-                    return $ Map.insert (stateName st) (stateInitial st,stateFinal st,rexpr,rnexts) mp
-                ) Map.empty sts
-  return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> Set.fromList [ (case cond of
-                                                                                      Nothing -> tcond
-                                                                                      Just t -> t:tcond,trg)
-                                                                                | (cond,trg) <- nxts, 
-                                                                                  let (_,_,tcond,_) = stmp!trg
-                                                                                ]) stmp
-                          , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
-                          , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
-                          }
-parseTerm' mu f ex (GIndex expr ind) = do
-  rind <- case ind of
-    GConst x -> return x
-    _ -> Left $ "Index must be an integer"
-  rexpr <- mu ex expr
-  return $ IndexExpr rexpr (fromIntegral rind)
-
+-- | Distribute a negation as deep as possible into an expression until it only ever occurs in front of variables.
 distributeNot :: TypedExpr v -> TypedExpr v
 distributeNot expr
   | getType expr == GTLBool = case getValue expr of
@@ -394,6 +431,7 @@ distributeNot expr
     IndexExpr e i -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     Automaton buchi -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
 
+-- | If negations occur in the given expression, push them as deep into the expression as possible.
 pushNot :: TypedExpr v -> TypedExpr v
 pushNot expr
   | getType expr == GTLBool = case getValue expr of
@@ -412,6 +450,7 @@ maximumHistory exprs = foldl (\mp (n,_,lvl,_) -> Map.insertWith max n lvl mp) Ma
 getVars :: TypedExpr v -> [(v,[Integer],Integer,GTLType)]
 getVars x = getTermVars (getVars . unfix) x
 
+-- | Extract all variables used in the given term.
 getTermVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,[Integer],Integer,GTLType)]
 getTermVars mu expr = case getValue expr of
   Var n lvl -> [(n,[],lvl,getType expr)]
@@ -426,6 +465,7 @@ getTermVars mu expr = case getValue expr of
                               (cond,_) <- Set.toList trans
                             ]
 
+-- | Get all variables used in a GTL value.
 getValueVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,[Integer],Integer,GTLType)]
 getValueVars mu (GTLArrayVal xs) = concat (fmap mu xs)
 getValueVars mu (GTLTupleVal xs) = concat (fmap mu xs)
@@ -435,6 +475,8 @@ getValueVars _ _ = []
 mapGTLVars :: (Ord v,Ord w) => (v -> w) -> TypedExpr v -> TypedExpr w
 mapGTLVars f expr = Typed (getType expr) (mapTermVars f (Fix . mapGTLVars f . unfix) (getValue expr))
 
+
+-- | Change the type of the variables used in a term
 mapTermVars :: (Ord r1,Ord r2) => (v -> w) -> (r1 -> r2) -> Term v r1 -> Term w r2
 mapTermVars f mu (Var name lvl) = Var (f name) lvl
 mapTermVars f mu (Value x) = Value (mapValueVars mu x)
@@ -446,6 +488,7 @@ mapTermVars f mu (IndexExpr e i) = IndexExpr (mu e) i
 mapTermVars f mu (Automaton buchi)
   = Automaton $ buchi { baTransitions = fmap (Set.map (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
 
+-- | Change the type of the variables used in a value
 mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2
 mapValueVars mu (GTLIntVal x) = GTLIntVal x
 mapValueVars mu (GTLByteVal x) = GTLByteVal x
@@ -463,6 +506,7 @@ data BoolOp = And     -- ^ &#8896;
             | UntilOp
             deriving (Show,Eq,Ord,Enum)
 
+-- | Unary boolean operators with the traditional semantics.
 data UnBoolOp = Not
               | Always
               | Next
@@ -581,13 +625,15 @@ relTurn rel = case rel of
   BinEq -> BinEq
   BinNEq -> BinNEq
 
-data ExprOrdering = EEQ
-                  | ENEQ
-                  | EGT
-                  | ELT
-                  | EUNK
+-- | Represents the relations in which two expressions can stand
+data ExprOrdering = EEQ -- ^ Both expressions define the same value space
+                  | ENEQ -- ^ The expressions define non-overlapping value spaces
+                  | EGT -- ^ The value space of the second expression is contained by the first
+                  | ELT -- ^ The value space of the first expression is contained by the second
+                  | EUNK -- ^ The expressions have overlapping value spaces or the relation isn't known
                   deriving (Show,Eq,Ord)
 
+-- | Convert a typed expression to a linear combination of variables.
 toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer) Integer) GTLConstant
 toLinearExpr e = case getValue e of
   Var v h -> Map.singleton (Map.singleton (v,h) 1) one
@@ -606,6 +652,7 @@ toLinearExpr e = case getValue e of
       GTLByte -> GTLByteVal 1
       GTLFloat -> GTLFloatVal 1
 
+-- | Apply an operation to a GTL value.
 constantOp :: (forall a. Num a => a -> a -> a)
               -> GTLConstant -> GTLConstant -> GTLConstant
 constantOp iop x y = Fix $ case unfix x of
@@ -614,6 +661,7 @@ constantOp iop x y = Fix $ case unfix x of
   GTLFloatVal x' -> let GTLFloatVal y' = unfix y in GTLFloatVal (iop x' y')
 
 -- TODO: Use a constraint solver here?
+-- | Compare the value spaces of two expressions
 compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
 compareExpr e1 e2
   = assert (getType e1 == getType e2) $

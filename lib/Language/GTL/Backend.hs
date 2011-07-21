@@ -11,6 +11,7 @@ import Prelude hiding (mapM)
 
 import Misc.ProgramOptions as Opts
 
+-- | Represents the input and output variables of a model and associates types with them.
 type ModelInterface = (Map String GTLType,Map String GTLType)
 
 -- | A GTLBackend is a synchronized formalism that can be used to specify models and perform verification.

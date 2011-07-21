@@ -1,17 +1,4 @@
------------------------------------------------------------------------------
---
--- Module      :  ProgramOptions
--- Copyright   :
--- License     :  AllRightsReserved
---
--- Maintainer  :
--- Stability   :
--- Portability :
---
--- |
---
------------------------------------------------------------------------------
-
+{-| Used for the parsing of program options of the GTL executable. -}
 module Misc.ProgramOptions (
   TranslationMode(..),
   Options(..),
@@ -28,27 +15,29 @@ import System.Directory (findExecutable)
 import System.FilePath
 import Data.Graph.Inductive.Query.Monad (mapSnd)
 
+-- | Provides the operation mode for the GTL executable
 data TranslationMode
-     = NativeC
-     | Local
-     | PromelaBuddy
+     = NativeC -- ^ Generate a promela file which includes the generated C-functions of the synchronous components
+     | Local -- ^ Check the validity of the specified contracts using backend-specific verifications
+     | PromelaBuddy -- ^ Use a BDD abstraction to verify the GALS model
 --      | Tikz
-     | Pretty
-     | Native
-     | UPPAAL
+     | Pretty -- ^ Pretty print the resulting GALS model
+     | Native -- ^ Translate the system to promela using the contracts as specifications for the component behaviour
+     | UPPAAL -- ^ Generate a UPPAAL model to check the GALS model
      deriving (Show,Eq)
 
+-- | Options that the user can pass to the GTL executable
 data Options = Options
-               { gtlFile :: FilePath
-               , mode :: TranslationMode
-               , traceFile :: Maybe FilePath
-               , outputPath :: String
-               , showHelp :: Bool
-               , showVersion :: Bool
-               , ccBinary :: String
-               , ccFlags :: [String]
-               , ldFlags :: [String]
-               , scadeRoot :: Maybe FilePath
+               { gtlFile :: FilePath -- ^ The file which contains the GTL specification
+               , mode :: TranslationMode -- ^ The operation mode
+               , traceFile :: Maybe FilePath -- ^ A generated trace-file to be used in the verification
+               , outputPath :: String -- ^ Where to store generated files
+               , showHelp :: Bool -- ^ Display the help information to the user?
+               , showVersion :: Bool -- ^ Show the version of the executable to the user?
+               , ccBinary :: String -- ^ Location of the C-compiler
+               , ccFlags :: [String] -- ^ Flags to pass to the C-compiler
+               , ldFlags :: [String] -- ^ Flags to pass to the linker
+               , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
                }
                deriving Show
 
@@ -108,8 +97,11 @@ header = unlines $ [
     , " All environment variables may be passed in the form <Variable>=<Value> as option."
   ]
 
+-- | Information on how to use the executable.
+usage :: String
 usage = usageInfo header options
 
+-- | Returns the user-supplied options by parsing the environment.
 getOptions :: IO Options
 getOptions = do
   args <- getArgs

@@ -1,5 +1,13 @@
 {-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor #-}
-module Language.GTL.Types where
+{-| Realizes the type-system of the GTL. Provides data structures for types
+    and their values, as well as type-checking helper functions. -}
+module Language.GTL.Types
+       (GTLType(..),
+        GTLValue(..),
+        ToGTL(..),
+        resolveIndices,
+        isInstanceOf,
+        showGTLValue) where
 
 import Text.Read hiding (get)
 import Data.Binary
@@ -8,15 +16,19 @@ import Data.Foldable (Foldable)
 import Data.Traversable
 import Control.Monad.Error ()
 
-data GTLType = GTLInt
-             | GTLByte
-             | GTLBool
-             | GTLFloat
-             | GTLEnum [String]
-             | GTLArray Integer GTLType
-             | GTLTuple [GTLType]
+-- | All types that can occur in a GTL specification
+data GTLType = GTLInt -- ^ A 64bit unsigned integer
+             | GTLByte -- ^ A 8bit unsigned integer
+             | GTLBool -- ^ Either true or false
+             | GTLFloat -- ^ 64bit IEEE double
+             | GTLEnum [String] -- ^ An enumeration type with a list of possible values
+             | GTLArray Integer GTLType -- ^ A fixed-size array of a given type
+             | GTLTuple [GTLType] -- ^ A tuple containing a number of types
              deriving (Eq,Ord)
 
+-- | Represents the corresponding values to the 'GTLType'.
+--   The parameter `r` is used to specify what values are
+--   allowed inside arrays and tuples.
 data GTLValue r = GTLIntVal Integer
                 | GTLByteVal Word8
                 | GTLBoolVal Bool
@@ -26,8 +38,11 @@ data GTLValue r = GTLIntVal Integer
                 | GTLTupleVal [r]
                 deriving (Eq,Ord,Foldable,Traversable)
 
+-- | A helper class to convert haskell values to GTL values and types.
 class ToGTL t where
+  -- | Converts a haskell value to a GTL value
   toGTL :: t -> GTLValue a
+  -- | Gets the GTL type of a haskell value
   gtlTypeOf :: t -> GTLType
 
 instance ToGTL Integer where
@@ -55,6 +70,10 @@ instance Functor GTLValue where
   fmap f (GTLArrayVal i) = GTLArrayVal (fmap f i)
   fmap f (GTLTupleVal i) = GTLTupleVal (fmap f i)
 
+-- | Given a list of indices, resolve the resulting type.
+--   For example, if the type is a tuple of (int,float,int) and the indices are
+--   [1], the result would be float.
+--   Fails if the type isn't indexable.
 resolveIndices :: GTLType -> [Integer] -> Either String GTLType
 resolveIndices tp [] = return tp
 resolveIndices (GTLArray sz tp) (x:xs) = if x < sz
@@ -65,6 +84,8 @@ resolveIndices (GTLTuple tps) (x:xs) = if x < (genericLength tps)
                                        else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
 resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
 
+-- | Given a type, a function to extract type information from sub-values and a
+--   value, this function checks if the value is in the domain of the given type.
 isInstanceOf :: GTLType -> (r -> GTLType) -> GTLValue r -> Bool
 isInstanceOf GTLInt _ (GTLIntVal _) = True
 isInstanceOf GTLByte _ (GTLByteVal _) = True
@@ -98,6 +119,7 @@ instance Show GTLType where
                                intersperseS (showString ", ") (fmap (showsPrec 0) tps) .
                                showChar ')'
 
+-- | Render a given GTL value by providing a recursive rendering function and a precedence value.
 showGTLValue :: (r -> String) -> Int -> GTLValue r -> ShowS
 showGTLValue _ p (GTLIntVal v) = showsPrec p v
 showGTLValue _ p (GTLByteVal v) = showsPrec p v

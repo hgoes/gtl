@@ -18,6 +18,8 @@ data AllBackend = AllBackend
                   , allVerifyLocal :: TypedExpr String -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
+-- | Try to initialize a given backend with a name and arguments.
+--   If it works, it'll return Just with the 'AllBackend' representation.
 tryInit :: GTLBackend b => b -> String -> [String] -> IO (Maybe AllBackend)
 tryInit be name args
   | backendName be == name = do
@@ -29,6 +31,8 @@ tryInit be name args
       }
   | otherwise = return Nothing
 
+-- | Returns the first result that is not 'Nothing' from a list of functions
+--   by applying the arguments to them.
 firstM :: Monad m => [x -> y -> m (Maybe a)] -> x -> y -> m (Maybe a)
 firstM (x:xs) p q = do
   r <- x p q
