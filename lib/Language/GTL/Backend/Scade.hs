@@ -1,5 +1,9 @@
 {-# LANGUAGE TypeFamilies,GADTs #-}
-module Language.GTL.Backend.Scade where
+{-| SCADE is a synchronous specification language for software-components.
+    It provides a code-generator and a verification tool. -}
+module Language.GTL.Backend.Scade 
+       (Scade(..))
+       where
 
 import Language.Scade.Lexer (alexScanTokens)
 import Language.Scade.Parser (scade)
@@ -25,6 +29,7 @@ import Text.XML.HXT.DOM.TypeDefs ()
 
 import Misc.ProgramOptions
 
+-- | The SCADE backend
 data Scade = Scade deriving (Show)
 
 instance GTLBackend Scade where

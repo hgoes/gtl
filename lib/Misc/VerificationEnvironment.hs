@@ -1,17 +1,4 @@
------------------------------------------------------------------------------
---
--- Module      :  Misc.VerificationEnvironment
--- Copyright   :
--- License     :  AllRightsReserved
---
--- Maintainer  :
--- Stability   :
--- Portability :
---
--- |
---
------------------------------------------------------------------------------
-
+{-| Provides functions to invoke SPIN and parse the results. -}
 module Misc.VerificationEnvironment (
   runVerification
   , parseTraces
@@ -67,6 +54,8 @@ runVerifier verifier outputDir = do
   setCurrentDirectory currentDir
   return outp
 
+-- | Write a promela file, generate C-code from it using SPIN, compile the
+--   generated verifier, invoke it and collect the generated traces.
 runVerification
   :: Options -- ^ Program options (uses outputPath)
   -> String -- ^ Name of the GTL file without extension

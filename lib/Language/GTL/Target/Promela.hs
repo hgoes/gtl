@@ -3,7 +3,9 @@
    misericordiam tuam
  -}
 {-# LANGUAGE GADTs,ScopedTypeVariables #-}
-module Language.GTL.Target.Promela where
+{-| Implements the native Promela target. -}
+module Language.GTL.Target.Promela 
+       (verifyModel) where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL
@@ -34,7 +36,7 @@ verifyModel :: Opts.Options -- ^ Options
                -> IO ()
 verifyModel opts name spec = do
   let pr = translateSpec spec
-      model = buildTargetModel spec (buildInputMap spec) (buildOutputMap spec)
+      model = buildTargetModel spec
   traceFiles <- runVerification opts name pr
   parseTraces opts name traceFiles (traceToAtoms model)
 
@@ -285,7 +287,7 @@ buildTGenerator tp upper lower check to
 
 
 translateSpec :: GTLSpec String -> [Pr.Module]
-translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec) (buildOutputMap spec))
+translateSpec spec = translateTarget (buildTargetModel spec)
 
 convertType :: GTLType -> Pr.Typename
 convertType GTLInt = Pr.TypeInt

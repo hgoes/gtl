@@ -21,6 +21,9 @@ data GTLModel a = GTLModel
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
                   }
 
+-- | Represents the start or end of a connection, by specifying the instance
+--   name, the variable name and a list of indices that refer to the right
+--   component of the variable.
 data GTLConnectionPoint a = GTLConnPt String a [Integer]
 
 -- | A GTL specification represents a type checked GTL file.
@@ -31,12 +34,14 @@ data GTLSpec a = GTLSpec
                , gtlSpecConnections :: [(GTLConnectionPoint a,GTLConnectionPoint a)] -- ^ Connections between models.
                }
 
+-- | A GTL instance is a concrete manifestation of a model.
 data GTLInstance a = GTLInstance
-                     { gtlInstanceModel :: String
-                     , gtlInstanceContract :: Maybe (TypedExpr a)
-                     , gtlInstanceDefaults :: Map a (Maybe GTLConstant)
+                     { gtlInstanceModel :: String -- ^ The model of which this is an instance
+                     , gtlInstanceContract :: Maybe (TypedExpr a) -- ^ Additional contract
+                     , gtlInstanceDefaults :: Map a (Maybe GTLConstant) -- ^ Additional default values
                      }
 
+-- | Get the type of a variable which resides in an instance.
 getInstanceVariableType :: (Ord a,Show a) => GTLSpec a -> Bool -> String -> a -> GTLType
 getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstances spec) of
   Nothing -> error $ "Internal error: Instance "++show inst++" not found."
@@ -88,6 +93,7 @@ gtlParseModel mdl = do
                                      , gtlModelDefaults = Map.fromList lst
                                      },enums)
 
+-- | Get all possible enum types.
 getEnums :: Map a GTLType -> Set [String]
 getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
   where

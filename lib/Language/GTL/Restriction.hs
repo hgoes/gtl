@@ -1,20 +1,27 @@
-module Language.GTL.Restriction where
+{-| Provides a data type to represent restrictions on a single variable and
+    functions to work on it. -}
+module Language.GTL.Restriction
+       (Restriction(..),
+        emptyRestriction,
+        plusRestriction) where
 
 import Language.GTL.Expression
 import Language.GTL.Types
 
 import Data.Set as Set
 
+{-| Represents a value space for a single variable. -}
 data Restriction v = Restriction
-                     { restrictionType :: GTLType
-                     , lowerLimits :: [(Bool,TypedExpr v)]
-                     , upperLimits :: [(Bool,TypedExpr v)]
-                     , allowedValues :: Maybe (Set (GTLValue ()))
-                     , forbiddenValues :: Set (GTLValue ())
-                     , equals :: [TypedExpr v]
-                     , unequals :: [TypedExpr v]
+                     { restrictionType :: GTLType -- ^ The type of the value space
+                     , lowerLimits :: [(Bool,TypedExpr v)] -- ^ Expressions that form a lower limit on the allowed values
+                     , upperLimits :: [(Bool,TypedExpr v)] -- ^ Upper limits for the value space
+                     , allowedValues :: Maybe (Set (GTLValue ())) -- ^ Can be a set of values that are allowed (everything else is then forbidden)
+                     , forbiddenValues :: Set (GTLValue ()) -- ^ A set of forbidden values
+                     , equals :: [TypedExpr v] -- ^ A list of expressions that must be equal to the allowed values
+                     , unequals :: [TypedExpr v] -- ^ A list of expressions which must be unequal to the allowed values
                      } deriving (Show,Eq,Ord)
 
+-- | Construct an empty restriction for a given type
 emptyRestriction :: GTLType -> Restriction v
 emptyRestriction tp = Restriction tp [] [] Nothing Set.empty [] []
 
@@ -52,6 +59,7 @@ mergeRestrictions eq xs ys = foldl (\ys' x -> case ys' of
                                        Nothing -> Nothing
                                        Just ys'' -> insertRestriction eq x ys'') (Just ys) xs
 
+-- | Merge two restrictions. If they conflict, 'Nothing' is returned.
 plusRestriction :: Ord v => Restriction v -> Restriction v -> Maybe (Restriction v)
 plusRestriction r1 r2
   | restrictionType r1 == restrictionType r2

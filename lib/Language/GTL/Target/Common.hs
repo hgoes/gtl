@@ -2,7 +2,12 @@
     As most translation targets operate on the notion of states and variables, the code to
     generate those can be shared between almost all targets.
  -}
-module Language.GTL.Target.Common where
+module Language.GTL.Target.Common 
+       (TargetModel(..),
+        TransitionConditions(..),
+        TargetVar,
+        buildTargetModel
+        ) where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL
@@ -24,23 +29,29 @@ type TargetVar = (String,String,[Integer])
 type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType)
 type InputMap = Map TargetVar (Integer,GTLType)
 
+-- | Represents conditions which can be used in transitions.
 data TransitionConditions = TransitionConditions
-                            { tcOutputs :: [([(TargetVar,Integer)],Restriction TargetVar)]
-                            , tcAtoms :: [TypedExpr TargetVar]
-                            , tcOriginal :: [TypedExpr (String,String)]
+                            { tcOutputs :: [([(TargetVar,Integer)],Restriction TargetVar)] -- ^ How should the output variables be assigned
+                            , tcAtoms :: [TypedExpr TargetVar] -- ^ What conditions must hold for the transition to fire
+                            , tcOriginal :: [TypedExpr (String,String)] -- ^ Original expressions which were used to generate this
                             } deriving (Show,Eq,Ord)
 
+-- | A flattened out model without arrays or tuples.
 data TargetModel = TargetModel
-                   { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
-                   , tmodelProcs :: Map String (BA TransitionConditions Integer)
-                   , tmodelVerify :: TypedExpr TargetVar
+                   { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))] -- ^ All variables used in the model with type and default values
+                   , tmodelProcs :: Map String (BA TransitionConditions Integer) -- ^ A map of processes, represented by B&#xFC;chi automata
+                   , tmodelVerify :: TypedExpr TargetVar -- ^ The verification goal
                    } deriving Show
 
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
 
-buildTargetModel :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
-buildTargetModel spec inmp outmp
+-- | Creates a flattened model from a GTL specification.
+buildTargetModel :: GTLSpec String -> TargetModel
+buildTargetModel spec = buildTargetModel' spec (buildInputMap spec) (buildOutputMap spec)
+
+buildTargetModel' :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
+buildTargetModel' spec inmp outmp
   = let all_vars = Map.foldrWithKey (\(mf,vf,fi) (vars,lvl,tp) cur
                                      -> case lvl of
                                        Nothing -> cur

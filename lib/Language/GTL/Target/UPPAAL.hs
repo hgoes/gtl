@@ -39,7 +39,7 @@ toLabels tc = (case tcSelections tc of
 
 -- | Translate a GTL specification to a UPPAAL specification.
 translateSpec :: GTLSpec String -> U.Specification
-translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec) (buildOutputMap spec))
+translateSpec spec = translateTarget (buildTargetModel spec)
 
 -- | Translate a pre-translated TargetModel to a UPPAAL specification.
 translateTarget :: TargetModel -> U.Specification
