@@ -1,6 +1,6 @@
 {-| Implements Linear Time Logic and its translation into Buchi-Automaton.
  -}
-{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies,FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies,FlexibleContexts,ScopedTypeVariables #-}
 module Language.GTL.LTL(
   -- * Formulas
   LTL(..),
@@ -27,6 +27,11 @@ import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
 import Language.GTL.Expression (ExprOrdering(..))
+import qualified Data.IntMap as IMap
+import qualified Data.IntSet as ISet
+import Data.Graph.Inductive as Graph (Gr(..), mkGraph, DynGraph(..), Graph(..), LNode, LEdge, Path, lab)
+import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
+import Data.Maybe (fromJust)
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -200,50 +205,154 @@ minimizeBA ba = BA { baTransitions = ntrans
                    }
   where
     ntrans = Map.fromList $ minimizeBA' False (Map.toList (baTransitions ba)) []
-    
+
     minimizeBA' False d [] = d
     minimizeBA' True d [] = minimizeBA' False [] d
     minimizeBA' ch d ((st,trans):xs) = minimizeBA'' ch d st trans [] xs
-    
+
     minimizeBA'' ch d st trans d' [] = minimizeBA' ch ((st,trans):d) d'
     minimizeBA'' ch d st trans d' ((st',trans'):xs) = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
                                                       then minimizeBA'' True (updateTranss st st' d) st
                                                            (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs)
                                                       else minimizeBA'' ch d st trans ((st',trans'):d') xs
-    
+
     updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
                                                        then (cond,st)
                                                        else (cond,trg)) trans
-    
+
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
-gba2ba :: (Ord st,AtomContainer b a,Ord b) => GBA b st -> BA b (Set st,Int)
+gba2ba :: (Ord st, AtomContainer b a, Ord b) => GBA b st -> BA b (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
                 , baTransitions = buildTrans (Set.toList inits) Map.empty
                 }
   where
     inits = Set.map (\x -> (x,0)) (gbaInits gba)
-    
-    finals = foldl (\f ts -> foldl (\f' (_,_,fins) -> Set.union f' fins) f ts) Set.empty (gbaTransitions gba)
-    finalList = Set.toList finals
-    final_size = Set.size finals
-    
+    finalList = optimizeFinalFamilyOrder $ buildFs (gbaTransitions gba)
+    final_size = List.length finalList
+
     buildTrans [] mp = mp
     buildTrans ((st,i):sts) mp
       | Map.member (st,i) mp = buildTrans sts mp
       | otherwise = let ntrans = Set.map (\(cond,trg,fins) -> (cond,(trg,next i fins))) ((gbaTransitions gba)!st)
                     in buildTrans ([ trg | (_,trg) <- Set.toList ntrans ]++sts) (Map.insert (st,i) ntrans mp)
-    
+
     next j fin = let j' = if j==final_size
                           then 0
                           else j
-                            
+
                      findNext k [] = k
                      findNext k (f:fs) = if Set.member f fin
                                          then findNext (k+1) fs
                                          else k
                  in findNext j' (drop j' finalList)
+
+-- | delta : 2^Q -> 2^(S x 2^Q x 2^F), F ⊆ Q.
+-- The transition are labeled with the index of the final set they belong to.
+type LabeledHyperTransitionMap st a = Map (Set st) (Set (a, Set st, Set st))
+-- | delta : 2^Q -> 2^(S x 2^Q), F ⊆ Q.
+-- Hyper refers to hyper graphs as the are multiple nodes pointing to one edge.
+-- Gar nicht wahr! Ein Zustand ist eine Menge von Formeln.
+type HyperTransitionMap st a = Map (Set st) (Set (a, Set st))
+-- | delta :  -> 2^(S x 2^Q), F ⊆ Q.
+type TransitionMap st a = Map st (Set (a, Set st))
+-- | T_f ⊆ (2^(S x 2^Q))^Q -- that is a subset of all mappings Q -> 2^(S x 2^Q)
+type FinalSetFamily st a = Map st (HyperTransitionMap st a)
+
+-- Mapping from sets of final transitions to the contained transitions
+buildFs :: forall st a. (Ord st, Ord a) => LabeledHyperTransitionMap st a -> FinalSetFamily st a
+buildFs trans
+  = Map.foldlWithKey buildFinalSets Map.empty trans
+  where
+    -- StartingStates -> Transitions from these States -> Map from final states to map of transitions
+    buildFinalSets :: FinalSetFamily st a -> Set st -> Set (a, Set st, Set st) -> FinalSetFamily st a
+    buildFinalSets finTs s ts =
+      mergeFinalSets finTs s $ foldl f1 Map.empty ts
+
+    -- Given a mapping from the final sets to their assigned transitions and the states from which these
+    -- transitions originate. Merge these into the global mapping of final sets.
+    mergeFinalSets :: FinalSetFamily st a -> Set st -> TransitionMap st a -> FinalSetFamily st a
+    mergeFinalSets finTs orig someFinTs
+      = Map.foldlWithKey (\ finTs' finSt tr -> Map.alter (insertOrCreateMap orig tr) finSt finTs') finTs someFinTs
+
+    f1 :: TransitionMap st a -> (a, Set st, Set st) -> TransitionMap st a
+    f1 partFinTs (x, tgts, fin)
+      = unionFinals partFinTs $ buildFinalTransitionSets x tgts fin
+
+    buildFinalTransitionSets :: a -> Set st -> Set st -> Map st (a, Set st)
+    buildFinalTransitionSets x tgts fin
+      = foldl (\finTrans f -> Map.insert f (x, tgts) finTrans) Map.empty fin
+
+    -- Given a map of f transitions extends the existing transitions by the on given in g for each
+    -- state q. f'(q) = f(q) ⋃ {g(q)}
+    unionFinals :: TransitionMap st a -> Map st (a, Set st) -> TransitionMap st a
+    unionFinals partFinTs finTrans
+      = Map.foldlWithKey (\partFinTs' s tr -> Map.alter (insertOrCreateSet tr) s partFinTs') partFinTs finTrans
+
+    insertOrCreateSet x = maybe (Just $ Set.singleton x) (Just . (Set.insert x))
+    insertOrCreateMap k v = maybe (Just $ Map.singleton k v) (Just . (Map.insert k v))
+
+deepIntersection :: (Ord a, Ord b) => Map a (Set b) -> Map a (Set b) -> Map a (Set b)
+deepIntersection = Map.intersectionWith Set.intersection
+
+deepSize :: Foldable f => f (Set b) -> Int
+deepSize = foldl (\n set -> n + Set.size set) 0
+
+buildIntersectionGraph :: forall gr st a. (Graph.DynGraph gr, Ord st, Ord a) => FinalSetFamily st a -> gr st Int
+buildIntersectionGraph finals =
+  let
+    -- Build graph nodes: assign each state an arbitrary number and
+    -- keep the state names as labels in the graph.
+    nodeList = (fst $ Map.foldlWithKey (\(nodes, i) s _ -> ((i, s) : nodes, i+1)) ([], 0) finals) :: [LNode st]
+    --nodeList = (List.map (\i -> (i, ())) $ ISet.toList nodes)
+    -- Replaces keys of the map by an arbitrary numbering.
+    numberedFinalFamily = IMap.fromAscList $ zip [0..] $ Map.elems finals
+    nodes = IMap.keysSet numberedFinalFamily
+
+    countIntersections :: HyperTransitionMap st a -> HyperTransitionMap st a -> Int
+    countIntersections l = deepSize . (deepIntersection l)
+
+    -- | Given a node and its transitions builds its context in the intersection
+    -- graph by putting all possible edges to the nodes in /ns/ into the context.
+    -- The context makes up an undirected graph. It is assumed, that /i/ is not in /restGraph/.
+    makeContext :: Int -> HyperTransitionMap st a -> ([LEdge Int], ISet.IntSet) -> ([LEdge Int], ISet.IntSet)
+    makeContext i tr (es, restGraph) =
+      let
+        restGraph' = ISet.delete i restGraph
+        -- multiply by -1 because we take later the _minimum_ spanning path but want the _maximum_!
+        commonTransitions i' = -1 * countIntersections tr (fromJust $ IMap.lookup i' numberedFinalFamily)
+        es' = ISet.fold (\i' adj' -> (i', i, commonTransitions i') : (i, i', commonTransitions i') : adj') [] restGraph'
+      in (es' ++ es, restGraph')
+
+    edges = fst $ IMap.foldWithKey makeContext ([], nodes) numberedFinalFamily
+
+  in mkGraph nodeList edges
+
+optimizeFinalFamilyOrder :: forall st a. (Ord st, Ord a) => FinalSetFamily st a -> [st]
+optimizeFinalFamilyOrder finals =
+  let
+    intersectionGraph = buildIntersectionGraph finals :: Graph.Gr st Int
+
+    -- graph complete => it is connected => always a valid result
+    msp = fromJust $ minSpanningPath intersectionGraph
+
+    pathLabels :: (Graph gr) => gr nl el -> Path -> [nl]
+    pathLabels g p = List.map (\n -> fromJust $ lab g n) p
+
+    -- Find optimal start node:
+    -- generate a pseudo node f0 = ⋃f_i, f_i € F. That is it contains all transitions
+    -- which are in some final set. If the maximum spanning path is p = (f_i1, ...., f_in) then
+    -- the path is reversed iff |f_in ⋂ f0| > |f_i1 ⋂ f0|.
+    needsReverse =
+      let
+        f0 = foldl (Map.unionWith Set.union) Map.empty finals
+        intersI1 = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head msp))
+        intersIn = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head $ reverse msp))
+      in deepSize intersIn > deepSize intersI1
+
+    msp' = if needsReverse then reverse msp else msp
+  in pathLabels intersectionGraph msp'
 
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
