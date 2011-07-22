@@ -31,9 +31,7 @@ tokens:-
   int                            { key KeyInt }
   instance                       { key KeyInstance }
   model                          { key KeyModel }
-  finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
-                                                            [] -> Nothing
-                                                            r -> Just (read r))) }
+  finally                        { un GOpFinally }
   next                           { un GOpNext }
   exists                         { key KeyExists }
   final                          { key KeyFinal }

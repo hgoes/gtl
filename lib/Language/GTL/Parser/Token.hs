@@ -47,7 +47,7 @@ data BracketType = Parentheses
 data UnOp = GOpAlways
           | GOpNext
           | GOpNot
-          | GOpFinally (Maybe Integer)
+          | GOpFinally
           deriving (Show,Eq,Ord)
 
 data BinOp = GOpAnd

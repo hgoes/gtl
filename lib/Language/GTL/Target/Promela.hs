@@ -121,7 +121,7 @@ translateVerify e = case getValue e of
                                 Not -> LTLNot
                                 Always -> LTLAlways
                                 Next -> LTLNext
-                                Finally Nothing -> LTLEventually) (translateVerify (unfix ne))
+                                Finally -> LTLEventually) (translateVerify (unfix ne))
   _ -> LTLNormalExpr (translateTExpr e)
 
 translateTExprs :: [TypedExpr TargetVar] -> Maybe Pr.AnyExpression

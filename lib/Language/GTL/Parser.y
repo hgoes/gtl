@@ -28,7 +28,7 @@ import qualified Data.Map as Map
   "exists"          { Key KeyExists }
   "false"           { Key KeyFalse }
   "final"           { Key KeyFinal }
-  "finally"         { Unary (GOpFinally $$) }
+  "finally"         { Unary GOpFinally }
   "float"           { Key KeyFloat }
   "implies"         { Binary GOpImplies }
   "int"             { Key KeyInt }
@@ -178,7 +178,7 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "not" expr                   { GUn GOpNot $2 }
      | "always" expr                { GUn GOpAlways $2 }
      | "next" expr                  { GUn GOpNext $2 }
-     | "finally" expr               { GUn (GOpFinally $1) $2 }
+     | "finally" expr               { GUn GOpFinally $2 }
      | expr "in" expr               { GBin GOpIn $1 $3 }
      | expr "not" "in" expr         { GBin GOpNotIn $1 $4 }
      | "{" ints "}"                 { GSet $2 }

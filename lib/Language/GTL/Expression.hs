@@ -354,7 +354,7 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
                               GOpAlways -> Always
                               GOpNext -> Next
                               GOpNot -> Not
-                              GOpFinally t -> Finally t
+                              GOpFinally -> Finally
                           ) rec
     parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
     parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
@@ -511,7 +511,7 @@ data BoolOp = And     -- ^ &#8896;
 data UnBoolOp = Not
               | Always
               | Next
-              | Finally (Maybe Integer)
+              | Finally
               deriving (Show,Eq,Ord)
 
 instance Binary BoolOp where
@@ -522,18 +522,14 @@ instance Binary UnBoolOp where
   put Not = put (0::Word8)
   put Always = put (1::Word8)
   put Next = put (2::Word8)
-  put (Finally Nothing) = put (3::Word8)
-  put (Finally (Just p)) = put (4::Word8) >> put p
+  put Finally = put (3::Word8)
   get = do
     i <- get
     case (i::Word8) of
       0 -> return Not
       1 -> return Always
       2 -> return Next
-      3 -> return $ Finally Nothing
-      4 -> do
-        p <- get
-        return $ Finally (Just p)
+      3 -> return $ Finally
 
 -- | Arithmetik binary operators.
 data IntOp = OpPlus -- ^ +
