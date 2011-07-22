@@ -252,11 +252,11 @@ gba2ba gba = BA { baInits = inits
 -- The transition are labeled with the index of the final set they belong to.
 type LabeledHyperTransitionMap st a = Map (Set st) (Set (a, Set st, Set st))
 -- | delta : 2^Q -> 2^(S x 2^Q), F ⊆ Q.
--- Hyper refers to hyper graphs as the are multiple nodes pointing to one edge.
--- Gar nicht wahr! Ein Zustand ist eine Menge von Formeln.
+-- Hyper refers to hyper graphs as one edge points to multiple nodes.
 type HyperTransitionMap st a = Map (Set st) (Set (a, Set st))
--- | delta :  -> 2^(S x 2^Q), F ⊆ Q.
-type TransitionMap st a = Map st (Set (a, Set st))
+-- | delta : F -> 2^(S x 2^Q), F ⊆ Q.
+-- Mapping from an final set index to assigned transitions for _one_ starting node.
+type FinalTransitionMap st a = Map st (Set (a, Set st))
 -- | T_f ⊆ (2^(S x 2^Q))^Q -- that is a subset of all mappings Q -> 2^(S x 2^Q)
 type FinalSetFamily st a = Map st (HyperTransitionMap st a)
 
@@ -268,16 +268,19 @@ buildFs trans
     -- StartingStates -> Transitions from these States -> Map from final states to map of transitions
     buildFinalSets :: FinalSetFamily st a -> Set st -> Set (a, Set st, Set st) -> FinalSetFamily st a
     buildFinalSets finTs s ts =
-      mergeFinalSets finTs s $ foldl f1 Map.empty ts
+      mergeFinalSets finTs s $ foldl extendFinalTransitionMap Map.empty ts
 
     -- Given a mapping from the final sets to their assigned transitions and the states from which these
     -- transitions originate. Merge these into the global mapping of final sets.
-    mergeFinalSets :: FinalSetFamily st a -> Set st -> TransitionMap st a -> FinalSetFamily st a
+    mergeFinalSets :: FinalSetFamily st a -> Set st -> FinalTransitionMap st a -> FinalSetFamily st a
     mergeFinalSets finTs orig someFinTs
       = Map.foldlWithKey (\ finTs' finSt tr -> Map.alter (insertOrCreateMap orig tr) finSt finTs') finTs someFinTs
 
-    f1 :: TransitionMap st a -> (a, Set st, Set st) -> TransitionMap st a
-    f1 partFinTs (x, tgts, fin)
+    -- Given a mapping from the index of a final set to its so far assigned transitions
+    -- for _one_ originating node. This function extends this map by all transitions given in
+    -- by /(x, tgts)/.
+    extendFinalTransitionMap :: FinalTransitionMap st a -> (a, Set st, Set st) -> FinalTransitionMap st a
+    extendFinalTransitionMap partFinTs (x, tgts, fin)
       = unionFinals partFinTs $ buildFinalTransitionSets x tgts fin
 
     buildFinalTransitionSets :: a -> Set st -> Set st -> Map st (a, Set st)
@@ -286,7 +289,7 @@ buildFs trans
 
     -- Given a map of f transitions extends the existing transitions by the on given in g for each
     -- state q. f'(q) = f(q) ⋃ {g(q)}
-    unionFinals :: TransitionMap st a -> Map st (a, Set st) -> TransitionMap st a
+    unionFinals :: FinalTransitionMap st a -> Map st (a, Set st) -> FinalTransitionMap st a
     unionFinals partFinTs finTrans
       = Map.foldlWithKey (\partFinTs' s tr -> Map.alter (insertOrCreateSet tr) s partFinTs') partFinTs finTrans
 
