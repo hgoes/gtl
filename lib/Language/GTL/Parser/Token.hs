@@ -19,6 +19,7 @@ data KeyWord = KeyAll
              | KeyByte
              | KeyConnect
              | KeyContract
+             | KeyCycleTime
              | KeyEnum
              | KeyModel
              | KeyOutput

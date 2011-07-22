@@ -22,6 +22,7 @@ tokens:-
   byte                           { key KeyByte }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
+  cycle\-time                    { key KeyCycleTime }
   enum                           { key KeyEnum }
   false                          { key KeyFalse }
   float                          { key KeyFloat }

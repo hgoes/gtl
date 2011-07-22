@@ -21,6 +21,7 @@ data ModelDecl = ModelDecl
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
                  , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
                  , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
+                 , modelCycleTime :: Integer -- ^ Cycle time given in us
                  } deriving Show
 
 -- | Declares a connection between two variables

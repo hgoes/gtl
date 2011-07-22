@@ -23,6 +23,7 @@ import qualified Data.Map as Map
   "byte"            { Key KeyByte }
   "connect"         { Key KeyConnect }
   "contract"        { Key KeyContract }
+  "cycle-time"      { Key KeyCycleTime }
   "enum"            { Key KeyEnum }
   "exists"          { Key KeyExists }
   "false"           { Key KeyFalse }
@@ -105,6 +106,7 @@ model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                , modelInits = []
                                                                , modelInputs = Map.empty
                                                                , modelOutputs = Map.empty
+                                                               , modelCycleTime = 1
                                                                })
                                                              }
 
@@ -142,6 +144,11 @@ formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars {
                            | "output" type id ";" formulas_or_inits_or_vars      { \decl -> let ndecl = $5 decl
                                                                                           in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
                                                                                                    } }
+                           | "cycle-time" int id ";" formulas_or_inits_or_vars { \decl -> let ndecl = $5 decl
+                                                                                          in ndecl { modelCycleTime = $2 * (case $3 of
+                                                                                                       "s" -> 1000000
+                                                                                                       "ms" -> 1000
+                                                                                                       "us" -> 1) } }
                            |                                                   { id }
 
 formulas_or_inits : mb_contract formula ";" formulas_or_inits { \decl -> let ndecl = $4 decl

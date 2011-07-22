@@ -19,6 +19,7 @@ data GTLModel a = GTLModel
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
+                  , gtlModelCycleTime :: Integer -- ^ Cycle time in us
                   }
 
 -- | Represents the start or end of a connection, by specifying the instance
@@ -91,6 +92,7 @@ gtlParseModel mdl = do
                                      , gtlModelInput = inp
                                      , gtlModelOutput = outp
                                      , gtlModelDefaults = Map.fromList lst
+                                     , gtlModelCycleTime = modelCycleTime mdl
                                      },enums)
 
 -- | Get all possible enum types.
