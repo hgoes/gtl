@@ -18,10 +18,10 @@ import Data.Set as Set
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtl2ba :: Ord v => TypedExpr v -> BA [TypedExpr v] Integer
+gtl2ba :: (Ord v,Show v) => TypedExpr v -> BA [TypedExpr v] Integer
 gtl2ba e = ltl2ba $ gtlToLTL e
 
-instance Ord v => AtomContainer [TypedExpr v] (TypedExpr v) where
+instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
   atomsTrue = []
   atomSingleton True x = [x]
   atomSingleton False x = [distributeNot x]
@@ -70,7 +70,7 @@ instance Ord v => AtomContainer [TypedExpr v] (TypedExpr v) where
         ENEQ -> Nothing
 
 -- | Translate a GTL expression into a LTL formula.
-gtlToLTL :: Ord v => TypedExpr v -> LTL (TypedExpr v)
+gtlToLTL :: (Ord v,Show v) => TypedExpr v -> LTL (TypedExpr v)
 gtlToLTL expr
   | getType expr == GTLBool = case getValue expr of
     Var _ _ -> Atom expr

@@ -21,6 +21,7 @@ import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
 import Control.Monad.Error ()
 import Control.Exception
+import Debug.Trace
 
 -- | A fixpoint data structure.
 --   Allows the construction of infinite data types from finite constructors.
@@ -660,6 +661,10 @@ constantOp iop x y = Fix $ case unfix x of
   GTLByteVal x' -> let GTLByteVal y' = unfix y in GTLByteVal (iop x' y')
   GTLFloatVal x' -> let GTLFloatVal y' = unfix y in GTLFloatVal (iop x' y')
 
+compareExprDebug :: (Ord v,Show v) => TypedExpr v -> TypedExpr v -> ExprOrdering
+compareExprDebug e1 e2 = let res = compareExpr e1 e2
+                         in trace ("COMP ["++show e1++"] # ["++show e2++"]\t\t"++show res) res
+
 -- TODO: Use a constraint solver here?
 -- | Compare the value spaces of two expressions
 compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
@@ -682,7 +687,7 @@ compareExpr e1 e2
           Value c1 -> case getValue e2 of
             Value c2 -> if c1 == c2
                         then EEQ
-                        else EUNK
+                        else ENEQ
             _ -> EUNK
           IndexExpr (Fix ee1) i1 -> case getValue e2 of
             IndexExpr (Fix ee2) i2 -> case compareExpr ee1 ee2 of
@@ -744,4 +749,10 @@ compareExpr e1 e2
       p2 = toLinearExpr e2
       lincomp = if p1 == p2
                 then EEQ
-                else EUNK
+                else (if Map.size p1 == 1 && Map.size p2 == 1
+                      then (case Map.lookup Map.empty p1 of
+                               Nothing -> EUNK
+                               Just c1 -> case Map.lookup Map.empty p2 of
+                                 Nothing -> EUNK
+                                 Just c2 -> ENEQ)
+                      else EUNK)
