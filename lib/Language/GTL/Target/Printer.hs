@@ -17,10 +17,16 @@ simplePrettyPrint spec
      [name ++ "{"]++
      ["  input "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelInput mdl) ]++
      ["  output "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelOutput mdl) ]++
-     ["  cycle-time "++show (gtlModelCycleTime mdl)++" us"]++
+     ["  cycle-time "++renderTime (gtlModelCycleTime mdl)]++
      (fmap ("  "++) (simplePrettyPrintBuchi (gtl2ba (gtlModelContract mdl))))++
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
+
+renderTime :: Integer -> String
+renderTime us
+  | us `mod` 1000000 == 0 = show (us `div` 1000000) ++ "s"
+  | us `mod` 1000 == 0    = show (us `div` 1000) ++ "ms"
+  | otherwise             = show us ++ "us"
 
 simplePrettyPrintBuchi :: BA [TypedExpr String] Integer -> [String]
 simplePrettyPrintBuchi buchi = concat [ [ (if Set.member st (baInits buchi) then "initial " else "")++
