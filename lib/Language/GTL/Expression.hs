@@ -3,7 +3,37 @@
   DeriveFunctor,RankNTypes #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
-module Language.GTL.Expression where
+module Language.GTL.Expression 
+       (Fix(..),
+        Term(..),
+        GTLConstant,
+        Expr,
+        Typed(..),
+        TypedExpr,
+        BoolOp(..),
+        UnBoolOp(..),
+        TimeSpec(..),
+        IntOp(..),
+        Relation(..),
+        ExprOrdering(..),
+        var,
+        constant,
+        gnot,
+        gand,
+        geq,
+        gneq,
+        enumConst,
+        typeCheck,
+        compareExpr,
+        distributeNot,
+        makeTypedExpr,
+        getConstant,
+        mapGTLVars,
+        getVars,
+        relTurn,
+        relNot,
+        maximumHistory
+        ) where
 
 import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
@@ -196,7 +226,7 @@ showTerm f (BinBoolExpr op l r) = "(" ++ (f l) ++ (case op of
                                                       And -> " and "
                                                       Or -> " or "
                                                       Implies -> " implies "
-                                                      Until -> " until "
+                                                      Until ts -> " until"++show ts++" "
                                                   ) ++ (f r) ++ ")"
 showTerm f (BinRelExpr rel l r) = "(" ++ (f l) ++ (case rel of
                                                       BinLT -> " < "
@@ -213,7 +243,7 @@ showTerm f (BinIntExpr op l r) = "(" ++ (f l) ++ (case op of
 showTerm f (UnBoolExpr op p) = "(" ++ (case op of
                                           Not -> "not "
                                           Always -> "always "
-                                          Next -> "next ") ++ (f p) ++ ")"
+                                          Next ts -> "next"++show ts++" ") ++ (f p) ++ ")"
 showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
 
 -- | Helper function for type checking: If the two supplied types are the same,
@@ -335,26 +365,26 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
   where
     parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
                   -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
-    parseTerm' mu f ex (GBin op l r) = do
+    parseTerm' mu f ex (GBin op tspec l r) = do
       rec_l <- mu ex l
       rec_r <- mu ex r
-      case toBoolOp op of
+      case toBoolOp op tspec of
         Just rop -> return $ BinBoolExpr rop rec_l rec_r
         Nothing -> case toRelOp op of
           Just rop -> return $ BinRelExpr rop rec_l rec_r
           Nothing -> case toIntOp op of
             Just rop -> return $ BinIntExpr rop rec_l rec_r
             Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
-    parseTerm' mu f ex (GUn op p) = do
+    parseTerm' mu f ex (GUn op ts p) = do
       rec <- mu (case op of
                     GOpNext -> fmap (\(v,lvl) -> (v,lvl+1)) ex
                     _ -> ex
                 ) p
       return $ UnBoolExpr (case op of
                               GOpAlways -> Always
-                              GOpNext -> Next
+                              GOpNext -> Next ts
                               GOpNot -> Not
-                              GOpFinally -> Finally
+                              GOpFinally -> Finally ts
                           ) rec
     parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
     parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
@@ -423,12 +453,12 @@ distributeNot expr
       And -> BinBoolExpr Or (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
       Or -> BinBoolExpr And (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
       Implies -> BinBoolExpr And (Fix $ pushNot $ unfix l) (Fix $ distributeNot $ unfix r)
-      Until -> BinBoolExpr UntilOp (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
+      Until ts -> BinBoolExpr (UntilOp ts) (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
     BinRelExpr rel l r -> Typed GTLBool $ BinRelExpr (relNot rel) l r
     UnBoolExpr op p -> case op of
       Not -> pushNot (unfix p)
-      Next -> Typed GTLBool $ UnBoolExpr Next (Fix $ distributeNot $ unfix p)
-      Always -> Typed GTLBool $ BinBoolExpr Until (Fix (Typed GTLBool (Value (GTLBoolVal True)))) (Fix $ distributeNot $ unfix p)
+      Next NoTime -> Typed GTLBool $ UnBoolExpr (Next NoTime) (Fix $ distributeNot $ unfix p)
+      Always -> Typed GTLBool $ BinBoolExpr (Until NoTime) (Fix (Typed GTLBool (Value (GTLBoolVal True)))) (Fix $ distributeNot $ unfix p)
     IndexExpr e i -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     Automaton buchi -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
 
@@ -503,33 +533,67 @@ mapValueVars mu (GTLTupleVal xs) = GTLTupleVal (fmap mu xs)
 data BoolOp = And     -- ^ &#8896;
             | Or      -- ^ &#8897;
             | Implies -- ^ &#8658;
-            | Until
-            | UntilOp
-            deriving (Show,Eq,Ord,Enum)
+            | Until TimeSpec
+            | UntilOp TimeSpec
+            deriving (Show,Eq,Ord)
 
 -- | Unary boolean operators with the traditional semantics.
 data UnBoolOp = Not
               | Always
-              | Next
-              | Finally
+              | Next TimeSpec
+              | Finally TimeSpec
               deriving (Show,Eq,Ord)
 
+instance Binary TimeSpec where
+  put NoTime = put (0::Word8)
+  put (TimeSteps n) = put (1::Word8) >> put n
+  put (TimeUSecs n) = put (2::Word8) >> put n
+  get = do
+    i <- get
+    case (i::Word8) of
+      0 -> return NoTime
+      1 -> do
+        n <- get
+        return $ TimeSteps n
+      2 -> do
+        n <- get
+        return $ TimeUSecs n
+
 instance Binary BoolOp where
-  put x = put (fromIntegral (fromEnum x) :: Word8)
-  get = fmap (toEnum . fromIntegral :: Word8 -> BoolOp) get
+  put And = put (0::Word8)
+  put Or = put (1::Word8)
+  put Implies = put (2::Word8)
+  put (Until ts) = put (3::Word8) >> put ts
+  put (UntilOp ts) = put (4::Word8) >> put ts
+  get = do
+    i <- get
+    case (i::Word8) of
+      0 -> return And
+      1 -> return Or
+      2 -> return Implies
+      3 -> do
+        ts <- get
+        return $ Until ts
+      4 -> do
+        ts <- get
+        return (UntilOp ts)
 
 instance Binary UnBoolOp where
   put Not = put (0::Word8)
   put Always = put (1::Word8)
-  put Next = put (2::Word8)
-  put Finally = put (3::Word8)
+  put (Next ts) = put (2::Word8) >> put ts
+  put (Finally ts) = put (3::Word8) >> put ts
   get = do
     i <- get
     case (i::Word8) of
       0 -> return Not
       1 -> return Always
-      2 -> return Next
-      3 -> return $ Finally
+      2 -> do
+        ts <- get
+        return $ Next ts
+      3 -> do
+        ts <- get
+        return $ Finally ts
 
 -- | Arithmetik binary operators.
 data IntOp = OpPlus -- ^ +
@@ -565,12 +629,12 @@ instance Show Relation where
 
 
 -- | Cast a binary operator into a boolean operator. Returns `Nothing' if the cast fails.
-toBoolOp :: BinOp -> Maybe BoolOp
-toBoolOp GOpAnd = Just And
-toBoolOp GOpOr = Just Or
-toBoolOp GOpImplies = Just Implies
-toBoolOp GOpUntil = Just Until
-toBoolOp _ = Nothing
+toBoolOp :: BinOp -> TimeSpec -> Maybe BoolOp
+toBoolOp GOpAnd NoTime = Just And
+toBoolOp GOpOr NoTime = Just Or
+toBoolOp GOpImplies NoTime = Just Implies
+toBoolOp GOpUntil spec = Just (Until spec)
+toBoolOp _ _ = Nothing
 
 
 -- | Cast a binary operator into a relation. Returns `Nothing' if the cast fails.

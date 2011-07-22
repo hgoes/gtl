@@ -79,15 +79,15 @@ gtlToLTL expr
       GTL.And -> LTL.Bin LTL.And (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
       GTL.Or -> LTL.Bin LTL.Or (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
       GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL (unfix l))) (gtlToLTL (unfix r))
-      GTL.Until -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
+      GTL.Until NoTime -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
     BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
       [e] -> e
       es -> foldl1 (LTL.Bin LTL.And) es
     UnBoolExpr op p -> case op of
       GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
       GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
-      GTL.Next -> LTL.Un LTL.Next (gtlToLTL (unfix p))
-      GTL.Finally -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
+      GTL.Next NoTime -> LTL.Un LTL.Next (gtlToLTL (unfix p))
+      GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
@@ -123,14 +123,14 @@ expandExpr expr
       GTL.And -> [ Set.union lm rm | lm <- expandExpr (unfix l), rm <- expandExpr (unfix r) ]
       GTL.Or -> expandExpr (unfix l) ++ expandExpr (unfix r)
       GTL.Implies -> expandExpr (Typed GTLBool (BinBoolExpr GTL.Or (Fix $ Typed GTLBool (UnBoolExpr GTL.Not l)) r))
-      GTL.Until -> error "Can't use until in state formulas yet"
+      GTL.Until _ -> error "Can't use until in state formulas yet"
     BinRelExpr _ _ _ -> [Set.singleton expr]
     UnBoolExpr op p -> case op of
       GTL.Not -> let expandNot [] = [Set.empty]
                      expandNot (x:xs) = let res = expandNot xs
                                         in Set.fold (\at cur -> fmap (Set.insert (distributeNot at)) res ++ cur) res x
                  in expandNot (expandExpr $ unfix p)
-      GTL.Next -> error "Can't use next in state formulas yet"
+      GTL.Next _ -> error "Can't use next in state formulas yet"
       GTL.Always -> error "Can't use always in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
     Automaton _ -> error "Can't use automata in state formulas yet"

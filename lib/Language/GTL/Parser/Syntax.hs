@@ -47,10 +47,20 @@ data InstanceDecl = InstanceDecl
                     , instanceInits :: [(String,InitExpr)] -- ^ Additional initialization values
                     } deriving Show
 
+data TimeSpec = NoTime
+              | TimeSteps Integer
+              | TimeUSecs Integer
+              deriving (Eq,Ord)
+
+instance Show TimeSpec where
+  show NoTime = ""
+  show (TimeSteps i) = "["++show i++" cy]"
+  show (TimeUSecs i) = "["++show i++" us]"
+
 -- | An untyped expression type.
 --   Used internally in the parser.
-data GExpr = GBin BinOp GExpr GExpr
-           | GUn UnOp GExpr
+data GExpr = GBin BinOp TimeSpec GExpr GExpr
+           | GUn UnOp TimeSpec GExpr
            | GConst Int
            | GConstBool Bool
            | GVar (Maybe String) String

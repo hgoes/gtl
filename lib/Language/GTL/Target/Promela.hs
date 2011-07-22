@@ -115,13 +115,13 @@ translateVerify e = case getValue e of
                                        And -> LTLAnd
                                        Or -> LTLOr
                                        Implies -> LTLImplication
-                                       Until -> LTLUntil
-                                       UntilOp -> LTLUntilOp) (translateVerify (unfix lhs)) (translateVerify (unfix rhs))
+                                       Until NoTime -> LTLUntil
+                                       UntilOp NoTime -> LTLUntilOp) (translateVerify (unfix lhs)) (translateVerify (unfix rhs))
   UnBoolExpr op ne -> LTLUn (case op of
                                 Not -> LTLNot
                                 Always -> LTLAlways
-                                Next -> LTLNext
-                                Finally -> LTLEventually) (translateVerify (unfix ne))
+                                Next NoTime -> LTLNext
+                                Finally NoTime -> LTLEventually) (translateVerify (unfix ne))
   _ -> LTLNormalExpr (translateTExpr e)
 
 translateTExprs :: [TypedExpr TargetVar] -> Maybe Pr.AnyExpression

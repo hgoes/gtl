@@ -165,22 +165,25 @@ formulas : formula ";" formulas { $1:$3 }
 
 formula : expr { $1 }
 
-expr : expr "and" expr              { GBin GOpAnd $1 $3 }
-     | expr "or" expr               { GBin GOpOr $1 $3 }
-     | expr "implies" expr          { GBin GOpImplies $1 $3 }
-     | expr "until" expr            { GBin GOpUntil $1 $3 }
-     | expr "<" expr                { GBin GOpLessThan $1 $3 }
-     | expr "<=" expr               { GBin GOpLessThanEqual $1 $3 }
-     | expr ">" expr                { GBin GOpGreaterThan $1 $3 }
-     | expr ">=" expr               { GBin GOpGreaterThanEqual $1 $3 }
-     | expr "=" expr                { GBin GOpEqual $1 $3 }
-     | expr "!=" expr               { GBin GOpNEqual $1 $3 }
-     | "not" expr                   { GUn GOpNot $2 }
-     | "always" expr                { GUn GOpAlways $2 }
-     | "next" expr                  { GUn GOpNext $2 }
-     | "finally" expr               { GUn GOpFinally $2 }
-     | expr "in" expr               { GBin GOpIn $1 $3 }
-     | expr "not" "in" expr         { GBin GOpNotIn $1 $4 }
+expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
+     | expr "or" expr               { GBin GOpOr NoTime $1 $3 }
+     | expr "implies" expr          { GBin GOpImplies NoTime $1 $3 }
+     | expr "until" expr            { GBin GOpUntil NoTime $1 $3 }
+     | expr "until" time_spec expr  { GBin GOpUntil $3 $1 $4 }
+     | expr "<" expr                { GBin GOpLessThan NoTime $1 $3 }
+     | expr "<=" expr               { GBin GOpLessThanEqual NoTime $1 $3 }
+     | expr ">" expr                { GBin GOpGreaterThan NoTime $1 $3 }
+     | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
+     | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
+     | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
+     | "not" expr                   { GUn GOpNot NoTime $2 }
+     | "always" expr                { GUn GOpAlways NoTime $2 }
+     | "next" expr                  { GUn GOpNext NoTime $2 }
+     | "next" time_spec expr        { GUn GOpNext $2 $3 }
+     | "finally" expr               { GUn GOpFinally NoTime $2 }
+     | "finally" time_spec expr     { GUn GOpFinally $2 $3 }
+     | expr "in" expr               { GBin GOpIn NoTime $1 $3 }
+     | expr "not" "in" expr         { GBin GOpNotIn NoTime $1 $4 }
      | "{" ints "}"                 { GSet $2 }
      | "(" expr_list ")"            { case $2 of
                                          [x] -> x
@@ -189,10 +192,10 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "[" expr_list "]"            { GArray $2 }
      | var                          { GVar (fst $1) (snd $1) }
      | int                          { GConst $ fromIntegral $1 }
-     | expr "+" expr                { GBin GOpPlus $1 $3 }
-     | expr "-" expr                { GBin GOpMinus $1 $3 }
-     | expr "/" expr                { GBin GOpDiv $1 $3 }
-     | expr "*" expr                { GBin GOpMult $1 $3 }
+     | expr "+" expr                { GBin GOpPlus NoTime $1 $3 }
+     | expr "-" expr                { GBin GOpMinus NoTime $1 $3 }
+     | expr "/" expr                { GBin GOpDiv NoTime $1 $3 }
+     | expr "*" expr                { GBin GOpMult NoTime $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
      | expr "[" expr "]"            { GIndex $1 $3 }
@@ -262,6 +265,12 @@ type_list : type type_lists { $1:$2 }
 
 type_lists : "," type type_lists { $2:$3 }
            |                     { [] }
+
+time_spec : "[" int id "]" { case $3 of
+                                "cy" -> TimeSteps $2
+                                "s" -> TimeUSecs ($2*1000000)
+                                "ms" -> TimeUSecs ($2*1000)
+                                "us" -> TimeUSecs $2 }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

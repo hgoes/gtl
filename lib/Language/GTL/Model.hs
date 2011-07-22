@@ -74,7 +74,7 @@ gtlParseModel mdl = do
                   _ -> Left "Contract may not contain qualified variables") 
               allType enums (case modelContract mdl of
                                 [] -> GConstBool True
-                                c -> foldl1 (GBin GOpAnd) c)
+                                c -> foldl1 (GBin GOpAnd NoTime) c)
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
                       InitOne c -> do
@@ -125,7 +125,7 @@ gtlParseSpec decls = do
                     _ -> makeTypedExpr (\q n -> case q of
                              Nothing -> Right n
                              _ -> Left "Contract may not contain qualified variables") (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums
-                         (foldl1 (GBin GOpAnd) (instanceContract i)) >>= return.Just
+                         (foldl1 (GBin GOpAnd NoTime) (instanceContract i)) >>= return.Just
                   return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
                                                      , gtlInstanceContract = contr
                                                      , gtlInstanceDefaults = Map.empty
@@ -142,7 +142,7 @@ gtlParseSpec decls = do
                                  Just rq -> Right (rq,n)
                              ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of
                                              [] -> GConstBool True
-                                             x -> foldl1 (GBin GOpAnd) x)
+                                             x -> foldl1 (GBin GOpAnd NoTime) x)
     conns <- sequence [ do
                            finst <- case Map.lookup f inst_mp of
                              Nothing -> Left $ "Instance "++f++" not found."
