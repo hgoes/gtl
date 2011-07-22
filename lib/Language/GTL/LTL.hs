@@ -90,9 +90,9 @@ instance Show a => Show (LTL a) where
                                                  in if p >= binPrec UntilOp
                                                     then showChar '(' . str . showChar ')'
                                                     else str
-  showsPrec p (Bin op l r) = let str = showsPrec (binPrec op) l . 
+  showsPrec p (Bin op l r) = let str = showsPrec (binPrec op) l .
                                        showChar ' ' .
-                                       shows op . 
+                                       shows op .
                                        showChar ' ' .
                                        showsPrec (binPrec op) r
                              in if p >= binPrec op
@@ -117,7 +117,7 @@ distributeNegation aut@(LTLAutomaton _) = aut
 pushNegation :: LTL a -> LTL a
 pushNegation (Atom x) = Un Not (Atom x)
 pushNegation (Ground p) = Ground $ not p
-pushNegation (Bin op l r) = Bin (case op of 
+pushNegation (Bin op l r) = Bin (case op of
                                     And -> Or
                                     Or -> And
                                     Until -> UntilOp
@@ -180,12 +180,12 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               }
   where
     ntrans = fmap (\set -> Set.fromList $ minimizeTrans [] (Set.toList set)) (baTransitions ba)
-    
+
     minimizeTrans d [] = d
     minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
-    
+
     minimizeTrans' d c st d' [] = minimizeTrans ((c,st):d) d'
-    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' 
+    minimizeTrans' d c st d' ((c',st'):ts) = if st==st'
                                              then (case compareAtoms c' c of
                                                       EEQ -> minimizeTrans' d c st d' ts
                                                       ELT -> minimizeTrans' d c st d' ts
@@ -261,20 +261,20 @@ minimizeGBA' gba = if changed
                    else Nothing
   where
     (changed,ntrans,ninit) = minimizeTrans False [] (Map.toList (gbaTransitions gba)) (gbaInits gba)
-    
+
     updateTrans old new = fmap (\(st,t) -> (st,Set.map (\(cond,trg,fin) -> (cond,if trg==old
                                                                                  then new
                                                                                  else trg,fin)) t))
-    
+
     minimizeTrans ch res [] i = (ch,res,i)
     minimizeTrans ch res ((st,t):xs) i
       = let (ch',res',ni,nxs) = minimizeTrans' st t ch ((st,t):res) i [] xs
         in minimizeTrans ch' res' nxs ni
-    
+
     minimizeTrans' st t cch cres ci cxs [] = (cch,cres,ci,cxs)
     minimizeTrans' st t cch cres ci cxs ((st',t'):ys)
       = if t==t'
-        then minimizeTrans' st t True 
+        then minimizeTrans' st t True
              (updateTrans st' st cres)
              (if Set.member st' ci
               then Set.insert st (Set.delete st' ci)
@@ -317,26 +317,26 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
                    }
   where
     buildTrans [] mp = mp
-    buildTrans (x:xs) mp 
+    buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
       | otherwise = let trans = optimizeGBATransitions $ finalSet $ convertTrans x
                     in buildTrans ([ trg | (_,trg,_) <- trans ]++xs) (Map.insert x (Set.fromList trans) mp)
-    
-    convertTrans sts 
+
+    convertTrans sts
       | Set.null sts = []
       | otherwise = foldl1 transProd [ Set.toList $ (vwaaTransitions aut)!st | st <- Set.toList sts ]
-    
+
     finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg) ||
                                                   not (List.null [ (cond,trg')
-                                                                 | (cond',trg') <- delta f, 
+                                                                 | (cond',trg') <- delta f,
                                                                    (case compareAtoms cond cond' of
                                                                        EEQ -> True
                                                                        ELT -> True
-                                                                       _ -> False) && 
+                                                                       _ -> False) &&
                                                                    Set.isSubsetOf trg trg' &&
                                                                    not (Set.member f trg')
                                                                  ])
-                                           ) (vwaaCoFinals aut)) 
+                                           ) (vwaaCoFinals aut))
                      | (cond,trg) <- trans ]
 
 delta, delta' :: AtomContainer b a => LTL a -> [(b,Set (LTL a))]
@@ -367,18 +367,18 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
   where
     inits' = cform ltl
     trans' = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
-    
+
     buildTrans [] mp = mp
     buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
       | otherwise = let ts = optimizeVWAATransitions $ delta x
                     in buildTrans (concat [ Set.toList c | (_,c) <- ts ]++xs) (Map.insert x (Set.fromList ts) mp)
-    
+
     isFinal (Bin Until _ _) = True
     isFinal _ = False
-    
+
     getFinals mp = Set.filter isFinal $ Map.keysSet mp
-    
+
 mergeAlphabet :: Ord a => Map a Bool -> Map a Bool -> Maybe (Map a Bool)
 mergeAlphabet a1 a2
   = if confl
@@ -421,15 +421,15 @@ baProduct b1 b2 = BA { baTransitions = trans'
                      , baFinals = fins'
                      }
   where
-    inits' = [ (i1,i2,False) 
+    inits' = [ (i1,i2,False)
              | i1 <- Set.toList (baInits b1),
                i2 <- Set.toList (baInits b2)
              ]
-             
+
     trans' = traceStates inits' Map.empty
-    
+
     fins' = Set.filter (\(st1,st2,i) -> i && Set.member st2 (baFinals b2)) $ Map.keysSet trans'
-    
+
     traceStates [] mp = mp
     traceStates (x@(s1,s2,i):xs) mp
       | Map.member x mp = traceStates xs mp
@@ -440,7 +440,7 @@ baProduct b1 b2 = BA { baTransitions = trans'
                                                then not i
                                                else i))
                                | (c1,nst1) <- Set.toList t1
-                               , (c2,nst2) <- Set.toList t2 
+                               , (c2,nst2) <- Set.toList t2
                                , c <- case mergeAtoms c1 c2 of
                                  Nothing -> []
                                  Just x -> [x]
