@@ -53,6 +53,7 @@ data UnOp = Not
           | Next
           deriving (Eq,Ord)
 
+-- | Map over the variables in a LTL formula.
 mapLTL :: (Ord a,Ord b) => (a -> b) -> LTL a -> LTL b
 mapLTL f (Atom x) = Atom (f x)
 mapLTL f (Bin op l r) = Bin op (mapLTL f l) (mapLTL f r)
@@ -162,11 +163,12 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
+-- | Represents data structures which can store atomic expressions
 class Ord b => AtomContainer a b | a -> b where
-  atomsTrue :: a
-  atomSingleton :: Bool -> b -> a
-  compareAtoms :: a -> a -> ExprOrdering
-  mergeAtoms :: a -> a -> Maybe a
+  atomsTrue :: a -- ^ The container representing all possible values
+  atomSingleton :: Bool -> b -> a -- ^ A container containing just a single restriction on the values.
+  compareAtoms :: a -> a -> ExprOrdering -- ^ Compare the value spaces defined by the containers
+  mergeAtoms :: a -> a -> Maybe a -- ^ Merge the containers together, resulting in a container which represents the intersection between the two.
 
 instance Ord a => AtomContainer (Map a Bool) a where
   atomsTrue = Map.empty
@@ -178,6 +180,7 @@ instance Ord a => AtomContainer (Map a Bool) a where
     | otherwise = ENEQ
   mergeAtoms = mergeAlphabet
 
+-- | Merge redundant transitions in a B&#xFC;chi automaton.
 optimizeTransitionsBA :: (Ord st,AtomContainer b a,Ord b) => BA b st -> BA b st
 optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               , baInits = baInits ba
@@ -198,6 +201,7 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
                                                       _ -> minimizeTrans' d c st ((c',st'):d') ts)
                                              else minimizeTrans' d c st ((c',st'):d') ts
 
+-- | Merge redundant states in a B&#xFC;chi automaton.
 minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
 minimizeBA ba = BA { baTransitions = ntrans
                    , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
@@ -222,6 +226,7 @@ minimizeBA ba = BA { baTransitions = ntrans
 
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
+-- | Translate a generalized B&#xFC;chi automaton into a regular one by introducing levels.
 gba2ba :: (Ord st, AtomContainer b a, Ord b) => GBA b st -> BA b (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
@@ -360,6 +365,7 @@ optimizeFinalFamilyOrder finals =
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
 
+-- | Minimize a generalized B&#xFC;chi automaton by merging redundant states.
 minimizeGBA :: (Ord st,Ord b,AtomContainer b a) => GBA b st -> GBA b st
 minimizeGBA gba = case minimizeGBA' gba of
   Nothing -> gba
@@ -395,6 +401,8 @@ minimizeGBA' gba = if changed
              (updateTrans st' st ys)
         else minimizeTrans' st t cch cres ci ((st',t'):cxs) ys
 
+
+-- | Merge redundant transitions in a VWAA.
 optimizeVWAATransitions :: (AtomContainer b a,Ord st) => [(b,Set st)] -> [(b,Set st)]
 optimizeVWAATransitions mp = List.filter
                              (\(cond,trg)
@@ -420,9 +428,11 @@ insertGBATransition t@(cond,trg,fin) all@(t'@(cond',trg',fin'):ys)
     _ -> t':(insertGBATransition t ys)
   | otherwise = t':(insertGBATransition t ys)
 
+-- | Merge redundant transitions a generalized B&#xFC;chi automaton.
 optimizeGBATransitions :: (AtomContainer b a,Ord st) => [(b,Set st,Set st)] -> [(b,Set st,Set st)]
 optimizeGBATransitions = foldl (\ts t -> insertGBATransition t ts) []
 
+-- | Translate a VWAA into a GBA.
 vwaa2gba :: (AtomContainer b a,Ord b) => VWAA b (LTL a) -> GBA b (LTL a)
 vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Map.empty
                    , gbaInits = vwaaInits aut
@@ -471,6 +481,7 @@ cform (Bin And lhs rhs) = Set.fromList [ Set.union e1 e2
 cform (Bin Or lhs rhs) = Set.union (cform lhs) (cform rhs)
 cform f = Set.singleton (Set.singleton f)
 
+-- | Translate LTL into an alternating automaton.
 ltl2vwaa :: (Ord b,AtomContainer b a) => LTL a -> VWAA b (LTL a)
 ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
                     , vwaaInits = inits'
@@ -518,6 +529,7 @@ transAnd s1 s2
 transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transUnion = (++)
 
+-- | Translate a LTL formula into a B&#xFC;chi automaton
 ltl2ba :: AtomContainer [a] a => LTL a -> BA [a] Integer
 ltl2ba f = let (f',auts) = extractAutomata f
                mprod b1 b2 = renameStates $ baProduct b1 b2
@@ -527,6 +539,7 @@ ltl2ba f = let (f',auts) = extractAutomata f
                                      minimizeBA $ gba2ba $ minimizeGBA $
                                      vwaa2gba $ ltl2vwaa $ distributeNegation rf) auts
 
+-- | Construct the product automaton for two B&#xFC;chi automata.
 baProduct :: (Ord a,Ord st,Ord st',AtomContainer a b) => BA a st -> BA a st' -> BA a (st,st',Bool)
 baProduct b1 b2 = BA { baTransitions = trans'
                      , baInits = Set.fromList inits'

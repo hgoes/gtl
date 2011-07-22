@@ -1,8 +1,11 @@
 {-# LANGUAGE TypeFamilies #-}
+{-| This is a dummy backend that doesn't offer any formalism to specify models or verify contracts.
+    It is only used to provide a backend for testing purporses (Or if you are too lazy to write components). -}
 module Language.GTL.Backend.None where
 
 import Language.GTL.Backend
 
+-- | The none backend data type
 data None = None
 
 instance GTLBackend None where
@@ -21,4 +24,4 @@ instance GTLBackend None where
     , cIFaceTranslateType = \_ -> ""
     , cIFaceTranslateValue = \_ -> ""
     }
-  backendVerify _ _ _ = return Nothing
+  backendVerify _ _ _ _ _ = return Nothing

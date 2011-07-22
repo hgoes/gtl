@@ -2,13 +2,19 @@
     As most translation targets operate on the notion of states and variables, the code to
     generate those can be shared between almost all targets.
  -}
-module Language.GTL.Target.Common where
+module Language.GTL.Target.Common 
+       (TargetModel(..),
+        TransitionConditions(..),
+        TargetVar,
+        buildTargetModel
+        ) where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Translation
 import Language.GTL.Buchi
+import Language.GTL.Restriction
 
 import Data.Set as Set
 import Data.Map as Map
@@ -23,97 +29,36 @@ type TargetVar = (String,String,[Integer])
 type OutputMap = Map TargetVar (Set TargetVar,Maybe Integer,GTLType)
 type InputMap = Map TargetVar (Integer,GTLType)
 
+-- | Represents conditions which can be used in transitions.
+data TransitionConditions = TransitionConditions
+                            { tcOutputs :: [([(TargetVar,Integer)],Restriction TargetVar)] -- ^ How should the output variables be assigned
+                            , tcAtoms :: [TypedExpr TargetVar] -- ^ What conditions must hold for the transition to fire
+                            , tcOriginal :: [TypedExpr (String,String)] -- ^ Original expressions which were used to generate this
+                            } deriving (Show,Eq,Ord)
+
+-- | A flattened out model without arrays or tuples.
 data TargetModel = TargetModel
-                   { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))]
-                   , tmodelProcs :: Map String (BA ([([(TargetVar,Integer)],Restriction TargetVar)],[TypedExpr TargetVar]) Integer)
-                   , tmodelVerify :: TypedExpr TargetVar
+                   { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))] -- ^ All variables used in the model with type and default values
+                   , tmodelProcs :: Map String (BA TransitionConditions Integer) -- ^ A map of processes, represented by B&#xFC;chi automata
+                   , tmodelVerify :: TypedExpr TargetVar -- ^ The verification goal
                    } deriving Show
-
-data Restriction v = Restriction
-                     { restrictionType :: GTLType
-                     , lowerLimits :: [(Bool,TypedExpr v)]
-                     , upperLimits :: [(Bool,TypedExpr v)]
-                     , allowedValues :: Maybe (Set (GTLValue ()))
-                     , forbiddenValues :: Set (GTLValue ())
-                     , equals :: [TypedExpr v]
-                     , unequals :: [TypedExpr v]
-                     } deriving (Show,Eq,Ord)
-
-emptyRestriction :: GTLType -> Restriction v
-emptyRestriction tp = Restriction tp [] [] Nothing Set.empty [] []
-
-insertLimit :: Ord v => Bool -> (Bool,TypedExpr v) -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)]
-insertLimit upper l [] = [l]
-insertLimit upper (inc,l) rest@((inc',l'):ls)
-  = if inc /= inc'
-    then (inc',l'):insertLimit upper (inc,l) ls
-    else (case compareExpr l l' of
-             EEQ -> rest
-             EGT -> if upper
-                    then rest
-                    else insertLimit upper (inc,l) ls
-             ELT -> if upper
-                    then insertLimit upper (inc,l) ls
-                    else rest
-             _ -> (inc',l'):insertLimit upper (inc,l) ls)
-
-insertRestriction :: Ord v => Bool -> TypedExpr v -> [TypedExpr v] -> Maybe [TypedExpr v]
-insertRestriction _ e [] = return [e]
-insertRestriction eq e (x:xs) = case compareExpr e x of
-  EUNK -> do
-    r <- insertRestriction eq e xs
-    return (x:r)
-  EEQ -> return (x:xs)
-  _ -> if eq then Nothing else (do
-                                   r <- insertRestriction eq e xs
-                                   return (x:r))  
-
-mergeLimits :: Ord v => Bool -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)] -> [(Bool,TypedExpr v)]
-mergeLimits upper xs ys = foldl (\ys' x -> insertLimit upper x ys') ys xs
-
-mergeRestrictions :: Ord v => Bool -> [TypedExpr v] -> [TypedExpr v] -> Maybe [TypedExpr v]
-mergeRestrictions eq xs ys = foldl (\ys' x -> case ys' of
-                                       Nothing -> Nothing
-                                       Just ys'' -> insertRestriction eq x ys'') (Just ys) xs
-
-plusRestriction :: Ord v => Restriction v -> Restriction v -> Maybe (Restriction v)
-plusRestriction r1 r2
-  | restrictionType r1 == restrictionType r2
-    = do
-      let nupper = mergeLimits True (upperLimits r1) (upperLimits r2)
-          nlower = mergeLimits False (lowerLimits r1) (lowerLimits r2)
-      nallowed <- case allowedValues r1 of
-        Nothing -> return $ allowedValues r2
-        Just a1 -> case allowedValues r2 of
-          Nothing -> return $ Just a1
-          Just a2 -> let s = Set.intersection a1 a2
-                     in if Set.null s
-                        then Nothing
-                        else return $ Just s
-      nequals <- mergeRestrictions True (equals r1) (equals r2)
-      nunequals <- mergeRestrictions False (unequals r1) (unequals r2)
-      return $ Restriction { restrictionType = restrictionType r1
-                           , upperLimits = nupper
-                           , lowerLimits = nlower
-                           , allowedValues = nallowed
-                           , forbiddenValues = Set.union (forbiddenValues r1) (forbiddenValues r2)
-                           , equals = nequals
-                           , unequals = nunequals
-                           }
-  | otherwise = error $ "Merging restrictions of type "++show (restrictionType r1)++" and "++show (restrictionType r2)
 
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
 
-buildTargetModel :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
-buildTargetModel spec inmp outmp
+-- | Creates a flattened model from a GTL specification.
+buildTargetModel :: GTLSpec String -> TargetModel
+buildTargetModel spec = buildTargetModel' spec (buildInputMap spec) (buildOutputMap spec)
+
+buildTargetModel' :: GTLSpec String -> InputMap -> OutputMap -> TargetModel
+buildTargetModel' spec inmp outmp
   = let all_vars = Map.foldrWithKey (\(mf,vf,fi) (vars,lvl,tp) cur
                                      -> case lvl of
                                        Nothing -> cur
                                        Just rlvl -> Map.insertWith (\(lvl1,inp,tp) (lvl2,_,_) -> (max lvl1 lvl2,inp,tp)
                                                                    ) (mf,vf,fi) (rlvl,False,tp) cur
                                     ) (fmap (\(lvl,tp) -> (lvl,True,tp)) inmp) outmp
-        all_vars2 = Map.foldrWithKey 
+        all_vars2 = Map.foldrWithKey
                     (\iname inst mp
                      -> let defs = Map.union
                                    (gtlInstanceDefaults inst)
@@ -125,15 +70,15 @@ buildTargetModel spec inmp outmp
                                      Nothing -> (gtlModelOutput mdl)!var
                                      Just p -> p
                                in case def of
-                                 Just v -> foldl (\mp (c,(rtp,idx)) 
-                                                  -> let nmp = Map.adjust (\(lvl,inp,tp,restr) 
+                                 Just v -> foldl (\mp (c,(rtp,idx))
+                                                  -> let nmp = Map.adjust (\(lvl,inp,tp,restr)
                                                                            -> (lvl,inp,tp,case restr of
                                                                                   Nothing -> Just $ Set.singleton c
                                                                                   Just r -> Just (Set.insert c r)
                                                                               )) (iname,var,idx) mp
                                                      in case Map.lookup (iname,var,idx) outmp of
                                                        Nothing -> nmp
-                                                       Just (tvars,_,_) -> foldl (\mp' tvar -> Map.adjust (\(lvl,inp,tp,restr) 
+                                                       Just (tvars,_,_) -> foldl (\mp' tvar -> Map.adjust (\(lvl,inp,tp,restr)
                                                                                                            -> (lvl,inp,tp,case restr of
                                                                                                                   Nothing -> Just $ Set.singleton c
                                                                                                                   Just r -> Just (Set.insert c r)
@@ -145,60 +90,43 @@ buildTargetModel spec inmp outmp
        { tmodelVars = [ ((mdl,var,idx),lvl,tp,inits)
                       | ((mdl,var,idx),(lvl,inp,tp,inits)) <- Map.toList all_vars2
                       ]
-       , tmodelProcs = Map.mapWithKey (\name inst
-                                       -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                          in {-translateGBA $ runIdentity $ 
-                                             gtlToBuchi (\atm -> let (restr,cond) = translateAtoms
-                                                                                    (\v idx -> (name,v,idx))
-                                                                                    (\(n,v,is) i -> (n,v,i:is))
-                                                                                    (Just (name,mdl)) atm
-                                                                     rrestr = completeRestrictions restr (Map.fromList 
-                                                                                                          [ ((name,var,idx),rtp)
-                                                                                                          | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
-                                                                                                            (rtp,idx) <- flattenVar tp []
-                                                                                                          ]) outmp
-                                                                 in return ([ ([ (tvar,case Map.lookup tvar inmp of
-                                                                                     Nothing -> error (show (tvar,var,r))
-                                                                                     Just (p,_) -> p
-                                                                                 )
-                                                                               | tvar <- Set.toList tvars
-                                                                               ] ++ (case nvr of
-                                                                                        Nothing -> []
-                                                                                        Just lvl -> [(var,lvl)]),r)
-                                                                            | (var,r) <- Map.toList rrestr,
-                                                                              let (tvars,nvr) = case Map.lookup var outmp of
-                                                                                    Nothing -> (Set.empty,Nothing)
-                                                                                    Just (p1,p2,_) -> (p1,p2)
-                                                                            ],cond)
-                                                        )-}
-                                           baMapAlphabet (\atm -> let (restr,cond) = translateAtoms
-                                                                                     (\v idx -> (name,v,idx))
-                                                                                     (\(n,v,is) i -> (n,v,i:is))
-                                                                                     (Just (name,mdl)
-                                                                                     ) atm
-                                                                      rrestr = completeRestrictions restr (Map.fromList 
-                                                                                                          [ ((name,var,idx),rtp)
-                                                                                                          | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
-                                                                                                            (rtp,idx) <- flattenVar tp []
-                                                                                                          ]) outmp
-                                                                      in ([ ([ (tvar,case Map.lookup tvar inmp of
-                                                                                     Nothing -> error (show (tvar,var,r))
-                                                                                     Just (p,_) -> p
-                                                                                 )
-                                                                               | tvar <- Set.toList tvars
-                                                                               ] ++ (case nvr of
-                                                                                        Nothing -> []
-                                                                                        Just lvl -> [(var,lvl)]),r)
-                                                                            | (var,r) <- Map.toList rrestr,
-                                                                              let (tvars,nvr) = case Map.lookup var outmp of
-                                                                                    Nothing -> (Set.empty,Nothing)
-                                                                                    Just (p1,p2,_) -> (p1,p2)
-                                                                            ],cond)
-                                                         ) $ gtl2ba $ gtlModelContract mdl
-                                      )
-                       (gtlSpecInstances spec)
+       , tmodelProcs = buildModelProcs spec outmp inmp
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
        }
+
+buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String (BA TransitionConditions Integer)
+buildModelProcs spec outmp inmp = Map.mapWithKey instanceToBuchi (gtlSpecInstances spec)
+  where
+    instanceToBuchi :: String -> (GTLInstance String) -> BA TransitionConditions Integer
+    instanceToBuchi name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                                in baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba $ gtlModelContract mdl
+
+atomsToRestr :: String -> GTLModel String -> OutputMap -> InputMap -> [TypedExpr String] -> TransitionConditions
+atomsToRestr name mdl outmp inmp atm 
+  = let (restr,cond) = translateAtoms
+                       (\v idx -> (name,v,idx))
+                       (\(n,v,is) i -> (n,v,i:is))
+                       (Just (name,mdl)
+                       ) atm
+        rrestr = completeRestrictions restr (Map.fromList 
+                                             [ ((name,var,idx),rtp)
+                                             | (var,tp) <- Map.toList $ gtlModelOutput mdl, 
+                                               (rtp,idx) <- flattenVar tp []
+                                             ]) outmp
+    in TransitionConditions
+       [ ([ (tvar,case Map.lookup tvar inmp of
+                Nothing -> error (show (tvar,var,r))
+                Just (p,_) -> p
+            )
+          | tvar <- Set.toList tvars
+          ] ++ (case nvr of
+                   Nothing -> []
+                   Just lvl -> [(var,lvl)]),r)
+       | (var,r) <- Map.toList rrestr,
+         let (tvars,nvr) = case Map.lookup var outmp of
+               Nothing -> (Set.empty,Nothing)
+               Just (p1,p2,_) -> (p1,p2)
+       ] cond (fmap (mapGTLVars (\v -> (name,v))) atm)
 
 buildOutputMap :: GTLSpec String -> OutputMap
 buildOutputMap spec
@@ -233,14 +161,14 @@ buildInputMap spec
                                       else mp'
                                   ) (Map.union mp (Map.fromList
                                                    [ ((name,var,idx),(0,t))
-                                                   | (var,tp) <- Map.toList $ gtlModelInput mdl, 
+                                                   | (var,tp) <- Map.toList $ gtlModelInput mdl,
                                                      (t,idx) <- allPossibleIdx tp
                                                    ]
                                                   )) (getVars $ gtlModelContract mdl)
                      ) Map.empty (gtlSpecInstances spec)
 
 lookupType :: GTLSpec String -> String -> String -> [Integer] -> Bool -> GTLType
-lookupType spec inst var idx inp 
+lookupType spec inst var idx inp
   = let rinst = case Map.lookup inst (gtlSpecInstances spec) of
           Nothing -> error $ "Internal error: Instance "++show inst++" not found."
           Just p -> p
@@ -305,7 +233,7 @@ unpackExpr f i e = case getValue e of
   UnBoolExpr op ne -> [Typed (getType e) (UnBoolExpr op (Fix $ flattenExpr f i $ unfix ne))]
   IndexExpr ne ni -> unpackExpr f (ni:i) (unfix ne)
   Automaton buchi -> [ flattenExpr f i e ]
-    
+
 translateAtoms :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> [TypedExpr a] -> (Map b (Restriction b),[TypedExpr b])
 translateAtoms f g mmdl
   = foldl (\(restrs,expr) e -> case translateAtom f g mmdl e True [] of

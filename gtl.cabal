@@ -10,7 +10,7 @@ Description:
 
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
-    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,pqueue
+    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue
   Hs-Source-Dirs: lib
   GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
@@ -29,6 +29,7 @@ Library
     Language.GTL.Expression
     Language.GTL.Buchi
     Language.GTL.Types
+    Language.GTL.Restriction
     --Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
@@ -37,8 +38,10 @@ Library
     Language.GTL.Target.Common
     Language.GTL.Target.UPPAAL
     Language.GTL.Target.Printer
+    Misc.ProgramOptions
+    Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,language-uppaal
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal
   Main-Is: Main.hs

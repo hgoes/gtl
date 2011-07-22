@@ -1,4 +1,6 @@
-module Language.GTL.Target.Printer where
+{-| A simple pretty printer that produces ASCII text. -}
+module Language.GTL.Target.Printer
+       (simplePrettyPrint) where
 
 import Language.GTL.Model
 import Language.GTL.Buchi
@@ -8,6 +10,7 @@ import Language.GTL.Translation
 import Data.Map as Map
 import Data.Set as Set
 
+-- | Render a GTL specification as text
 simplePrettyPrint :: GTLSpec String -> String
 simplePrettyPrint spec
   = unlines $ concat [

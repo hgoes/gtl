@@ -3,7 +3,9 @@
    misericordiam tuam
  -}
 {-# LANGUAGE GADTs,ScopedTypeVariables #-}
-module Language.GTL.Target.Promela where
+{-| Implements the native Promela target. -}
+module Language.GTL.Target.Promela 
+       (verifyModel) where
 
 import Language.GTL.Model
 import Language.GTL.Expression as GTL
@@ -11,14 +13,45 @@ import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
 import Language.GTL.Types
 import Language.GTL.Target.Common
+import Language.GTL.ErrorRefiner
+import Language.GTL.Restriction
+
+import Control.Monad.Identity
 
 import Data.Set as Set
 import Data.Map as Map
-import Data.List (elemIndex,genericLength)
+import Data.List (elemIndex,genericLength,genericIndex)
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1,mapM)
 import Data.Maybe
 import Data.Int
+
+import Misc.ProgramOptions as Opts
+import Misc.VerificationEnvironment
+
+-- | Do a complete verification of a given GTL file
+verifyModel :: Opts.Options -- ^ Options
+               -> String -- ^ Name of the GTL file without extension
+               -> GTLSpec String -- ^ The GTL file contents
+               -> IO ()
+verifyModel opts name spec = do
+  let pr = translateSpec spec
+      model = buildTargetModel spec
+  traceFiles <- runVerification opts name pr
+  parseTraces opts name traceFiles (traceToAtoms model)
+
+-- | Given a list of transitions, give a list of atoms that have to hold for each transition.
+traceToAtoms :: TargetModel -- ^ The program to work on
+                -> [(String,Integer,Integer)] -- ^ The transitions, given in the form (model,state,transition-number)
+                -> Trace
+traceToAtoms model trace = fmap transitionToAtoms trace
+  where
+    transitionToAtoms :: (String,Integer,Integer) -> [TypedExpr (String, String)]
+    transitionToAtoms (mdl,st,t) =
+      let stateMachine = (tmodelProcs model)!mdl
+          trans = (baTransitions stateMachine)!st
+          (ats,_) = (Set.toList trans) `genericIndex` t
+      in tcOriginal ats
 
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
@@ -36,26 +69,28 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $ 
-                                            [ prIf [ [prAtomic $ (case translateTExprs cond of
+                                            [ prIf [ [prAtomic $ (case translateTExprs (tcAtoms cond) of
                                                                      Nothing -> []
                                                                      Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
                                                       (catMaybes [ translateTRestr tvars restr
-                                                                 | (tvars,restr) <- outp ])++
-                                                      [Pr.StmtGoto ("st"++show trg)]
+                                                                 | (tvars,restr) <- tcOutputs cond ])++
+                                                      [Pr.StmtPrintf ("TRANSITION "++pname++" "++show ist++" "++show n) []
+                                                      ,Pr.StmtGoto ("st"++show trg)]
                                                      ]
                                                    | ist <- Set.toList $ baInits buchi,
-                                                     ((outp,cond),trg) <- Set.toList $ (baTransitions buchi)!ist
+                                                     ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
                                             [ Pr.StmtLabel ("st"++show st) $
-                                              prIf [ [prAtomic $ (case translateTExprs cond of
+                                              prIf [ [prAtomic $ (case translateTExprs (tcAtoms cond) of
                                                                      Nothing -> []
                                                                      Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
                                                       (catMaybes [ translateTRestr tvars restr
-                                                                 | (tvars,restr) <- outp ])++
-                                                      [Pr.StmtGoto ("st"++show trg)]
+                                                                 | (tvars,restr) <- tcOutputs cond ])++
+                                                      [Pr.StmtPrintf ("TRANSITION "++pname++" "++show st++" "++show n) []
+                                                      ,Pr.StmtGoto ("st"++show trg)]
                                                      ]
-                                                   | ((outp,cond),trg) <- Set.toList trans
+                                                   | ((cond,trg),n) <- zip (Set.toList trans) [0..]
                                                    ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
@@ -252,7 +287,7 @@ buildTGenerator tp upper lower check to
 
 
 translateSpec :: GTLSpec String -> [Pr.Module]
-translateSpec spec = translateTarget (buildTargetModel spec (buildInputMap spec) (buildOutputMap spec))
+translateSpec spec = translateTarget (buildTargetModel spec)
 
 convertType :: GTLType -> Pr.Typename
 convertType GTLInt = Pr.TypeInt

@@ -38,11 +38,12 @@ data VerifyDecl = VerifyDecl
                   { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
                   } deriving Show
 
+-- | Declares an instance of a specific model.
 data InstanceDecl = InstanceDecl
-                    { instanceModel :: String
-                    , instanceName :: String
-                    , instanceContract :: [GExpr]
-                    , instanceInits :: [(String,InitExpr)]
+                    { instanceModel :: String -- ^ The model of which this is an instance
+                    , instanceName :: String -- ^ The name of the instance
+                    , instanceContract :: [GExpr] -- ^ Additional contracts to which this instance conforms
+                    , instanceInits :: [(String,InitExpr)] -- ^ Additional initialization values
                     } deriving Show
 
 -- | An untyped expression type.
@@ -61,11 +62,12 @@ data GExpr = GBin BinOp GExpr GExpr
            | GEnum String
            deriving (Show,Eq,Ord)
 
+-- | A state of a state machine.
 data State = State
-             { stateName :: String
-             , stateInitial :: Bool
-             , stateFinal :: Bool
-             , stateContent :: [Either GExpr (String,Maybe GExpr)]
+             { stateName :: String -- ^ User-given name of the state
+             , stateInitial :: Bool -- ^ Whether the state machine can start in this state
+             , stateFinal :: Bool -- ^ Is this a final state?
+             , stateContent :: [Either GExpr (String,Maybe GExpr)] -- ^ A list of conditions which must hold in this state and transitions which lead to other states
              } deriving (Show,Eq,Ord)
 
 -- | Information about the initialization of a variable.

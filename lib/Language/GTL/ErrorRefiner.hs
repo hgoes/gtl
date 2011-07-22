@@ -31,14 +31,14 @@ type CNameGen = String -> String -> Integer -> String
 
 -- | Parse a SPIN trace file by calling it with the spin interpreter and parsing the output.
 --   Produces a list of tuples where the first component is the name of the component that
---   just performed a step and the second one is the state number that it transitioned into.
+--   just performed a step and the second one is the state identifier that it transitioned into.
 parseTrace :: FilePath -- ^ The promela file of the model
               -> FilePath -- ^ The path to the promela trail file
-              -> IO [(String,Integer)]
+              -> IO [(String,Integer,Integer)]
 parseTrace promela trail = do
   outp <- readProcess "spin" ["-T","-k",trail,promela] ""
   return $ mapMaybe (\ln -> case words ln of
-                        ["ENTER",proc,st] -> Just (proc,read st)
+                        ["TRANSITION",proc,st,trans] -> Just (proc,read st,read trans)
                         _ -> Nothing
                     ) (lines outp)
 
@@ -69,6 +69,7 @@ atomToC f expr = case getValue expr of
   BinIntExpr op l r -> "("++atomToC f (unfix l)++intOpToC op++atomToC f (unfix r)++")"
   UnBoolExpr GTL.Not p -> "!"++atomToC f (unfix p)
 
+-- | Convert a GTL value to a C value
 valueToC :: GTLType -> GTLValue a -> String      
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
