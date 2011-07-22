@@ -29,7 +29,7 @@ import Language.GTL.Buchi
 import Language.GTL.Expression (ExprOrdering(..))
 import qualified Data.IntMap as IMap
 import qualified Data.IntSet as ISet
-import Data.Graph.Inductive as Graph (Gr(..), mkGraph, DynGraph(..), Graph(..), LNode, LEdge, Path, lab)
+import Data.Graph.Inductive as Graph (Gr(..), mkGraph, Graph(..), LNode, LEdge, Path, lab)
 import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
 import Data.Maybe (fromJust)
 
@@ -307,7 +307,7 @@ deepIntersection = Map.intersectionWith Set.intersection
 deepSize :: Foldable f => f (Set b) -> Int
 deepSize = foldl (\n set -> n + Set.size set) 0
 
-buildIntersectionGraph :: forall gr st a. (Graph.DynGraph gr, Ord st, Ord a) => FinalSetFamily st a -> gr st Int
+buildIntersectionGraph :: forall gr st a. (Graph.Graph gr, Ord st, Ord a) => FinalSetFamily st a -> gr st Int
 buildIntersectionGraph finals =
   let
     -- Build graph nodes: assign each state an arbitrary number and
