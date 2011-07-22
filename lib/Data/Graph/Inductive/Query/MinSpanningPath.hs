@@ -23,15 +23,21 @@ t2_2 = ([], 2, (), []) :: Context () Integer
 g2 = buildGr [t2_1, t2_2] :: Gr () Integer
 msp2 = minSpanningPath g2 -- == [1, 2]
 
--- | Given a simple undirected graph G calculates the minimum spanning path, that
--- is a mst where deg(u) <= 2 for all nodes u in G.
+-- | Given a simple undirected graph G calculates the minimum spanning path. That
+-- is a minimum spanning tree T where deg(u) <= 2 forall nodes u in T.
 -- Returns Nothing iff the graph is not connected.
 minSpanningPath :: (Graph gr, Ord l) => gr a l -> Maybe Path
-minSpanningPath g =
-  let q = edgeQueue g
-      n = Map.fromList $ map (\n -> (n, 0)) (nodes g) :: Map.Map Node Int
-      chosen = Map.empty :: Map.Map Node [Edge]
-  in fmap mkPath $ mspEdges n q chosen
+minSpanningPath g
+  | isEmpty g = Just []
+  | otherwise =
+    let ((_, someNode, _, _), rest) = matchAny g
+        q = edgeQueue g
+        n = Map.fromList $ map (\n -> (n, 0)) (nodes g) :: Map.Map Node Int
+        chosen = Map.empty :: Map.Map Node [Edge]
+    in if isEmpty rest then
+        Just [someNode]
+      else
+        fmap mkPath $ mspEdges n q chosen
 
 edgeQueue :: (Graph gr, Ord l) => gr a l -> PQ.MinPQueue l Edge
 edgeQueue = ufold edgeQueue' PQ.empty
