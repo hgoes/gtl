@@ -25,6 +25,7 @@ module Language.GTL.Expression
         enumConst,
         typeCheck,
         compareExpr,
+        compareExprDebug,
         distributeNot,
         makeTypedExpr,
         getConstant,
