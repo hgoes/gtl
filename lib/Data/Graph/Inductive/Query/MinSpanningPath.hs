@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Data.Graph.Inductive.Query.MinSpanningPath (
     minSpanningPath
 ) where
@@ -15,9 +16,14 @@ t2 = ([(-2, 4), (-0, 3)], 2, (), [(-2, 4), (-0, 3)]) :: Context () Integer
 t3 = ([(-3, 4)], 3, (), [(-3, 4)]) :: Context () Integer
 t4 = ([], 4, (), []) :: Context () Integer
 g = buildGr [t1, t2, t3, t4] :: Gr () Integer
-msp = minSpanningPath g -- == [1, 2, 4, 3]
+msp1 = minSpanningPath g -- == [1, 2, 4, 3]
 
--- | Given a graph G calculates the minimum spanning path, that
+t2_1 = ([(-3, 2)], 1, (), [(-3, 2)]) :: Context () Integer
+t2_2 = ([], 2, (), []) :: Context () Integer
+g2 = buildGr [t2_1, t2_2] :: Gr () Integer
+msp2 = minSpanningPath g2 -- == [1, 2]
+
+-- | Given a simple undirected graph G calculates the minimum spanning path, that
 -- is a mst where deg(u) <= 2 for all nodes u in G.
 -- Returns Nothing iff the graph is not connected.
 minSpanningPath :: (Graph gr, Ord l) => gr a l -> Maybe Path
@@ -37,31 +43,40 @@ edgeQueue = ufold edgeQueue' PQ.empty
 
 -- Kanten des minimalen, aufspannenden Pfades finden (analog zu Kruskal).
 -- Erzeuge Graph mit Kanten aus q. Füge jeweils Minimum ein und nur, wenn Knoten Grad < 2 hat.
--- Solange |n| > 2
+-- Solange n != ∅
 --  Wähle e = min q : e = (u, v), u,v € n
 --  Wenn e existiert:
---    Füge e zu g' hinzu
 --    Setze deg(u) += 1 und deg(v) += 1
 --    Wenn deg(u) = 2: Setze n := n \ {u}
 --    Wenn deg(v) = 2: Setze n := n \ {v}
+--    Wenn n != ∅: -- Sonst entsteht ein Loop, da dann alle Knoten Grad 2 haben.
+--      Füge e zu g' hinzu
 --  Sonst: es ex. kein msp
 --
 -- Was passiert wenn einer der Knoten Grad 0 hat bzw. kann dies passieren? Nein!
 -- Induktion über eingefügte Kanten?
+--
+-- Achtung Sonderfall: |n| <= 2 für den Gesamtgraphen.
 
-mspEdges :: Ord l => Map.Map Node Int -> PQ.MinPQueue l Edge -> Map.Map Node [Edge] -> Maybe (Map.Map Node [Edge])
+mspEdges :: forall l. Ord l => Map.Map Node Int -> PQ.MinPQueue l Edge -> Map.Map Node [Edge] -> Maybe (Map.Map Node [Edge])
 mspEdges n q chosen =
-  if (Map.size n) > 2 then
+  if not(Map.null n) then
     let (me, q') = choose n q
     in case me of
-      Nothing -> Nothing
+      -- Achtung Sonderfall: |n| <= 2 für den Gesamtgraphen:
+      -- Dann ist n zwar nicht leer, aber man kann auch keine Kante mehr einfügen.
+      Nothing -> if Map.size n == 2 then Just chosen else Nothing
       Just e@(u,v) ->
         let n' = (updateDegree u v n)
-        in mspEdges n' q' (Map.alter (maybeInsert e) v $ Map.alter (maybeInsert e) u chosen)
+        in
+          if not(Map.null n') then
+            mspEdges n' q' (Map.alter (insertOrCreate e) v $ Map.alter (insertOrCreate e) u chosen)
+          else
+            Just chosen
   else
     Just chosen
   where
-    choose :: Ord l => Map.Map Node Int -> PQ.MinPQueue l Edge -> (Maybe Edge, PQ.MinPQueue l Edge)
+    choose :: Map.Map Node Int -> PQ.MinPQueue l Edge -> (Maybe Edge, PQ.MinPQueue l Edge)
     choose n q =
       case PQ.getMin q of
         Nothing -> (Nothing, PQ.deleteMin q)
@@ -75,9 +90,10 @@ mspEdges n q chosen =
           n' = Map.update incDegOrDelete u n
           n'' = Map.update incDegOrDelete v n'
       in n''
-    maybeInsert x Nothing = Just [x]
-    maybeInsert x (Just xs) = Just (x:xs)
+    insertOrCreate x Nothing = Just [x]
+    insertOrCreate x (Just xs) = Just (x:xs)
 
+-- Assumes, that /chosen/ is not a single loop so that at least one node exists with degree 0.
 mkPath :: Map.Map Node [Edge] -> Path
 mkPath chosen =
   let deg1Node node edges Nothing = if List.length edges == 1 then Just node else Nothing
