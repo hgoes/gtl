@@ -95,6 +95,11 @@ gtlToLTL cycle_time expr
                          GTL.Not -> LTL.Un LTL.Not arg
                          GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) arg
                          GTL.Next NoTime -> LTL.Un LTL.Next arg
+                         GTL.Next ti -> case cycle_time of
+                           Just rcycle_time -> let steps = case ti of
+                                                     TimeSteps s -> s
+                                                     TimeUSecs s -> s `div` rcycle_time
+                                               in foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..steps]
                          GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) arg
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
