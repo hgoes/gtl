@@ -69,50 +69,64 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
           Just ys' -> Just (y:ys')
         ENEQ -> Nothing
 
--- | Translate a GTL expression into a LTL formula.
+getSteps :: Integer -> TimeSpec -> Integer
+getSteps _ NoTime = 0
+getSteps _ (TimeSteps s) = s
+getSteps cy (TimeUSecs s) = s `div` cy
+
+getUSecs :: TimeSpec -> Integer
+getUSecs (TimeUSecs s) = s
+
 gtlToLTL :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> LTL (TypedExpr v)
-gtlToLTL cycle_time expr
+gtlToLTL cycle_time expr = fst $ gtlToLTL' 0 cycle_time expr
+
+-- | Translate a GTL expression into a LTL formula.
+gtlToLTL' :: (Ord v,Show v) => Integer -> Maybe Integer -> TypedExpr v -> (LTL (TypedExpr v),Integer)
+gtlToLTL' clk cycle_time expr
   | getType expr == GTLBool = case getValue expr of
-    Var _ _ -> Atom expr
-    Value (GTLBoolVal x) -> Ground x
-    BinBoolExpr op l r -> let lhs = gtlToLTL cycle_time (unfix l)
-                              rhs = gtlToLTL cycle_time (unfix r)
+    Var _ _ -> (Atom expr,clk)
+    Value (GTLBoolVal x) -> (Ground x,clk)
+    BinBoolExpr op l r -> let (lhs,clk1) = gtlToLTL' clk cycle_time (unfix l)
+                              (rhs,clk2) = gtlToLTL' clk1 cycle_time (unfix r)
                           in case op of
-                            GTL.And -> LTL.Bin LTL.And lhs rhs
-                            GTL.Or -> LTL.Bin LTL.Or lhs rhs
-                            GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not lhs) rhs
-                            GTL.Until NoTime -> LTL.Bin LTL.Until lhs rhs
+                            GTL.And -> (LTL.Bin LTL.And lhs rhs,clk2)
+                            GTL.Or -> (LTL.Bin LTL.Or lhs rhs,clk2)
+                            GTL.Implies -> (LTL.Bin LTL.Or (LTL.Un LTL.Not lhs) rhs,clk2)
+                            GTL.Until NoTime -> (LTL.Bin LTL.Until lhs rhs,clk2)
                             GTL.Until ti -> case cycle_time of
-                              Just rcycle_time -> let steps = case ti of
-                                                        TimeSteps s -> s
-                                                        TimeUSecs s -> s `div` rcycle_time
-                                                  in foldl (\expr _ -> LTL.Bin LTL.Or rhs (LTL.Bin LTL.And lhs (LTL.Un LTL.Next expr))) rhs [1..steps]
+                              Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or rhs (LTL.Bin LTL.And lhs (LTL.Un LTL.Next expr))) rhs [1..(getSteps rcycle_time ti)],clk2)
+                              Nothing -> (LTL.Bin LTL.Or rhs (LTL.Bin LTL.And
+                                                              (LTL.Bin LTL.And
+                                                               (Atom (Typed GTLBool $ ClockReset clk2 (getUSecs ti)))
+                                                               lhs)
+                                                              (LTL.Un LTL.Next
+                                                               (LTL.Bin LTL.Until (LTL.Bin LTL.And
+                                                                                   lhs
+                                                                                   (Atom (Typed GTLBool $ ClockRef clk2)))
+                                                                (LTL.Bin LTL.And
+                                                                 rhs
+                                                                 (Atom (Typed GTLBool $ ClockReset clk2 0))
+                                                                )
+                                                               )
+                                                              )
+                                                             ),clk2+1)
     BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
-      [e] -> e
-      es -> foldl1 (LTL.Bin LTL.And) es
-    UnBoolExpr op p -> let arg = gtlToLTL cycle_time (unfix p)
+      [e] -> (e,clk)
+      es -> (foldl1 (LTL.Bin LTL.And) es,clk)
+    UnBoolExpr op p -> let (arg,clk1) = gtlToLTL' clk cycle_time (unfix p)
                        in case op of
-                         GTL.Not -> LTL.Un LTL.Not arg
-                         GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) arg
-                         GTL.Next NoTime -> LTL.Un LTL.Next arg
+                         GTL.Not -> (LTL.Un LTL.Not arg,clk1)
+                         GTL.Always -> (LTL.Bin LTL.UntilOp (LTL.Ground False) arg,clk1)
+                         GTL.Next NoTime -> (LTL.Un LTL.Next arg,clk1)
                          GTL.Next ti -> case cycle_time of
-                           Just rcycle_time -> let steps = case ti of
-                                                     TimeSteps s -> s
-                                                     TimeUSecs s -> s `div` rcycle_time
-                                               in foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..steps]
-                         GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) arg
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
+                         GTL.Finally NoTime -> (LTL.Bin LTL.Until (LTL.Ground True) arg,clk1)
                          GTL.Finally ti -> case cycle_time of
-                           Just rcycle_time -> let steps = case ti of
-                                                     TimeSteps s -> s
-                                                     TimeUSecs s -> s `div` rcycle_time
-                                               in foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..steps]
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
                          GTL.After ti -> case cycle_time of
-                           Just rcycle_time -> let steps = case ti of
-                                                     TimeSteps s -> s
-                                                     TimeUSecs s -> s `div` rcycle_time
-                                               in foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..steps]
-    IndexExpr _ _ -> Atom expr
-    Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..(getSteps rcycle_time ti)],clk1)
+    IndexExpr _ _ -> (Atom expr,clk)
+    Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi),clk)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]

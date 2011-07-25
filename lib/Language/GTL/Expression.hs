@@ -53,7 +53,7 @@ import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
 import Control.Monad.Error ()
 import Control.Exception
 import Debug.Trace
-
+ 
 -- | A fixpoint data structure.
 --   Allows the construction of infinite data types from finite constructors.
 data Fix f = Fix { unfix :: f (Fix f) }
@@ -67,6 +67,8 @@ data Term v r = Var v Integer -- ^ A variable with a name and a history level
               | UnBoolExpr UnBoolOp r -- ^ A unary logical expression
               | IndexExpr r Integer -- ^ Use an index to access a subcomponent of an expression
               | Automaton (BA [r] String) -- ^ A automaton specifying a temporal logical condition
+              | ClockReset Integer Integer
+              | ClockRef Integer
               deriving (Eq,Ord)
 
 -- | A constant is a value applied to the 'Fix' constructor
@@ -94,6 +96,8 @@ instance Functor (Term v) where
   fmap f (BinIntExpr op l r) = BinIntExpr op (f l) (f r)
   fmap f (UnBoolExpr op p) = UnBoolExpr op (f p)
   fmap f (IndexExpr x i) = IndexExpr (f x) i
+  fmap f (ClockReset x y) = ClockReset x y
+  fmap f (ClockRef x) = ClockRef x
 
 instance Functor a => Functor (Typed a) where
   fmap f t = Typed { getType = getType t
@@ -109,6 +113,8 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
   put (UnBoolExpr op p) = put (5::Word8) >> put op >> put p
   put (IndexExpr e i) = put (6::Word8) >> put i >> put e
   put (Automaton aut) = put (7::Word8) >> put aut
+  put (ClockReset x y) = put (8::Word8) >> put x >> put y
+  put (ClockRef x) = put (9::Word8) >> put x
   get = do
     (i::Word8) <- get
     case i of
@@ -143,6 +149,13 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
       7 -> do
         aut <- get
         return $ Automaton aut
+      8 -> do
+        x <- get
+        y <- get
+        return $ ClockReset x y
+      9 -> do
+        x <- get
+        return $ ClockRef x
 
 -- | Construct a variable of a given type
 var :: GTLType -> v -> Integer -> TypedExpr v
@@ -246,6 +259,8 @@ showTerm f (UnBoolExpr op p) = "(" ++ (case op of
                                           Always -> "always "
                                           Next ts -> "next"++show ts++" ") ++ (f p) ++ ")"
 showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
+showTerm f (ClockReset clk limit) = "clock("++show clk++") := "++show limit
+showTerm f (ClockRef clk) = "clock("++show clk++")"
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
@@ -798,6 +813,12 @@ compareExpr e1 e2
             _ -> case compareExpr p e2 of
               EEQ -> ENEQ
               _ -> EUNK
+          ClockReset x y -> case getValue e2 of
+            ClockReset x' y' -> if x==x' && y==y' then EEQ else EUNK
+            _ -> EUNK
+          ClockRef x -> case getValue e2 of
+            ClockRef y -> if x==y then EEQ else EUNK
+            _ -> EUNK
       _ -> case getValue e1 of
         Value c1 -> case getValue e2 of
           Value c2 -> if c1 == c2
