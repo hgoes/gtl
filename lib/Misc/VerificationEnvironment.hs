@@ -50,7 +50,7 @@ runVerifier
 runVerifier verifier outputDir = do
   currentDir <- getCurrentDirectory
   setCurrentDirectory outputDir
-  outp <- readProcess ("." </> verifier) ["-a","-e"] ""
+  outp <- readProcess ("." </> verifier) ["-a"] ""
   setCurrentDirectory currentDir
   return outp
 
