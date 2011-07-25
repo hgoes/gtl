@@ -478,6 +478,8 @@ distributeNot expr
       Always -> Typed GTLBool $ BinBoolExpr (Until NoTime) (Fix (Typed GTLBool (Value (GTLBoolVal True)))) (Fix $ distributeNot $ unfix p)
     IndexExpr e i -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     Automaton buchi -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
+    ClockRef x -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
+    ClockReset _ _ -> error "Can't negate a clock reset"
 
 -- | If negations occur in the given expression, push them as deep into the expression as possible.
 pushNot :: TypedExpr v -> TypedExpr v

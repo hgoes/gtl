@@ -125,6 +125,16 @@ gtlToLTL' clk cycle_time expr
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
                          GTL.After ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..(getSteps rcycle_time ti)],clk1)
+                           Nothing
+                             | getUSecs ti == 0 -> (arg,clk1)
+                             | otherwise -> (LTL.Bin LTL.And
+                                             (Atom $ Typed GTLBool $ ClockReset clk1 (getUSecs ti))
+                                             (LTL.Un LTL.Next
+                                              ((LTL.Bin LTL.Until
+                                                (LTL.Ground True)
+                                                (LTL.Bin LTL.And
+                                                 (LTL.Un LTL.Not (Atom $ Typed GTLBool $ ClockRef clk1))
+                                                 arg)))),clk1+1)
     IndexExpr _ _ -> (Atom expr,clk)
     Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi),clk)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
