@@ -101,6 +101,10 @@ gtlToLTL cycle_time expr
                                                      TimeUSecs s -> s `div` rcycle_time
                                                in foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..steps]
                          GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) arg
+                         GTL.After ti -> let steps = case ti of
+                                               TimeSteps s -> s
+                                               TimeUSecs s -> s
+                                         in foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..steps]
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"

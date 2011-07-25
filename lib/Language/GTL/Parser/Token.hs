@@ -48,6 +48,7 @@ data UnOp = GOpAlways
           | GOpNext
           | GOpNot
           | GOpFinally
+          | GOpAfter
           deriving (Show,Eq,Ord)
 
 data BinOp = GOpAnd

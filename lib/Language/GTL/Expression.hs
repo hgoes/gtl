@@ -386,6 +386,7 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
                               GOpNext -> Next ts
                               GOpNot -> Not
                               GOpFinally -> Finally ts
+                              GOpAfter -> After ts
                           ) rec
     parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
     parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
@@ -543,6 +544,7 @@ data UnBoolOp = Not
               | Always
               | Next TimeSpec
               | Finally TimeSpec
+              | After TimeSpec
               deriving (Show,Eq,Ord)
 
 instance Binary TimeSpec where

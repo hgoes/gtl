@@ -15,6 +15,7 @@ import qualified Data.Map as Map
 %error { parseError }
 
 %token
+  "after"           { Unary GOpAfter }
   "all"             { Key KeyAll }
   "always"          { Unary GOpAlways }
   "and"             { Binary GOpAnd }
@@ -73,7 +74,7 @@ import qualified Data.Map as Map
   int               { ConstInt $$ }
 
 %left ":"
-%left "always" "next" "finally"
+%left "always" "next" "finally" "after"
 %left "until"
 %left "or"
 %left "and"
@@ -176,6 +177,7 @@ expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
      | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
      | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
      | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
+     | "after" time_spec expr       { GUn GOpAfter $2 $3 }
      | "not" expr                   { GUn GOpNot NoTime $2 }
      | "always" expr                { GUn GOpAlways NoTime $2 }
      | "next" expr                  { GUn GOpNext NoTime $2 }

@@ -14,6 +14,7 @@ $digit10 = [0-9]
 tokens:-
   $white+                        ;
   "//".*                         ;
+  after                          { un GOpAfter }
   all                            { key KeyAll }
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
