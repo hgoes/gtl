@@ -18,8 +18,8 @@ import Data.Set as Set
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtl2ba :: (Ord v,Show v) => TypedExpr v -> BA [TypedExpr v] Integer
-gtl2ba e = ltl2ba $ gtlToLTL e
+gtl2ba :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> BA [TypedExpr v] Integer
+gtl2ba cy e = ltl2ba $ gtlToLTL cy e
 
 instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
   atomsTrue = []
@@ -70,24 +70,32 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
         ENEQ -> Nothing
 
 -- | Translate a GTL expression into a LTL formula.
-gtlToLTL :: (Ord v,Show v) => TypedExpr v -> LTL (TypedExpr v)
-gtlToLTL expr
+gtlToLTL :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> LTL (TypedExpr v)
+gtlToLTL cycle_time expr
   | getType expr == GTLBool = case getValue expr of
     Var _ _ -> Atom expr
     Value (GTLBoolVal x) -> Ground x
-    BinBoolExpr op l r -> case op of
-      GTL.And -> LTL.Bin LTL.And (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-      GTL.Or -> LTL.Bin LTL.Or (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-      GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL (unfix l))) (gtlToLTL (unfix r))
-      GTL.Until NoTime -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
+    BinBoolExpr op l r -> let lhs = gtlToLTL cycle_time (unfix l)
+                              rhs = gtlToLTL cycle_time (unfix r)
+                          in case op of
+                            GTL.And -> LTL.Bin LTL.And lhs rhs
+                            GTL.Or -> LTL.Bin LTL.Or lhs rhs
+                            GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not lhs) rhs
+                            GTL.Until NoTime -> LTL.Bin LTL.Until lhs rhs
+                            GTL.Until ti -> case cycle_time of
+                              Just rcycle_time -> let steps = case ti of
+                                                        TimeSteps s -> s
+                                                        TimeUSecs s -> s `div` rcycle_time
+                                                  in foldl (\expr _ -> LTL.Bin LTL.Or rhs (LTL.Bin LTL.And lhs (LTL.Un LTL.Next expr))) rhs [1..steps]
     BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
       [e] -> e
       es -> foldl1 (LTL.Bin LTL.And) es
-    UnBoolExpr op p -> case op of
-      GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
-      GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
-      GTL.Next NoTime -> LTL.Un LTL.Next (gtlToLTL (unfix p))
-      GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
+    UnBoolExpr op p -> let arg = gtlToLTL cycle_time (unfix p)
+                       in case op of
+                         GTL.Not -> LTL.Un LTL.Not arg
+                         GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) arg
+                         GTL.Next NoTime -> LTL.Un LTL.Next arg
+                         GTL.Finally NoTime -> LTL.Bin LTL.Until (LTL.Ground True) arg
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"

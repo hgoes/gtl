@@ -18,7 +18,7 @@ simplePrettyPrint spec
      ["  input "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelInput mdl) ]++
      ["  output "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelOutput mdl) ]++
      ["  cycle-time "++renderTime (gtlModelCycleTime mdl)]++
-     (fmap ("  "++) (simplePrettyPrintBuchi (gtl2ba (gtlModelContract mdl))))++
+     (fmap ("  "++) (simplePrettyPrintBuchi (gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl))))++
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ]
 

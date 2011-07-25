@@ -69,7 +69,7 @@ neverClaim trace f mdls
         allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname) exprs of
                                    [] -> Nothing
                                    cs -> Just $ Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cs
-                               ) $ renameStates $ baProduct (gtl2ba (gnot f)) traceAut
+                               ) $ renameStates $ baProduct (gtl2ba Nothing (gnot f)) traceAut
         
         init = Pr.prIf [ [ Pr.prAtomic $ (case cond of
                                              Nothing -> []

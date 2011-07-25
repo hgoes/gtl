@@ -65,7 +65,7 @@ instance GTLBackend Scade where
                     }
   backendVerify Scade (ScadeData name decls tps opFile) expr opts gtlName
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba expr)
+          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba Nothing expr)
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"

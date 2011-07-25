@@ -99,7 +99,7 @@ buildModelProcs spec outmp inmp = Map.mapWithKey instanceToBuchi (gtlSpecInstanc
   where
     instanceToBuchi :: String -> (GTLInstance String) -> BA TransitionConditions Integer
     instanceToBuchi name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                in baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba $ gtlModelContract mdl
+                                in baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl)
 
 atomsToRestr :: String -> GTLModel String -> OutputMap -> InputMap -> [TypedExpr String] -> TransitionConditions
 atomsToRestr name mdl outmp inmp atm 
