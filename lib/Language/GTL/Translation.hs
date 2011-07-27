@@ -123,6 +123,7 @@ gtlToLTL' clk cycle_time expr
                          GTL.Finally NoTime -> (LTL.Bin LTL.Until (LTL.Ground True) arg,clk1)
                          GTL.Finally ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
+                           Nothing -> gtlToLTL' clk cycle_time (Typed GTLBool $ BinBoolExpr (GTL.Until ti) (Fix $ Typed GTLBool (Value (GTLBoolVal True))) p)
                          GTL.After ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..(getSteps rcycle_time ti)],clk1)
                            Nothing
