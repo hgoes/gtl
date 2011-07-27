@@ -816,7 +816,9 @@ compareExpr e1 e2
               EEQ -> ENEQ
               _ -> EUNK
           ClockReset x y -> case getValue e2 of
-            ClockReset x' y' -> if x==x' && y==y' then EEQ else EUNK
+            ClockReset x' y' -> if x==x'
+                                then (if y==y' then EEQ else ENEQ)
+                                else EUNK
             _ -> EUNK
           ClockRef x -> case getValue e2 of
             ClockRef y -> if x==y then EEQ else EUNK
