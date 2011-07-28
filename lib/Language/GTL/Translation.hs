@@ -98,6 +98,10 @@ gtlToLTL expr
       GTL.Finally Nothing -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
     IndexExpr _ _ -> Atom expr
     Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
+    BuiltIn "equal" args@(x:xs) -> case getType (unfix x) of
+      GTLBool -> let tt = fmap (gtlToLTL.unfix) args
+                     ff = fmap (gtlToLTL.distributeNot.unfix) args
+                 in LTL.Bin LTL.Or (foldl1 (LTL.Bin LTL.And) tt) (foldl1 (LTL.Bin LTL.And) ff)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]

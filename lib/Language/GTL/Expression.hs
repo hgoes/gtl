@@ -36,6 +36,7 @@ data Term v r = Var v Integer -- ^ A variable with a name and a history level
               | UnBoolExpr UnBoolOp r -- ^ A unary logical expression
               | IndexExpr r Integer -- ^ Use an index to access a subcomponent of an expression
               | Automaton (BA [r] String) -- ^ A automaton specifying a temporal logical condition
+              | BuiltIn String [r]
               deriving (Eq,Ord)
 
 -- | A constant is a value applied to the 'Fix' constructor
@@ -321,6 +322,18 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
                                         ) (Set.toList trans)
                          return $ Set.fromList trans') (baTransitions buchi)
       return $ Typed GTLBool (Automaton $ buchi { baTransitions = ntrans })
+    typeCheck' mu mutp mus varmp enums (BuiltIn name args) = do
+      tps <- mapM mu args
+      case name of
+        "equal" -> do
+          case tps of
+            [] -> return $ Typed GTLBool (BuiltIn name [])
+            x:xs -> do
+              mapM_ (\tp -> if (mutp tp)==(mutp x)
+                            then return ()
+                            else Left "Not all \"equal\" arguments have the same type") xs
+              return $ Typed GTLBool (BuiltIn name tps)
+        _ -> Left $ "Unknown built-in "++show name
 
 -- | Discard type information for an expression
 untyped :: TypedExpr v -> Expr v
@@ -412,6 +425,9 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
         _ -> Left $ "Index must be an integer"
       rexpr <- mu ex expr
       return $ IndexExpr rexpr (fromIntegral rind)
+    parseTerm' mu f ex (GBuiltIn name args) = do
+      res <- mapM (mu ex) args
+      return $ BuiltIn name res
 
 -- | Distribute a negation as deep as possible into an expression until it only ever occurs in front of variables.
 distributeNot :: TypedExpr v -> TypedExpr v
@@ -465,6 +481,7 @@ getTermVars mu expr = case getValue expr of
                             | trans <- Map.elems (baTransitions buchi), 
                               (cond,_) <- Set.toList trans
                             ]
+  BuiltIn _ args -> concat $ fmap mu args
 
 -- | Get all variables used in a GTL value.
 getValueVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,[Integer],Integer,GTLType)]
