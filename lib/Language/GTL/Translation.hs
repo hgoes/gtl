@@ -80,9 +80,17 @@ gtlToLTL expr
       GTL.Or -> LTL.Bin LTL.Or (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
       GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL (unfix l))) (gtlToLTL (unfix r))
       GTL.Until -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-    BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
-      [e] -> e
-      es -> foldl1 (LTL.Bin LTL.And) es
+    BinRelExpr rel lhs rhs -> case getType (unfix lhs) of
+      GTLBool -> let l = gtlToLTL (unfix lhs)
+                     r = gtlToLTL (unfix rhs)
+                     nl = gtlToLTL (distributeNot (unfix lhs))
+                     nr = gtlToLTL (distributeNot (unfix rhs))
+                 in case rel of
+                   BinEq -> LTL.Bin LTL.Or (LTL.Bin LTL.And l r) (LTL.Bin LTL.And nl nr)
+                   BinNEq -> LTL.Bin LTL.Or (LTL.Bin LTL.And l nr) (LTL.Bin LTL.And nl r)
+      _ -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
+        [e] -> e
+        es -> foldl1 (LTL.Bin LTL.And) es
     UnBoolExpr op p -> case op of
       GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
       GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
