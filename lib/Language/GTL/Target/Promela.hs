@@ -48,7 +48,7 @@ traceToAtoms model trace = fmap transitionToAtoms trace
   where
     transitionToAtoms :: (String,Integer,Integer) -> [TypedExpr (String, String)]
     transitionToAtoms (mdl,st,t) =
-      let stateMachine = (tmodelProcs model)!mdl
+      let stateMachine = tprocAutomaton $ (tmodelProcs model)!mdl
           trans = (baTransitions stateMachine)!st
           (ats,_) = (Set.toList trans) `genericIndex` t
       in tcOriginal ats
@@ -73,19 +73,19 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $ 
-                                            [ prIf [ [ translateTransition allP pname 1 ist n trg cond ]
+                                            [ prIf [ [ translateTransition allP pname cycle_time ist n trg cond ]
                                                    | ist <- Set.toList $ baInits buchi,
                                                      ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
                                             [ Pr.StmtLabel ("st"++show st) $
-                                              prIf [ [ translateTransition allP pname 1 st n trg cond ]
+                                              prIf [ [ translateTransition allP pname cycle_time st n trg cond ]
                                                    | ((cond,trg),n) <- zip (Set.toList trans) [0..]
                                                    ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
                           }
-            | (pname,buchi) <- Map.toList $ tmodelProcs tm ]
+            | (pname,TargetProc buchi cycle_time) <- Map.toList $ tmodelProcs tm ]
     init = [Pr.Init Nothing
             [Pr.toStep $ prAtomic $ [Pr.StmtSkip] ++
              {-concat [ case def of

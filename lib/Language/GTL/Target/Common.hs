@@ -6,6 +6,7 @@ module Language.GTL.Target.Common
        (TargetModel(..),
         TransitionConditions(..),
         TargetVar,
+        TargetProc(..),
         buildTargetModel
         ) where
 
@@ -39,9 +40,14 @@ data TransitionConditions = TransitionConditions
 -- | A flattened out model without arrays or tuples.
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))] -- ^ All variables used in the model with type and default values
-                   , tmodelProcs :: Map String (BA TransitionConditions Integer) -- ^ A map of processes, represented by B&#xFC;chi automata
+                   , tmodelProcs :: Map String TargetProc -- ^ A map of processes, represented by B&#xFC;chi automata
                    , tmodelVerify :: TypedExpr TargetVar -- ^ The verification goal
                    } deriving Show
+
+data TargetProc = TargetProc
+                  { tprocAutomaton :: BA TransitionConditions Integer
+                  , tprocCycleTime :: Integer
+                  } deriving Show
 
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
@@ -94,12 +100,15 @@ buildTargetModel' spec inmp outmp
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
        }
 
-buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String (BA TransitionConditions Integer)
-buildModelProcs spec outmp inmp = Map.mapWithKey instanceToBuchi (gtlSpecInstances spec)
+buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String TargetProc
+buildModelProcs spec outmp inmp = Map.mapWithKey instanceToProc (gtlSpecInstances spec)
   where
-    instanceToBuchi :: String -> (GTLInstance String) -> BA TransitionConditions Integer
-    instanceToBuchi name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                in baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl)
+    instanceToProc :: String -> GTLInstance String -> TargetProc
+    instanceToProc name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                                in TargetProc
+                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl)
+                                   , tprocCycleTime = gtlModelCycleTime mdl
+                                   }
 
 atomsToRestr :: String -> GTLModel String -> OutputMap -> InputMap -> [TypedExpr String] -> TransitionConditions
 atomsToRestr name mdl outmp inmp atm 

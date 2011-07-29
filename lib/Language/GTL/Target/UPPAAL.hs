@@ -62,7 +62,7 @@ translateTarget tm
       templates = [Template (noPos $ pname++"_tmpl") Nothing []
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
-                  | (pname,buchi) <- Map.toList (tmodelProcs tm),
+                  | (pname,TargetProc buchi cycle_time) <- Map.toList (tmodelProcs tm),
                     let st_locs = [ noPos $ Location { locId = ("l"++show name)
                                                      , locName = Just (noPos $ "l"++show name)
                                                      , locLabels = []
