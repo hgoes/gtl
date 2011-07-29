@@ -56,12 +56,16 @@ traceToAtoms model trace = fmap transitionToAtoms trace
 translateTarget :: TargetModel -> [Pr.Module]
 translateTarget tm = var_decls ++ procs ++ init ++ ltl
   where
+    allP = Map.keys (tmodelProcs tm)
     var_decls = [ Pr.Decl $ Pr.Declaration Nothing (convertType tp) [(varString mdl var idx l,Nothing,case inits of
                                                                          Nothing -> Nothing
                                                                          Just dset -> Just $ translateConstant tp (unfix $ head $ Set.toList dset)
                                                                      )]
                 | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm,
                   l <- [0..lvl]
+                ] ++
+                [ Pr.Decl $ Pr.Declaration Nothing TypeInt [ ("_count_"++mdl,Nothing,Nothing) | mdl <- allP ]
+                , Pr.Decl $ Pr.Declaration (Just False) TypeInt [ ("_minimum",Nothing,Nothing) ]
                 ]
     procs = [ Pr.ProcType { proctypeActive = Nothing
                           , proctypeName = pname
@@ -69,27 +73,13 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $ 
-                                            [ prIf [ [prAtomic $ (case translateTExprs (tcAtoms cond) of
-                                                                     Nothing -> []
-                                                                     Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
-                                                      (catMaybes [ translateTRestr tvars restr
-                                                                 | (tvars,restr) <- tcOutputs cond ])++
-                                                      [Pr.StmtPrintf ("TRANSITION "++pname++" "++show ist++" "++show n) []
-                                                      ,Pr.StmtGoto ("st"++show trg)]
-                                                     ]
+                                            [ prIf [ [ translateTransition allP pname 1 ist n trg cond ]
                                                    | ist <- Set.toList $ baInits buchi,
                                                      ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
                                             [ Pr.StmtLabel ("st"++show st) $
-                                              prIf [ [prAtomic $ (case translateTExprs (tcAtoms cond) of
-                                                                     Nothing -> []
-                                                                     Just r -> [Pr.StmtExpr $ Pr.ExprAny r])++
-                                                      (catMaybes [ translateTRestr tvars restr
-                                                                 | (tvars,restr) <- tcOutputs cond ])++
-                                                      [Pr.StmtPrintf ("TRANSITION "++pname++" "++show st++" "++show n) []
-                                                      ,Pr.StmtGoto ("st"++show trg)]
-                                                     ]
+                                              prIf [ [ translateTransition allP pname 1 st n trg cond ]
                                                    | ((cond,trg),n) <- zip (Set.toList trans) [0..]
                                                    ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
@@ -108,6 +98,32 @@ translateTarget tm = var_decls ++ procs ++ init ++ ltl
              ]]
            ]
     ltl = [Pr.LTL Nothing (translateVerify (tmodelVerify tm))]
+
+translateTransition :: [String] -> String -> Integer -> Integer -> Integer -> Integer -> TransitionConditions -> Pr.Statement
+translateTransition (y:ys) pname cy st n trg cond 
+  = prAtomic $ [Pr.StmtExpr $ Pr.ExprAny $ (case translateTExprs (tcAtoms cond) of
+                                               Nothing -> cond0
+                                               Just r -> BinExpr Pr.BinAnd cond0 r
+                                                 ) ]++
+    (catMaybes [ translateTRestr tvars restr
+               | (tvars,restr) <- tcOutputs cond ])++
+    [Pr.StmtPrintf ("TRANSITION "++pname++" "++show st++" "++show n++"\n") []
+    ,prDStep ([ StmtAssign (VarRef ("_count_"++pname) Nothing Nothing) (BinExpr Pr.BinPlus (RefExpr (VarRef ("_count_"++pname) Nothing Nothing)) (ConstExpr (ConstInt cy)))
+              , StmtAssign (VarRef "_minimum" Nothing Nothing) (RefExpr (VarRef ("_count_"++y) Nothing Nothing))
+              ] ++
+              [ prIf [ [ StmtExpr $ ExprAny $ BinExpr Pr.BinLT (RefExpr (VarRef ("_count_"++v) Nothing Nothing)) (RefExpr (VarRef "_minimum" Nothing Nothing)) 
+                       , StmtAssign (VarRef "_minimum" Nothing Nothing) (RefExpr (VarRef ("_count_"++v) Nothing Nothing))
+                       ]
+                     , [ StmtElse ]
+                     ] 
+              | v <- ys ] ++
+              [ StmtAssign (VarRef ("_count_"++v) Nothing Nothing) (BinExpr Pr.BinMinus (RefExpr (VarRef ("_count_"++v) Nothing Nothing)) (RefExpr (VarRef "_minimum" Nothing Nothing)))
+              | v <- y:ys
+              ]
+             )
+    ,Pr.StmtGoto ("st"++show trg)]
+    where
+      cond0 = BinExpr Pr.BinEquals (RefExpr (VarRef ("_count_"++pname) Nothing Nothing)) (ConstExpr (ConstInt 0))
 
 translateVerify :: TypedExpr TargetVar -> LTLExpr
 translateVerify e = case getValue e of
