@@ -71,6 +71,7 @@ data GExpr = GBin BinOp TimeSpec GExpr GExpr
            | GArray [GExpr]
            | GIndex GExpr GExpr
            | GEnum String
+           | GBuiltIn String [GExpr]
            deriving (Show,Eq,Ord)
 
 -- | A state of a state machine.

@@ -138,6 +138,10 @@ gtlToLTL' clk cycle_time expr
                                                  arg)))),clk1+1)
     IndexExpr _ _ -> (Atom expr,clk)
     Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi),clk)
+    BuiltIn "equal" args@(x:xs) -> case getType (unfix x) of
+      GTLBool -> let tt = fmap (gtlToLTL.unfix) args
+                     ff = fmap (gtlToLTL.distributeNot.unfix) args
+                 in LTL.Bin LTL.Or (foldl1 (LTL.Bin LTL.And) tt) (foldl1 (LTL.Bin LTL.And) ff)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]

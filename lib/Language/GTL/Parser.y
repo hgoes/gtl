@@ -204,6 +204,7 @@ expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
      | enum                         { GEnum $1 }
      | "true"                       { GConstBool True }
      | "false"                      { GConstBool False }
+     | id "(" expr_list ")"         { GBuiltIn $1 $3 }
 
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }

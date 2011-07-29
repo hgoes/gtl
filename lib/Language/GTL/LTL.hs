@@ -1,6 +1,6 @@
 {-| Implements Linear Time Logic and its translation into Buchi-Automaton.
  -}
-{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies,FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances,MultiParamTypeClasses,FunctionalDependencies,FlexibleContexts,ScopedTypeVariables #-}
 module Language.GTL.LTL(
   -- * Formulas
   LTL(..),
@@ -27,6 +27,11 @@ import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
 import Language.GTL.Expression (ExprOrdering(..))
+import qualified Data.IntMap as IMap
+import qualified Data.IntSet as ISet
+import Data.Graph.Inductive as Graph (Gr(..), mkGraph, Graph(..), LNode, LEdge, Path, lab)
+import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
+import Data.Maybe (fromJust)
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -91,9 +96,9 @@ instance Show a => Show (LTL a) where
                                                  in if p >= binPrec UntilOp
                                                     then showChar '(' . str . showChar ')'
                                                     else str
-  showsPrec p (Bin op l r) = let str = showsPrec (binPrec op) l . 
+  showsPrec p (Bin op l r) = let str = showsPrec (binPrec op) l .
                                        showChar ' ' .
-                                       shows op . 
+                                       shows op .
                                        showChar ' ' .
                                        showsPrec (binPrec op) r
                              in if p >= binPrec op
@@ -118,7 +123,7 @@ distributeNegation aut@(LTLAutomaton _) = aut
 pushNegation :: LTL a -> LTL a
 pushNegation (Atom x) = Un Not (Atom x)
 pushNegation (Ground p) = Ground $ not p
-pushNegation (Bin op l r) = Bin (case op of 
+pushNegation (Bin op l r) = Bin (case op of
                                     And -> Or
                                     Or -> And
                                     Until -> UntilOp
@@ -183,12 +188,12 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               }
   where
     ntrans = fmap (\set -> Set.fromList $ minimizeTrans [] (Set.toList set)) (baTransitions ba)
-    
+
     minimizeTrans d [] = d
     minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
-    
+
     minimizeTrans' d c st d' [] = minimizeTrans ((c,st):d) d'
-    minimizeTrans' d c st d' ((c',st'):ts) = if st==st' 
+    minimizeTrans' d c st d' ((c',st'):ts) = if st==st'
                                              then (case compareAtoms c' c of
                                                       EEQ -> minimizeTrans' d c st d' ts
                                                       ELT -> minimizeTrans' d c st d' ts
@@ -204,51 +209,158 @@ minimizeBA ba = BA { baTransitions = ntrans
                    }
   where
     ntrans = Map.fromList $ minimizeBA' False (Map.toList (baTransitions ba)) []
-    
+
     minimizeBA' False d [] = d
     minimizeBA' True d [] = minimizeBA' False [] d
     minimizeBA' ch d ((st,trans):xs) = minimizeBA'' ch d st trans [] xs
-    
+
     minimizeBA'' ch d st trans d' [] = minimizeBA' ch ((st,trans):d) d'
     minimizeBA'' ch d st trans d' ((st',trans'):xs) = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
                                                       then minimizeBA'' True (updateTranss st st' d) st
                                                            (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs)
                                                       else minimizeBA'' ch d st trans ((st',trans'):d') xs
-    
+
     updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
                                                        then (cond,st)
                                                        else (cond,trg)) trans
-    
+
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
 -- | Translate a generalized B&#xFC;chi automaton into a regular one by introducing levels.
-gba2ba :: (Ord st,AtomContainer b a,Ord b) => GBA b st -> BA b (Set st,Int)
+gba2ba :: (Ord st, AtomContainer b a, Ord b) => GBA b st -> BA b (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
                 , baTransitions = buildTrans (Set.toList inits) Map.empty
                 }
   where
     inits = Set.map (\x -> (x,0)) (gbaInits gba)
-    
-    finals = foldl (\f ts -> foldl (\f' (_,_,fins) -> Set.union f' fins) f ts) Set.empty (gbaTransitions gba)
-    finalList = Set.toList finals
-    final_size = Set.size finals
-    
+    finalList = optimizeFinalFamilyOrder $ buildFs (gbaTransitions gba)
+    final_size = List.length finalList
+
     buildTrans [] mp = mp
     buildTrans ((st,i):sts) mp
       | Map.member (st,i) mp = buildTrans sts mp
       | otherwise = let ntrans = Set.map (\(cond,trg,fins) -> (cond,(trg,next i fins))) ((gbaTransitions gba)!st)
                     in buildTrans ([ trg | (_,trg) <- Set.toList ntrans ]++sts) (Map.insert (st,i) ntrans mp)
-    
+
     next j fin = let j' = if j==final_size
                           then 0
                           else j
-                            
+
                      findNext k [] = k
                      findNext k (f:fs) = if Set.member f fin
                                          then findNext (k+1) fs
                                          else k
                  in findNext j' (drop j' finalList)
+
+-- | delta : 2^Q -> 2^(S x 2^Q x 2^F), F ⊆ Q.
+-- The transition are labeled with the index of the final set they belong to.
+type LabeledHyperTransitionMap st a = Map (Set st) (Set (a, Set st, Set st))
+-- | delta : 2^Q -> 2^(S x 2^Q), F ⊆ Q.
+-- Hyper refers to hyper graphs as one edge points to multiple nodes.
+type HyperTransitionMap st a = Map (Set st) (Set (a, Set st))
+-- | delta : F -> 2^(S x 2^Q), F ⊆ Q.
+-- Mapping from an final set index to assigned transitions for _one_ starting node.
+type FinalTransitionMap st a = Map st (Set (a, Set st))
+-- | T_f ⊆ (2^(S x 2^Q))^Q -- that is a subset of all mappings Q -> 2^(S x 2^Q)
+type FinalSetFamily st a = Map st (HyperTransitionMap st a)
+
+-- Mapping from sets of final transitions to the contained transitions
+buildFs :: forall st a. (Ord st, Ord a) => LabeledHyperTransitionMap st a -> FinalSetFamily st a
+buildFs trans
+  = Map.foldlWithKey buildFinalSets Map.empty trans
+  where
+    -- StartingStates -> Transitions from these States -> Map from final states to map of transitions
+    buildFinalSets :: FinalSetFamily st a -> Set st -> Set (a, Set st, Set st) -> FinalSetFamily st a
+    buildFinalSets finTs s ts =
+      mergeFinalSets finTs s $ foldl extendFinalTransitionMap Map.empty ts
+
+    -- Given a mapping from the final sets to their assigned transitions and the states from which these
+    -- transitions originate. Merge these into the global mapping of final sets.
+    mergeFinalSets :: FinalSetFamily st a -> Set st -> FinalTransitionMap st a -> FinalSetFamily st a
+    mergeFinalSets finTs orig someFinTs
+      = Map.foldlWithKey (\ finTs' finSt tr -> Map.alter (insertOrCreateMap orig tr) finSt finTs') finTs someFinTs
+
+    -- Given a mapping from the index of a final set to its so far assigned transitions
+    -- for _one_ originating node. This function extends this map by all transitions given in
+    -- by /(x, tgts)/.
+    extendFinalTransitionMap :: FinalTransitionMap st a -> (a, Set st, Set st) -> FinalTransitionMap st a
+    extendFinalTransitionMap partFinTs (x, tgts, fin)
+      = unionFinals partFinTs $ buildFinalTransitionSets x tgts fin
+
+    buildFinalTransitionSets :: a -> Set st -> Set st -> Map st (a, Set st)
+    buildFinalTransitionSets x tgts fin
+      = foldl (\finTrans f -> Map.insert f (x, tgts) finTrans) Map.empty fin
+
+    -- Given a map of f transitions extends the existing transitions by the on given in g for each
+    -- state q. f'(q) = f(q) ⋃ {g(q)}
+    unionFinals :: FinalTransitionMap st a -> Map st (a, Set st) -> FinalTransitionMap st a
+    unionFinals partFinTs finTrans
+      = Map.foldlWithKey (\partFinTs' s tr -> Map.alter (insertOrCreateSet tr) s partFinTs') partFinTs finTrans
+
+    insertOrCreateSet x = maybe (Just $ Set.singleton x) (Just . (Set.insert x))
+    insertOrCreateMap k v = maybe (Just $ Map.singleton k v) (Just . (Map.insert k v))
+
+deepIntersection :: (Ord a, Ord b) => Map a (Set b) -> Map a (Set b) -> Map a (Set b)
+deepIntersection = Map.intersectionWith Set.intersection
+
+deepSize :: Foldable f => f (Set b) -> Int
+deepSize = foldl (\n set -> n + Set.size set) 0
+
+buildIntersectionGraph :: forall gr st a. (Graph.Graph gr, Ord st, Ord a) => FinalSetFamily st a -> gr st Int
+buildIntersectionGraph finals =
+  let
+    -- Build graph nodes: assign each state an arbitrary number and
+    -- keep the state names as labels in the graph.
+    nodeList = (fst $ Map.foldlWithKey (\(nodes, i) s _ -> ((i, s) : nodes, i+1)) ([], 0) finals) :: [LNode st]
+    --nodeList = (List.map (\i -> (i, ())) $ ISet.toList nodes)
+    -- Replaces keys of the map by an arbitrary numbering.
+    numberedFinalFamily = IMap.fromAscList $ zip [0..] $ Map.elems finals
+    nodes = IMap.keysSet numberedFinalFamily
+
+    countIntersections :: HyperTransitionMap st a -> HyperTransitionMap st a -> Int
+    countIntersections l = deepSize . (deepIntersection l)
+
+    -- | Given a node and its transitions builds its context in the intersection
+    -- graph by putting all possible edges to the nodes in /ns/ into the context.
+    -- The context makes up an undirected graph. It is assumed, that /i/ is not in /restGraph/.
+    makeContext :: Int -> HyperTransitionMap st a -> ([LEdge Int], ISet.IntSet) -> ([LEdge Int], ISet.IntSet)
+    makeContext i tr (es, restGraph) =
+      let
+        restGraph' = ISet.delete i restGraph
+        -- multiply by -1 because we take later the _minimum_ spanning path but want the _maximum_!
+        commonTransitions i' = -1 * countIntersections tr (fromJust $ IMap.lookup i' numberedFinalFamily)
+        es' = ISet.fold (\i' adj' -> (i', i, commonTransitions i') : (i, i', commonTransitions i') : adj') [] restGraph'
+      in (es' ++ es, restGraph')
+
+    edges = fst $ IMap.foldWithKey makeContext ([], nodes) numberedFinalFamily
+
+  in mkGraph nodeList edges
+
+optimizeFinalFamilyOrder :: forall st a. (Ord st, Ord a) => FinalSetFamily st a -> [st]
+optimizeFinalFamilyOrder finals =
+  let
+    intersectionGraph = buildIntersectionGraph finals :: Graph.Gr st Int
+
+    -- graph complete => it is connected => always a valid result
+    msp = fromJust $ minSpanningPath intersectionGraph
+
+    pathLabels :: (Graph gr) => gr nl el -> Path -> [nl]
+    pathLabels g p = List.map (\n -> fromJust $ lab g n) p
+
+    -- Find optimal start node:
+    -- generate a pseudo node f0 = ⋃f_i, f_i € F. That is it contains all transitions
+    -- which are in some final set. If the maximum spanning path is p = (f_i1, ...., f_in) then
+    -- the path is reversed iff |f_in ⋂ f0| > |f_i1 ⋂ f0|.
+    needsReverse =
+      let
+        f0 = foldl (Map.unionWith Set.union) Map.empty finals
+        intersI1 = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head msp))
+        intersIn = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head $ reverse msp))
+      in deepSize intersIn > deepSize intersI1
+
+    msp' = if needsReverse then reverse msp else msp
+  in pathLabels intersectionGraph msp'
 
 showCond :: Show a => Map a Bool -> String
 showCond cond = concat $ List.intersperse "," [ (if pos then "" else "!")++show var | (var,pos) <- Map.toList cond ]
@@ -267,20 +379,20 @@ minimizeGBA' gba = if changed
                    else Nothing
   where
     (changed,ntrans,ninit) = minimizeTrans False [] (Map.toList (gbaTransitions gba)) (gbaInits gba)
-    
+
     updateTrans old new = fmap (\(st,t) -> (st,Set.map (\(cond,trg,fin) -> (cond,if trg==old
                                                                                  then new
                                                                                  else trg,fin)) t))
-    
+
     minimizeTrans ch res [] i = (ch,res,i)
     minimizeTrans ch res ((st,t):xs) i
       = let (ch',res',ni,nxs) = minimizeTrans' st t ch ((st,t):res) i [] xs
         in minimizeTrans ch' res' nxs ni
-    
+
     minimizeTrans' st t cch cres ci cxs [] = (cch,cres,ci,cxs)
     minimizeTrans' st t cch cres ci cxs ((st',t'):ys)
       = if t==t'
-        then minimizeTrans' st t True 
+        then minimizeTrans' st t True
              (updateTrans st' st cres)
              (if Set.member st' ci
               then Set.insert st (Set.delete st' ci)
@@ -327,26 +439,26 @@ vwaa2gba aut = GBA { gbaTransitions = buildTrans (Set.toList (vwaaInits aut)) Ma
                    }
   where
     buildTrans [] mp = mp
-    buildTrans (x:xs) mp 
+    buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
       | otherwise = let trans = optimizeGBATransitions $ finalSet $ convertTrans x
                     in buildTrans ([ trg | (_,trg,_) <- trans ]++xs) (Map.insert x (Set.fromList trans) mp)
-    
-    convertTrans sts 
+
+    convertTrans sts
       | Set.null sts = []
       | otherwise = foldl1 transProd [ Set.toList $ (vwaaTransitions aut)!st | st <- Set.toList sts ]
-    
+
     finalSet trans = [(cond,trg,Set.filter (\f -> not (Set.member f trg) ||
                                                   not (List.null [ (cond,trg')
-                                                                 | (cond',trg') <- delta f, 
+                                                                 | (cond',trg') <- delta f,
                                                                    (case compareAtoms cond cond' of
                                                                        EEQ -> True
                                                                        ELT -> True
-                                                                       _ -> False) && 
+                                                                       _ -> False) &&
                                                                    Set.isSubsetOf trg trg' &&
                                                                    not (Set.member f trg')
                                                                  ])
-                                           ) (vwaaCoFinals aut)) 
+                                           ) (vwaaCoFinals aut))
                      | (cond,trg) <- trans ]
 
 delta, delta' :: AtomContainer b a => LTL a -> [(b,Set (LTL a))]
@@ -378,18 +490,18 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
   where
     inits' = cform ltl
     trans' = buildTrans (concat [ Set.toList xs | xs <- Set.toList inits']) Map.empty
-    
+
     buildTrans [] mp = mp
     buildTrans (x:xs) mp
       | Map.member x mp = buildTrans xs mp
       | otherwise = let ts = optimizeVWAATransitions $ delta x
                     in buildTrans (concat [ Set.toList c | (_,c) <- ts ]++xs) (Map.insert x (Set.fromList ts) mp)
-    
+
     isFinal (Bin Until _ _) = True
     isFinal _ = False
-    
+
     getFinals mp = Set.filter isFinal $ Map.keysSet mp
-    
+
 mergeAlphabet :: Ord a => Map a Bool -> Map a Bool -> Maybe (Map a Bool)
 mergeAlphabet a1 a2
   = if confl
@@ -434,15 +546,15 @@ baProduct b1 b2 = BA { baTransitions = trans'
                      , baFinals = fins'
                      }
   where
-    inits' = [ (i1,i2,False) 
+    inits' = [ (i1,i2,False)
              | i1 <- Set.toList (baInits b1),
                i2 <- Set.toList (baInits b2)
              ]
-             
+
     trans' = traceStates inits' Map.empty
-    
+
     fins' = Set.filter (\(st1,st2,i) -> i && Set.member st2 (baFinals b2)) $ Map.keysSet trans'
-    
+
     traceStates [] mp = mp
     traceStates (x@(s1,s2,i):xs) mp
       | Map.member x mp = traceStates xs mp
@@ -453,7 +565,7 @@ baProduct b1 b2 = BA { baTransitions = trans'
                                                then not i
                                                else i))
                                | (c1,nst1) <- Set.toList t1
-                               , (c2,nst2) <- Set.toList t2 
+                               , (c2,nst2) <- Set.toList t2
                                , c <- case mergeAtoms c1 c2 of
                                  Nothing -> []
                                  Just x -> [x]
