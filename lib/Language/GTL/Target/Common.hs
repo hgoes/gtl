@@ -7,7 +7,8 @@ module Language.GTL.Target.Common
         TransitionConditions(..),
         TargetVar,
         TargetProc(..),
-        buildTargetModel
+        buildTargetModel,
+        getVerifyAutomaton
         ) where
 
 import Language.GTL.Model
@@ -51,6 +52,9 @@ data TargetProc = TargetProc
 
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
+
+getVerifyAutomaton :: TargetModel -> BA [TypedExpr TargetVar] Integer
+getVerifyAutomaton tm = gtl2ba Nothing (tmodelVerify tm)
 
 -- | Creates a flattened model from a GTL specification.
 buildTargetModel :: GTLSpec String -> TargetModel
