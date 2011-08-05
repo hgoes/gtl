@@ -76,13 +76,13 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
                           , proctypePriority = Nothing
                           , proctypeProvided = Nothing
                           , proctypeSteps = fmap Pr.toStep $ 
-                                            [ prIf [ [ translateTransition allP pname cycle_time ist n trg cond ]
+                                            [ prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time ist n trg cond ]
                                                    | ist <- Set.toList $ baInits buchi,
                                                      ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
                                             [ Pr.StmtLabel ("st"++show st) $
-                                              prIf [ [ translateTransition allP pname cycle_time st n trg cond ]
+                                              prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time st n trg cond ]
                                                    | ((cond,trg),n) <- zip (Set.toList trans) [0..]
                                                    ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
@@ -106,8 +106,8 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
              then [Pr.LTL Nothing (translateVerify (tmodelVerify tm))]
              else [translateVerifyAutomaton ltl_aut]
 
-translateTransition :: [String] -> String -> Integer -> Integer -> Integer -> Integer -> TransitionConditions -> Pr.Statement
-translateTransition (y:ys) pname cy st n trg cond 
+translateTransition :: [String] -> [Integer] -> String -> Integer -> Integer -> Integer -> Integer -> TransitionConditions -> Pr.Statement
+translateTransition (y:ys) clks pname cy st n trg cond 
   = prAtomic $ [Pr.StmtExpr $ Pr.ExprAny $ (case translateTExprs (tcAtoms cond) of
                                                (Nothing,[]) -> cond0
                                                (Just r,[]) -> BinExpr Pr.BinAnd cond0 r
@@ -126,7 +126,16 @@ translateTransition (y:ys) pname cy st n trg cond
               | v <- ys ] ++
               [ StmtAssign (VarRef ("_count_"++v) Nothing Nothing) (BinExpr Pr.BinMinus (RefExpr (VarRef ("_count_"++v) Nothing Nothing)) (RefExpr (VarRef "_minimum" Nothing Nothing)))
               | v <- y:ys
-              ]
+              ] ++
+              [ prIf [ [ StmtExpr $ ExprAny $ BinExpr Pr.BinGTE (RefExpr clk_var) (RefExpr (VarRef "_minimum" Nothing Nothing)),
+                         StmtAssign clk_var (BinExpr Pr.BinMinus (RefExpr clk_var) (RefExpr (VarRef "_minimum" Nothing Nothing)))
+                       ],
+                       [ StmtElse,
+                         StmtAssign clk_var (ConstExpr (ConstInt (-1)))
+                       ]
+                     ]
+              | clk <- clks, 
+                let clk_var = VarRef ("timer"++show clk) Nothing Nothing ]
              )
     ,Pr.StmtGoto ("st"++show trg)]
     where
