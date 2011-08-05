@@ -1,4 +1,5 @@
 {
+{-# LANGUAGE BangPatterns #-}  
 {-| The GTL Lexer  
  -}
 module Language.GTL.Parser.Lexer (lexGTL) where
