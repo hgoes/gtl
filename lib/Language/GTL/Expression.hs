@@ -33,7 +33,9 @@ module Language.GTL.Expression
         getVars,
         relTurn,
         relNot,
-        maximumHistory
+        maximumHistory,
+        getClocks,
+        automatonClocks
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -730,6 +732,22 @@ data ExprOrdering = EEQ -- ^ Both expressions define the same value space
                   | ELT -- ^ The value space of the first expression is contained by the second
                   | EUNK -- ^ The expressions have overlapping value spaces or the relation isn't known
                   deriving (Show,Eq,Ord)
+
+getClocks :: TypedExpr v -> [Integer]
+getClocks e = case getValue e of
+  ClockReset c _ -> [c]
+  ClockRef c -> [c]
+  BinBoolExpr _ (Fix lhs) (Fix rhs) -> (getClocks lhs) ++ (getClocks rhs)
+  UnBoolExpr _ (Fix r) -> getClocks r
+  Automaton aut -> automatonClocks (fmap unfix) aut
+  BuiltIn _ r -> concat $ fmap (getClocks.unfix) r
+  _ -> []
+
+automatonClocks :: (a -> [TypedExpr v]) -> BA a st -> [Integer]
+automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
+                               | trans <- Map.elems (baTransitions aut), 
+                                 (cond,_) <- Set.toList trans
+                               ]
 
 -- | Convert a typed expression to a linear combination of variables.
 toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer) Integer) GTLConstant

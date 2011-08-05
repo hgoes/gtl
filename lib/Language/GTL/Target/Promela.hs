@@ -64,6 +64,9 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
                 | ((mdl,var,idx),lvl,tp,inits) <- tmodelVars tm,
                   l <- [0..lvl]
                 ] ++
+                (if Set.null clocks
+                 then []
+                 else [Pr.Decl $ Pr.Declaration Nothing TypeInt [ ("timer"++show clk,Nothing,Just $ Pr.ConstExpr $ Pr.ConstInt (-1)) | clk <- Set.toList clocks ]]) ++
                 [ Pr.Decl $ Pr.Declaration Nothing TypeInt [ ("_count_"++mdl,Nothing,Nothing) | mdl <- allP ]
                 , Pr.Decl $ Pr.Declaration (Just False) TypeInt [ ("_minimum",Nothing,Nothing) ]
                 ]
@@ -97,9 +100,11 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
              | iname <- Map.keys (tmodelProcs tm)
              ]]
            ]
+    clocks = Set.fromList $ automatonClocks id ltl_aut
+    ltl_aut = getVerifyAutomaton tm
     verify = if use_ltl 
              then [Pr.LTL Nothing (translateVerify (tmodelVerify tm))]
-             else [translateVerifyAutomaton tm]
+             else [translateVerifyAutomaton ltl_aut]
 
 translateTransition :: [String] -> String -> Integer -> Integer -> Integer -> Integer -> TransitionConditions -> Pr.Statement
 translateTransition (y:ys) pname cy st n trg cond 
@@ -143,8 +148,8 @@ translateVerify e = case getValue e of
   _ -> let (Just re,[]) = translateTExpr e
        in LTLNormalExpr re
 
-translateVerifyAutomaton :: TargetModel -> Pr.Module
-translateVerifyAutomaton tm = prNever $
+translateVerifyAutomaton :: BA [TypedExpr TargetVar] Integer -> Pr.Module
+translateVerifyAutomaton buchi = prNever $
                               [prIf [ buildTrans mcond resets trg
                                     | ist <- Set.toList $ baInits buchi,
                                       (cond,trg) <- Set.toList $ (baTransitions buchi)!ist,
@@ -161,7 +166,6 @@ translateVerifyAutomaton tm = prNever $
                                      ]
                               | (st,trans) <- Map.toList $ baTransitions buchi ]
                                 where
-                                  buchi = getVerifyAutomaton tm
                                   buildTrans mcond resets trg = [ prAtomic $ (case mcond of
                                                                                  Nothing -> []
                                                                                  Just rcond -> [Pr.StmtExpr $ Pr.ExprAny rcond]) ++
@@ -232,7 +236,7 @@ translateTExpr e = case getValue e of
                               Just re -> (Just $ Pr.UnExpr (case op of
                                                                Not -> Pr.UnLNot) re,c)
   ClockReset clk val -> (Nothing,[(clk,val)])
-  ClockRef clk -> (Just $ Pr.BinExpr Pr.BinGTE (Pr.RefExpr $ Pr.VarRef ("timer_"++show clk) Nothing Nothing) (Pr.ConstExpr (Pr.ConstInt 0)),[])
+  ClockRef clk -> (Just $ Pr.BinExpr Pr.BinGTE (Pr.RefExpr $ Pr.VarRef ("timer"++show clk) Nothing Nothing) (Pr.ConstExpr (Pr.ConstInt 0)),[])
   
 -- | Assigns variables including changing their respective history.
 outputTAssign :: [(TargetVar,Integer)] -> Pr.AnyExpression -> [Pr.Statement]
