@@ -17,7 +17,8 @@ module Language.GTL.LTL(
   AtomContainer(..),
   mapLTL,
   baProduct,
-  baMapAlphabet
+  baMapAlphabet,
+  distributeNegation
   ) where
 
 import Data.Set as Set

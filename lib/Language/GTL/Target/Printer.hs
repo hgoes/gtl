@@ -22,7 +22,7 @@ simplePrettyPrint spec
      ["}"]
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ] ++
     ["verify {"] ++
-    (fmap ("  "++) (simplePrettyPrintBuchi (gtl2ba Nothing $ gtlSpecVerify spec))) ++
+    (fmap ("  "++) (simplePrettyPrintBuchi (gtl2ba Nothing $ gnot $ gtlSpecVerify spec))) ++
     ["}"]
 
 renderTime :: Integer -> String

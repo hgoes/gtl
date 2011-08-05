@@ -59,11 +59,12 @@ instance (Show a,Show st,Ord st) => Show (VWAA a st) where
                                 | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
               ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
 
-instance (Show a,Show st) => Show (GBA a st) where
-  show gba = unlines $ (concat [ [ "state "++show st ] ++
+instance (Show a,Show st,Ord st) => Show (GBA a st) where
+  show gba = unlines $ (concat [ [ (if Set.member st (gbaInits gba)
+                                    then "initial "
+                                    else "")++"state "++show st ] ++
                                  [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
-                               | (st,trans) <- Map.toList (gbaTransitions gba) ])++
-             ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+                               | (st,trans) <- Map.toList (gbaTransitions gba) ])
 
 -- | Maps over the transition conditions of a B&#xFC;chi automaton.
 baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st

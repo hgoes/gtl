@@ -3,7 +3,8 @@
 {-| Translates GTL expressions into LTL formula.
  -}
 module Language.GTL.Translation(
-  gtl2ba
+  gtl2ba,
+  gtlToLTL
   ) where
 
 import Language.GTL.Expression as GTL

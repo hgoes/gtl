@@ -54,7 +54,7 @@ completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
 
 getVerifyAutomaton :: TargetModel -> BA [TypedExpr TargetVar] Integer
-getVerifyAutomaton tm = gtl2ba Nothing (tmodelVerify tm)
+getVerifyAutomaton tm = gtl2ba Nothing (gnot $ tmodelVerify tm)
 
 -- | Creates a flattened model from a GTL specification.
 buildTargetModel :: GTLSpec String -> TargetModel
