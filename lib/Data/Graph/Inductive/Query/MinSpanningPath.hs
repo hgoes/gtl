@@ -115,7 +115,7 @@ mkPath chosen =
               nextNode = case outEdges of
                 -- [] -> error "unconnected node" -- Should not happen
                 [e] -> next current e
-                [e1, e2] -> nextChoose current e1 e2 chosen
+                [e1, e2] -> nextChoose current e1 e2 remaining
           in if (Map.member nextNode remaining) then
               mkPath' nextNode (Map.delete current remaining) (nextNode : p)
             else p
