@@ -68,7 +68,7 @@ instance GTLBackend Scade where
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba expr)
+          scade = buchiToScade name inp outp (gtl2ba expr)
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
@@ -369,8 +369,8 @@ buildTest opname ins outs = UserOpDecl
 
 -- | Convert a buchi automaton to SCADE.
 buchiToScade :: String -- ^ Name of the resulting SCADE node
-                -> Map String TypeExpr -- ^ Input variables
-                -> Map String TypeExpr -- ^ Output variables
+                -> [(String, TypeExpr)] -- ^ Input variables
+                -> [(String, TypeExpr)] -- ^ Output variables
                 -> BA [TypedExpr String] Integer -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
@@ -381,7 +381,7 @@ buchiToScade name ins outs buchi
     , userOpName = name++"_testnode"
     , userOpSize = Nothing
     , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
-                     | (n,tp) <- Map.toList ins ++ Map.toList outs ]
+                     | (n,tp) <- ins ++ outs ]
     , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
                                , Sc.varType = TypeBool
                                , Sc.varDefault = Nothing
