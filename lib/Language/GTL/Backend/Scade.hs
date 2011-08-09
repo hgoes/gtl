@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies,GADTs #-}
 {-| SCADE is a synchronous specification language for software-components.
     It provides a code-generator and a verification tool. -}
-module Language.GTL.Backend.Scade 
+module Language.GTL.Backend.Scade
        (Scade(..))
        where
 
@@ -17,6 +17,7 @@ import Language.GTL.Buchi
 import Data.Map as Map hiding (map)
 import Data.Set as Set hiding (map)
 import Control.Monad.Identity
+import Data.List (intercalate)
 
 import System.FilePath
 import System.Process as Proc
@@ -63,8 +64,10 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData name decls tps opFile) expr opts gtlName
-    = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
+  backendVerify Scade (ScadeData node decls tps opFile) expr opts gtlName
+    = let nodeNameParsed = scadeParseNodeName node
+          name = (intercalate "_" nodeNameParsed)
+          (inp,outp) = scadeInterface nodeNameParsed decls
           scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba expr)
       in do
         let outputDir = (outputPath opts)
