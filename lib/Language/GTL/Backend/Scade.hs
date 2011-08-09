@@ -479,6 +479,10 @@ exprToScade expr = case getValue expr of
                                          OpMult -> BinTimes
                                          OpDiv -> BinDiv
                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  BinBoolExpr op l r -> Sc.BinaryExpr (case op of
+                                        GTL.And -> Sc.BinAnd
+                                        GTL.Or -> Sc.BinOr
+                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
   BinRelExpr rel l r -> BinaryExpr (case rel of
                                       BinLT -> BinLesser
                                       BinLTEq -> BinLessEq
@@ -488,6 +492,7 @@ exprToScade expr = case getValue expr of
                                       BinNEq -> BinDifferent
                                    ) (exprToScade (unfix l)) (exprToScade (unfix r))
   UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
+  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade $ unfix r) (Sc.ConstIntExpr i)
 
 valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
 valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
