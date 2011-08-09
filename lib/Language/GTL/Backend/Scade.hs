@@ -78,14 +78,18 @@ instance GTLBackend Scade where
         writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
         case scadeRoot opts of
           Just p -> do
-            report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-            case report' of
-              Nothing -> return Nothing
-              Just report -> do
-                when (not (verified report))
-                  (generateScenario scenarioFile report)
-                return $ Just $ verified report
-          Nothing -> return Nothing
+            reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+            case reportFile' of
+              Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+              Just reportFile -> do
+                report' <- readReport reportFile
+                case report' of
+                  Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                  Just report -> do
+                    when (not (verified report))
+                      (generateScenario scenarioFile report)
+                    return $ Just $ verified report
+          Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs
@@ -125,7 +129,7 @@ data Report = Report {
 } deriving Show
 
 -- | Runs the Scade design verifier and reads back its report.
-verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Report)
+verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe FilePath)
 verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
@@ -142,7 +146,7 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
     exitCode <- Proc.waitForProcess p
     case exitCode of
       ExitFailure _ -> return Nothing
-      ExitSuccess -> readReport reportFile
+      ExitSuccess -> return $ Just reportFile
 
 -- | Read the XML output of the design verifier.
 -- The structure is something like:
