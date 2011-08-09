@@ -130,12 +130,13 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
       verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
+      outputStream = if (verbosity opts) > 0 then Inherit else CreatePipe
   in do
     (_, _, _, p) <- Proc.createProcess $
                     Proc.CreateProcess {
                       cmdspec = Proc.RawCommand dv verifOpts
                       , cwd = Nothing, env = Nothing
-                      , std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe
+                      , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
                       , close_fds = False
                     }
     exitCode <- Proc.waitForProcess p
