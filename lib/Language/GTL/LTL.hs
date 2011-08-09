@@ -209,7 +209,7 @@ minimizeBA ba = BA { baTransitions = ntrans
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
                    }
   where
-    ntrans = Map.fromList $ minimizeBA' False (Map.toList (baTransitions ba)) []
+    ntrans = Map.fromList $ minimizeBA' False [] (Map.toList (baTransitions ba))
 
     minimizeBA' False d [] = d
     minimizeBA' True d [] = minimizeBA' False [] d
