@@ -75,7 +75,7 @@ instance GTLBackend Scade where
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
         writeFile testNodeFile (show $ prettyScade [scade])
-        writeFile proofNodeFile (show $ prettyScade [generateProver name inp outp])
+        writeFile proofNodeFile (show $ prettyScade [generateProver name node inp outp])
         case scadeRoot opts of
           Just p -> do
             report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
@@ -87,8 +87,8 @@ instance GTLBackend Scade where
                 return $ Just $ verified report
           Nothing -> return Nothing
 
-generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
-generateProver name ins outs
+generateProver :: String -> String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
+generateProver name node ins outs
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -105,7 +105,7 @@ generateProver name ins outs
     , userOpContent = DataDef { dataSignals = []
                               , dataLocals = interfaceToDeclaration outs
                               , dataEquations = [
-                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path [name]) (map (IdExpr . Path . (:[]) . fst) ins))
+                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path [node]) (map (IdExpr . Path . (:[]) . fst) ins))
                                   , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
                                 ]
                               }
