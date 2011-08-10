@@ -153,7 +153,15 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
 --  <prover ...>
 --    <property name="test_result" status="/s/" node="/n/" ...>
 --      <tick ...>
---        <input name="/i/"><value type="/t/">v</value>
+--        <input name="/i/">
+--          <value type="/t/">v</value>
+--        </input>
+--        <input name="/i/">
+--          <composite>
+--            <value type="/t/">v1</value>
+--            <value type="/t/">v2</value>
+--          </composite>
+--        </input>
 --  ...
 -- Where s is "Falsifiable" or "Valid" (Report.verified == True iff s == "Valid"),
 -- n is the name of the tested node (will be in Report.node).
@@ -201,21 +209,30 @@ readReport reportFile = do
             readCycleActions =
               getChildren >>>
               isTag "input" >>> makeSetCommand &&&>
-              getChildren >>>
-              isTag "value" >>> getChildren >>> valueSetCommand
+              getChildren >>> valueSetCommand
             -- TCL command generation
             makeSetCommand =
               getAttrValue "name" >>>
               changeUserState (\n r -> r {errorTrace = (("SSM::set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
+            valueSetCommand :: IOStateArrow Report XmlTree String
             valueSetCommand =
-              getText >>>
-              changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+              (compositeValue `orElse` singleValue) >>> saveValue
+            compositeValue =
+              isTag "composite" >>>
+              deep (
+                singleValue
+              ) >.
+              (intercalate ",") >>> arr addParens
+            singleValue =
+              isTag "value" >>> getChildren >>> getText
+            saveValue = changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
             makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace
             traceTail = tail . errorTrace
             commandHead = head . traceHead
             commandTail = tail . traceHead
+            addParens s = "(" ++ s ++ ")"
     -- After parsing the ticks and the commands in there are in reverse order -> correct that.
     reverseTrace :: Report -> Report
     reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
