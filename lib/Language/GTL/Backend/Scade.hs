@@ -206,11 +206,11 @@ readReport reportFile = do
             -- TCL command generation
             makeSetCommand =
               getAttrValue "name" >>>
-              changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
+              changeUserState (\n r -> r {errorTrace = (("SSM::set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
             valueSetCommand =
               getText >>>
               changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
-            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (traceHead r)) : (traceTail r)})
+            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace
             traceTail = tail . errorTrace
