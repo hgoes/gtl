@@ -65,6 +65,13 @@ instance (Show a,Show st) => Show (GBA a st) where
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])++
              ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
 
+class BAState st where
+  -- | Generates a new state which isn't in use, yet.
+  unusedBAState :: BA a st -> st
+
+instance BAState Integer where
+  unusedBAState ba = (fst $ Map.findMax $ baTransitions ba) + 1
+
 -- | Maps over the transition conditions of a B&#xFC;chi automaton.
 baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
 baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }

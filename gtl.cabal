@@ -30,6 +30,7 @@ Library
     Language.GTL.Buchi
     Language.GTL.Types
     Language.GTL.Restriction
+    Language.GTL.DEA
     --Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
