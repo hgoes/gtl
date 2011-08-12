@@ -13,11 +13,13 @@ import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
-import Language.GTL.Buchi
+--import Language.GTL.Buchi
+import Language.GTL.DFA
 import Data.Map as Map hiding (map)
-import Data.Set as Set hiding (map)
+--import Data.Set as Set hiding (map)
 import Control.Monad.Identity
-import Data.List (intercalate)
+import Data.List as List (intercalate, null)
+import Data.Maybe (maybeToList)
 
 import System.FilePath
 import System.Process as Proc
@@ -68,28 +70,33 @@ instance GTLBackend Scade where
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          scade = buchiToScade name inp outp (gtl2ba expr)
+          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba expr
+          scade = fmap (dfaToScade name inp outp) dfa
+          --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
-        writeFile testNodeFile (show $ prettyScade [scade])
-        writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
-        case scadeRoot opts of
-          Just p -> do
-            reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-            case reportFile' of
-              Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
-              Just reportFile -> do
-                report' <- readReport reportFile
-                case report' of
-                  Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
-                  Just report -> do
-                    when (not (verified report))
-                      (generateScenario scenarioFile report)
-                    return $ Just $ verified report
-          Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+        case scade of
+          Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
+          Just scade' -> do
+            writeFile testNodeFile (show $ prettyScade [scade'])
+            writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
+            case scadeRoot opts of
+              Just p -> do
+                reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+                case reportFile' of
+                  Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+                  Just reportFile -> do
+                    report' <- readReport reportFile
+                    case report' of
+                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                      Just report -> do
+                        when (not (verified report))
+                          (generateScenario scenarioFile report)
+                        return $ Just $ verified report
+              Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs
@@ -389,6 +396,59 @@ buildTest opname ins outs = UserOpDecl
                             }
   }
 
+-- | Convert a DFA to Scade.
+dfaToScade :: String -- ^ Name of the resulting SCADE node
+                -> [(String, TypeExpr)] -- ^ Input variables
+                -> [(String, TypeExpr)] -- ^ Output variables
+                -> DFA [TypedExpr String] Integer -- ^ The DFA
+                -> Sc.Declaration
+
+dfaToScade name ins outs dfa
+  = UserOpDecl
+    { userOpKind = Sc.Node
+    , userOpImported = False
+    , userOpInterface = InterfaceStatus Nothing False
+    , userOpName = name++"_testnode"
+    , userOpSize = Nothing
+    , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
+                     | (n,tp) <- ins ++ outs ]
+    , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
+                               , Sc.varType = TypeBool
+                               , Sc.varDefault = Nothing
+                               , Sc.varLast = Nothing
+                               }]
+    , userOpNumerics = []
+    , userOpContent = DataDef { dataSignals = []
+                              , dataLocals = []
+                              , dataEquations = [StateEquation
+                                                 (StateMachine Nothing (dfaToStates dfa))
+                                                 [] True
+                                                ]
+                              }
+    }
+
+-- | Translates a buchi automaton into a list of SCADE automaton states.
+dfaToStates :: DFA [TypedExpr String] Integer -> [Sc.State]
+dfaToStates dfa = failState :
+                  [ Sc.State
+                   { stateInitial = s == dfaInit dfa
+                   , stateFinal = False
+                   , stateName = "st" ++ (show s)
+                   , stateData = DataDef { dataSignals = []
+                                         , dataLocals = []
+                                         , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
+                                         }
+                   , stateUnless = [ stateToTransition cond trg
+                                   | (cond, trg) <- Map.toList trans, not (List.null cond) ] ++
+                                   -- put unconditional transition at the end if available
+                                   (maybeToList $ fmap (stateToTransition []) $ Map.lookup [] trans) ++
+                                   [failTransition]
+                   , stateUntil = []
+                   , stateSynchro = Nothing
+                   }
+                 | (s, trans) <- Map.toList (unTotal $ dfaTransitions dfa) ]
+
+{-
 -- | Convert a buchi automaton to SCADE.
 buchiToScade :: String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
@@ -438,6 +498,8 @@ startState buchi = Sc.State
   , stateSynchro = Nothing
   }
 
+-}
+
 -- | Constructs a transition into the `failState'.
 failTransition :: Sc.Transition
 failTransition = Transition (ConstBoolExpr True) Nothing (TargetFork Restart "fail")
@@ -458,6 +520,7 @@ failState = Sc.State
   , stateSynchro = Nothing
   }
 
+{-
 -- | Translates a buchi automaton into a list of SCADE automaton states.
 buchiToStates :: BA [TypedExpr String] Integer -> [Sc.State]
 buchiToStates buchi = startState buchi :
@@ -477,6 +540,8 @@ buchiToStates buchi = startState buchi :
                        , stateSynchro = Nothing
                        }
                      | (num,trans) <- Map.toList (baTransitions buchi) ]
+
+-}
 
 -- | Given a state this function creates a transition into the state.
 stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
