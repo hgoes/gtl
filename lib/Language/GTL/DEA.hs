@@ -13,16 +13,16 @@ import Data.Foldable (foldl, find)
 import Language.GTL.Buchi
 
 -- Models total functions via mapping structures. The instances may not really be total,
--- this has to be ensured by the user. But it should make the intention clear.
+-- this has to be ensured by the user (how should that be checked?).
+-- But it should make the intention clear.
 class TotalFunction a b c | a -> b, a -> c where
   (!$) :: a -> b -> c
 
 -- Force total maps through type system.
-data MakeTotal a = MakeTotal a
-unTotal (MakeTotal m) = m
+data MakeTotal m = MakeTotal { unTotal :: m }
 
 instance Ord a => TotalFunction (MakeTotal (Map a b)) a b where
-  (MakeTotal m) !$ k = fromJust $ Map.lookup k m
+  m !$ k = fromJust $ Map.lookup k $ unTotal m
 
 type DEATransitionFunc a st = MakeTotal (Map st (Map a st))
 
@@ -74,7 +74,9 @@ determinizeBA ba
           deaInit = initS
         }
       where
-        determinize' :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+        determinize' :: (Eq a, Ord a, Eq st, Ord st) =>
+          BATransitionFunc a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+            -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
         determinize' ba remaining r
           | Set.null remaining = r
           | otherwise =
@@ -82,7 +84,9 @@ determinizeBA ba
                 (remaining', trans', qs') = buildTransition ba next r
             in determinize' ba (Set.union remaining' (Set.delete next remaining)) (trans', qs')
 
-        buildTransition :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+        buildTransition :: (Eq a, Ord a, Eq st, Ord st) =>
+          BATransitionFunc a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+            -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
         buildTransition ba q (trans, qs) =
           let trans' = getTransitions ba q
               trans'' = mergeTransitions trans'
@@ -90,7 +94,8 @@ determinizeBA ba
           in (newStates, Map.insert q trans'' trans, Set.insert q qs)
 
         -- Get the transitions in the BA which origin at the given set of states.
-        getTransitions :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> PowSetSt st -> Set (Map a (Set st))
+        getTransitions :: (Eq a, Ord a, Eq st, Ord st) =>
+          BATransitionFunc a st -> PowSetSt st -> Set (Map a (Set st))
         getTransitions ba = foldl (\trans s -> Set.insert (transform $ (ba !$ s)) trans) Set.empty
           where
             transform :: (Eq a, Ord a, Eq st, Ord st) => Set (a, st) -> Map a (Set st)
