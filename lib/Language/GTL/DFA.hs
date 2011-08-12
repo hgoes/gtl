@@ -27,9 +27,12 @@ instance Ord a => TotalFunction (MakeTotal (Map a b)) a b where
 type DFATransitionFunc a st = MakeTotal (Map st (Map a st))
 
 {-| Not a real DFA. Has no final states as they are not needed (the acceptance condition
-    of the Buchi automaton can not be represented). Also the transition function is only
-    partial. The semantics are that there is a virtual failure state into which an
-    executing algorithm will go if no transition can be taken. -}
+    of the Buchi automaton can not be represented). The semantics are that the automaton
+    should never stop (see below).
+
+    Also the transition function is only partial regarding to the guards. The semantics
+    are that there is a virtual failure state into which an executing algorithm will go
+    if no transition can be taken. There the automaton stops and execution fails. -}
 data DFA a st = DFA { dfaTransitions :: DFATransitionFunc a st
                   , dfaInit :: st
                   -- , dfaFinals :: Set st -- Not needed at the moment
