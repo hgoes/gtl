@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
+
 module Language.GTL.DEA (
     DEA(..), determinizeBA
   )
@@ -10,14 +12,28 @@ import Data.Maybe
 import Data.Foldable (foldl)
 import Language.GTL.Buchi
 
+-- Models total functions via mapping structures. The instances may not really be total,
+-- this has to be ensured by the user. But it should make the intention clear.
+class TotalFunction a b c | a -> b, a -> c where
+  (!$) :: a -> b -> c
+
+-- Force total maps through type system.
+data MakeTotal a = MakeTotal a
+unTotal (MakeTotal m) = m
+
+instance Ord a => TotalFunction (MakeTotal (Map a b)) a b where
+  (MakeTotal m) !$ k = fromJust $ Map.lookup k m
+
+type DEATransitionFunc a st = MakeTotal (Map st (Map a st))
+
 {-| Not a real DEA. Has no final states as they are not needed (the acceptance condition
     of the Buchi automaton can not be represented). Also the transition function is only
     partial. The semantics are that there is a virtual failure state into which an
     executing algorithm will go if no transition can be taken. -}
-data DEA a st = DEA { deaTransitions :: Map st (Map a st)
+data DEA a st = DEA { deaTransitions :: DEATransitionFunc a st
                   , deaInit :: st
                   -- , deaFinals :: Set st -- Not needed at the moment
-                  } deriving (Eq,Ord)
+                  }
 
 instance (Show a,Show st,Ord st) => Show (DEA a st) where
   show dea = unlines $ concat [ [(if st == (deaInit dea)
@@ -25,8 +41,12 @@ instance (Show a,Show st,Ord st) => Show (DEA a st) where
                                  else "") ++
                                 "state "++show st]++
                                [ "  "++show cond++" -> "++show trg | (cond,trg) <- Map.toList trans ]
-                             | (st,trans) <- Map.toList $ deaTransitions dea ]
+                             | (st,trans) <- Map.toList $ unTotal $ deaTransitions dea ]
 
+-- Make clear that the transition function of the Buchi is expected to be total.
+type BATransitionFunc a st = MakeTotal (Map st (Set (a, st)))
+
+-- Models subsets of a set of states.
 type PowSetSt st = Set st
 
 -- | Creates a new state /q/ which will be the only initial state of /ba/ and duplicates all
@@ -48,13 +68,13 @@ determinizeBA ba
   | otherwise =
       let ba' = mergeInits ba
           initS = Set.singleton $ Set.findMin $ baInits ba
-          (trans, states) = determinize' ba (Set.singleton initS) (Map.empty, Set.empty)
+          (trans, states) = determinize' (MakeTotal $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
       in DEA {
-          deaTransitions = trans,
+          deaTransitions = MakeTotal trans,
           deaInit = initS
         }
       where
-        determinize' :: (Eq a, Ord a, Eq st, Ord st) => BA a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+        determinize' :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
         determinize' ba remaining r
           | Set.null remaining = r
           | otherwise =
@@ -62,7 +82,7 @@ determinizeBA ba
                 (remaining', trans', qs') = buildTransition ba next r
             in determinize' ba (Set.union remaining' (Set.delete next remaining)) (trans', qs')
 
-        buildTransition :: (Eq a, Ord a, Eq st, Ord st) => BA a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
+        buildTransition :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st)) -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
         buildTransition ba q (trans, qs) =
           let trans' = getTransitions ba q
               trans'' = mergeTransitions trans'
@@ -70,8 +90,8 @@ determinizeBA ba
           in (newStates, Map.insert q trans'' trans, Set.insert q qs)
 
         -- Get the transitions in the BA which origin at the given set of states.
-        getTransitions :: (Eq a, Ord a, Eq st, Ord st) => BA a st -> PowSetSt st -> Set (Map a (Set st))
-        getTransitions ba = foldl (\trans s -> Set.insert (transform $ fromJust $ Map.lookup s (baTransitions ba)) trans) Set.empty
+        getTransitions :: (Eq a, Ord a, Eq st, Ord st) => BATransitionFunc a st -> PowSetSt st -> Set (Map a (Set st))
+        getTransitions ba = foldl (\trans s -> Set.insert (transform $ (ba !$ s)) trans) Set.empty
           where
             transform :: (Eq a, Ord a, Eq st, Ord st) => Set (a, st) -> Map a (Set st)
             transform = foldl putTransition Map.empty
