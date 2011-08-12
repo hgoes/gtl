@@ -65,14 +65,15 @@ mergeInits ba =
   }
 
 -- | Tries to determinize a given B&#xFC;chi automaton. Only possible if all states are final.
-determinizeBA :: (Eq a, Ord a, Eq st, Ord st, BAState st) => BA a st -> DFA a (PowSetSt st)
+-- If not possible it returns Nothing.
+determinizeBA :: (Eq a, Ord a, Eq st, Ord st, BAState st) => BA a st -> Maybe (DFA a (PowSetSt st))
 determinizeBA ba
-  | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = error "Not able to transform BA into DFA."
+  | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = Nothing
   | otherwise =
       let ba' = mergeInits ba
           initS = Set.singleton $ Set.findMin $ baInits ba
           (trans, states) = determinize' (MakeTotal $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
-      in DFA {
+      in Just $ DFA {
           dfaTransitions = MakeTotal trans,
           dfaInit = initS
         }
