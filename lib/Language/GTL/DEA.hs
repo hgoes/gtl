@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
 
 module Language.GTL.DEA (
-    DEA(..), determinizeBA
+    DEA(..), determinizeBA, minimizeDEA
   )
   where
 
@@ -9,7 +9,7 @@ import Prelude hiding (foldl)
 import Data.Set as Set
 import Data.Map as Map
 import Data.Maybe
-import Data.Foldable (foldl)
+import Data.Foldable (foldl, find)
 import Language.GTL.Buchi
 
 -- Models total functions via mapping structures. The instances may not really be total,
@@ -106,3 +106,44 @@ determinizeBA ba
 
         targetStates :: (Eq st, Ord st) => Map a (PowSetSt st) -> Set (PowSetSt st)
         targetStates = foldl (flip Set.insert) Set.empty
+
+minimizeDEA :: (Eq a, Ord a, Eq st, Ord st, Show a, Show st) => DEA a st -> DEA a (PowSetSt st)
+minimizeDEA dea =
+  let initEqClasses = Set.fromList [states dea] -- if there would be any final states: `Set.difference` (deaFinals dea), deaFinals dea]
+      eqClasses = findEqClasses dea initEqClasses
+      trans' = buildMinDEA dea eqClasses
+      init' = fromJust $ find (Set.member $ deaInit dea) eqClasses
+  in DEA (MakeTotal trans') init'
+  where
+    states = (foldl (foldl $ flip Set.insert) Set.empty) . unTotal . deaTransitions
+
+    getEquivClass eqClasses s = fromJust $ find (Set.member s) eqClasses -- the state is guaranteed to be in some class
+
+    findEqClasses :: (Eq a, Ord a, Eq st, Ord st, Show a, Show st) => DEA a st -> Set (PowSetSt st) -> Set (PowSetSt st)
+    findEqClasses dea eqClasses =
+      let eqClasses' = foldl (\eqs' e -> eqs' `Set.union` (splitClass dea eqClasses e)) Set.empty eqClasses
+      in if eqClasses /= eqClasses' then findEqClasses dea eqClasses' else eqClasses'
+
+    splitClass :: (Eq a, Ord a, Eq st, Ord st, Show a, Show st) => DEA a st -> Set (Set st) -> Set st -> Set (Set st)
+    splitClass dea eqClasses eqClass =
+      let (next:rest) = Set.toList eqClass -- equivalence classes are never empty
+      in splitClass' dea eqClasses (Set.singleton $ Set.singleton next) rest
+      where
+        splitClass' dea eqClasses eqClasses' eqClass = foldl (putIntoClass dea eqClasses) eqClasses' eqClass
+        putIntoClass dea eqClasses eqClasses' s =
+          let (eqClasses'', inserted) = foldl (\(cs,f) c -> if transMatch dea eqClasses (Set.findMin c) s then (Set.insert (Set.insert s c) cs, True) else (Set.insert c cs, f)) (Set.empty, False) eqClasses'
+          in if not inserted then Set.insert (Set.singleton s) eqClasses'' else eqClasses''
+        transMatch dea eqClasses s1 s2 =
+          let t1 = (deaTransitions dea) !$ s1
+              t2 = (deaTransitions dea) !$ s2
+              d1 = Map.differenceWith (equiv eqClasses) t1 t2
+              d2 = Map.differenceWith (equiv eqClasses) t2 t1
+          in Map.null d1 && Map.null d2 -- symmetric difference
+        equiv eqClasses s1 s2 = if Set.member s2 $ getEquivClass eqClasses s1 then Nothing else Just s1
+
+    buildMinDEA :: (Eq a, Ord a, Eq st, Ord st) => DEA a st -> Set (PowSetSt st) -> Map (PowSetSt st) (Map a (PowSetSt st))
+    buildMinDEA dea eqClasses = foldl (\trans s -> Map.insert s (buildTrans dea eqClasses s) trans) Map.empty eqClasses
+      where
+        -- Takes a state in the minimized DEA and builds the transitions originating there.
+        buildTrans :: (Eq a, Ord a, Eq st, Ord st) => DEA a st -> Set (PowSetSt st) -> PowSetSt st -> Map a (PowSetSt st)
+        buildTrans dea eqClasses = foldl (\trans s -> trans `Map.union` (Map.map (getEquivClass eqClasses) (deaTransitions dea !$ s))) Map.empty
