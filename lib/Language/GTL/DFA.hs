@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
 
 module Language.GTL.DFA (
-    DFA(..), determinizeBA, minimizeDFA
+    DFA(..), determinizeBA, minimizeDFA, renameDFAStates, unTotal
   )
   where
 
@@ -42,6 +42,9 @@ instance (Show a,Show st,Ord st) => Show (DFA a st) where
                                 "state "++show st]++
                                [ "  "++show cond++" -> "++show trg | (cond,trg) <- Map.toList trans ]
                              | (st,trans) <- Map.toList $ unTotal $ dfaTransitions dfa ]
+
+states :: (Eq st, Ord st) => DFA a st -> Set st
+states = Map.keysSet . unTotal . dfaTransitions
 
 -- Make clear that the transition function of the Buchi is expected to be total.
 type BATransitionFunc a st = MakeTotal (Map st (Set (a, st)))
@@ -120,8 +123,6 @@ minimizeDFA dfa =
       init' = fromJust $ find (Set.member $ dfaInit dfa) eqClasses
   in DFA (MakeTotal trans') init'
   where
-    states = (foldl (foldl $ flip Set.insert) Set.empty) . unTotal . dfaTransitions
-
     getEquivClass eqClasses s = fromJust $ find (Set.member s) eqClasses -- the state is guaranteed to be in some class
 
     findEqClasses :: (Eq a, Ord a, Eq st, Ord st, Show a, Show st) => DFA a st -> Set (PowSetSt st) -> Set (PowSetSt st)
@@ -152,3 +153,10 @@ minimizeDFA dfa =
         -- Takes a state in the minimized DFA and builds the transitions originating there.
         buildTrans :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> PowSetSt st -> Map a (PowSetSt st)
         buildTrans dfa eqClasses = foldl (\trans s -> trans `Map.union` (Map.map (getEquivClass eqClasses) (dfaTransitions dfa !$ s))) Map.empty
+
+renameDFAStates :: (Eq st, Ord st) => DFA a st -> DFA a Integer
+renameDFAStates dfa =
+  let stateMap = MakeTotal $ fst $ foldl (\(sMap, i) s -> (Map.insert s i sMap, i + 1)) (Map.empty, 0::Integer) $ states dfa
+      trans' = Map.mapKeysMonotonic (stateMap !$) $ Map.map (Map.map (stateMap !$)) $ unTotal $ dfaTransitions dfa
+      init' = stateMap !$ (dfaInit dfa) :: Integer
+  in DFA (MakeTotal trans') init'
