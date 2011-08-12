@@ -13,10 +13,8 @@ import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
---import Language.GTL.Buchi
 import Language.GTL.DFA
 import Data.Map as Map hiding (map)
---import Data.Set as Set hiding (map)
 import Control.Monad.Identity
 import Data.List as List (intercalate, null)
 import Data.Maybe (maybeToList)
@@ -448,58 +446,6 @@ dfaToStates dfa = failState :
                    }
                  | (s, trans) <- Map.toList (unTotal $ dfaTransitions dfa) ]
 
-{-
--- | Convert a buchi automaton to SCADE.
-buchiToScade :: String -- ^ Name of the resulting SCADE node
-                -> [(String, TypeExpr)] -- ^ Input variables
-                -> [(String, TypeExpr)] -- ^ Output variables
-                -> BA [TypedExpr String] Integer -- ^ The buchi automaton
-                -> Sc.Declaration
-buchiToScade name ins outs buchi
-  = UserOpDecl
-    { userOpKind = Sc.Node
-    , userOpImported = False
-    , userOpInterface = InterfaceStatus Nothing False
-    , userOpName = name++"_testnode"
-    , userOpSize = Nothing
-    , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
-                     | (n,tp) <- ins ++ outs ]
-    , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
-                               , Sc.varType = TypeBool
-                               , Sc.varDefault = Nothing
-                               , Sc.varLast = Nothing
-                               }]
-    , userOpNumerics = []
-    , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = []
-                              , dataEquations = [StateEquation
-                                                 (StateMachine Nothing (buchiToStates buchi))
-                                                 [] True
-                                                ]
-                              }
-    }
-
--- | The starting state for a contract automaton.
-startState :: BA [TypedExpr String] Integer -> Sc.State
-startState buchi = Sc.State
-  { stateInitial = True
-  , stateFinal = False
-  , stateName = "init"
-  , stateData = DataDef { dataSignals = []
-                        , dataLocals = []
-                        , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                        }
-  , stateUnless = [ stateToTransition cond trg
-                  | i <- Set.toList (baInits buchi),
-                    (cond,trg) <- Set.toList ((baTransitions buchi)!i)
-                  ]++
-                  [failTransition]
-  , stateUntil = []
-  , stateSynchro = Nothing
-  }
-
--}
-
 -- | Constructs a transition into the `failState'.
 failTransition :: Sc.Transition
 failTransition = Transition (ConstBoolExpr True) Nothing (TargetFork Restart "fail")
@@ -519,29 +465,6 @@ failState = Sc.State
   , stateUntil = []
   , stateSynchro = Nothing
   }
-
-{-
--- | Translates a buchi automaton into a list of SCADE automaton states.
-buchiToStates :: BA [TypedExpr String] Integer -> [Sc.State]
-buchiToStates buchi = startState buchi :
-                      failState :
-                      [ Sc.State
-                       { stateInitial = False
-                       , stateFinal = False
-                       , stateName = "st"++show num
-                       , stateData = DataDef { dataSignals = []
-                                             , dataLocals = []
-                                             , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                                             }
-                       , stateUnless = [ stateToTransition cond trg
-                                       | (cond,trg) <- Set.toList trans ] ++
-                                       [failTransition]
-                       , stateUntil = []
-                       , stateSynchro = Nothing
-                       }
-                     | (num,trans) <- Map.toList (baTransitions buchi) ]
-
--}
 
 -- | Given a state this function creates a transition into the state.
 stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
