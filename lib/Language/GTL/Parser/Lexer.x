@@ -15,6 +15,7 @@ $digit10 = [0-9]
 tokens:-
   $white+                        ;
   "//".*                         ;
+  "/*" ([\x00-\xff] # [\*] | \* [\x00-\xff] # [\/])* "*/" ;
   after                          { un GOpAfter }
   all                            { key KeyAll }
   always                         { un GOpAlways }
