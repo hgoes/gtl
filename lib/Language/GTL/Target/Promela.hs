@@ -81,10 +81,11 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
                                                      ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
-                                            [ Pr.StmtLabel ("st"++show st) $
-                                              prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time st n trg cond ]
-                                                   | ((cond,trg),n) <- zip (Set.toList trans) [0..]
-                                                   ]
+                                            [ Pr.StmtLabel ("st"++show st) $ if Set.null trans
+                                                                             then Pr.StmtExpr $ ExprAny $ Pr.ConstExpr $ ConstBool False
+                                                                             else prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time st n trg cond ]
+                                                                                       | ((cond,trg),n) <- zip (Set.toList trans) [0..]
+                                                                                       ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
                           }
