@@ -11,8 +11,9 @@
 (defconst gtl-font-lock-keywords-1
   (list
    (cons "//.*" 'font-lock-comment-face)
+   (cons "/\\*[^\\*]*\\*/" 'font-lock-comment-face)
    (cons (concat "\\<" (regexp-opt '("automaton" "state" "transition" "connect" "verify" "contract" "init") t) "\\>") 'font-lock-keyword-face)
-   (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies") t) "\\>") 'font-lock-builtin-face)
+   (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies" "after" "finally" "next") t) "\\>") 'font-lock-builtin-face)
    )
   "Highlighting expressions for GTL mode")
 
