@@ -75,10 +75,20 @@
 	  (indent-line-to cur-indent)
 	(indent-line-to 0)))))
 
+(defvar gtl-mode-syntax-table
+  (let ((st (make-syntax-table)))
+    (modify-syntax-entry ?_ "w" st)
+    (modify-syntax-entry ?/ ". 124b" st)
+    (modify-syntax-entry ?* ". 23" st)
+    (modify-syntax-entry ?\n "> b" st)
+    st) 
+  "Syntax table for gtl-mode")
+
 (defun gtl-mode ()
   "Major mode for editing GTL specifications"
   (interactive)
   (kill-all-local-variables)
+  (set-syntax-table gtl-mode-syntax-table)
   (use-local-map gtl-mode-map)
   (set (make-local-variable 'font-lock-defaults) '(gtl-font-lock-keywords))
   (set (make-local-variable 'indent-line-function) 'gtl-indent-line)
