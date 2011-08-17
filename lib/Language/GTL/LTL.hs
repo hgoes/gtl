@@ -112,6 +112,7 @@ instance Show a => Show (LTL a) where
                              else str
   showsPrec _ (Ground x) = if x then showString "tt" --showChar '\x22a4'
                            else showString "ff" --showChar '\x22a5'
+  showsPrec p (LTLAutomaton b) = showsPrec p b
 
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
@@ -205,21 +206,24 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
 -- | Merge redundant states in a B&#xFC;chi automaton.
 minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
 minimizeBA ba = BA { baTransitions = ntrans
-                   , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
+                   , baInits = ninit
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
                    }
   where
-    ntrans = Map.fromList $ minimizeBA' False [] (Map.toList (baTransitions ba))
+    ntrans = Map.fromList ntrans'
+    (ntrans',ninit) = minimizeBA' False [] (Map.toList (baTransitions ba)) (baInits ba)
 
-    minimizeBA' False d [] = d
-    minimizeBA' True d [] = minimizeBA' False [] d
-    minimizeBA' ch d ((st,trans):xs) = minimizeBA'' ch d st trans [] xs
+    minimizeBA' False d [] ini = (d,ini)
+    minimizeBA' True d [] ini = minimizeBA' False [] d ini
+    minimizeBA' ch d ((st,trans):xs) ini = minimizeBA'' ch d st trans [] xs ini
 
-    minimizeBA'' ch d st trans d' [] = minimizeBA' ch ((st,trans):d) d'
-    minimizeBA'' ch d st trans d' ((st',trans'):xs) = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
-                                                      then minimizeBA'' True (updateTranss st st' d) st
-                                                           (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs)
-                                                      else minimizeBA'' ch d st trans ((st',trans'):d') xs
+    minimizeBA'' ch d st trans d' [] ini = minimizeBA' ch ((st,trans):d) d' ini
+    minimizeBA'' ch d st trans d' ((st',trans'):xs) ini = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
+                                                          then minimizeBA'' True (updateTranss st st' d) st
+                                                               (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs) (if Set.member st' ini
+                                                                                                                                             then Set.insert st (Set.delete st' ini)
+                                                                                                                                             else ini)
+                                                          else minimizeBA'' ch d st trans ((st',trans'):d') xs ini
 
     updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
                                                        then (cond,st)
