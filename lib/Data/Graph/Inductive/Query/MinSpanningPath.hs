@@ -8,6 +8,7 @@ import Data.Graph.Inductive as Graph
 import qualified Data.PQueue.Prio.Min as PQ
 import qualified Data.Map as Map
 import qualified Data.List as List
+import Data.Maybe (isJust)
 
 -- Test data
 t1 = ([(-1, 2), (-0, 3), (-1, 4)], 1, (), [(-1, 2), (-0, 3), (-1, 4)]) :: Context () Integer
@@ -86,10 +87,18 @@ mspEdges n q chosen =
       case PQ.getMin q of
         Nothing -> (Nothing, PQ.deleteMin q)
         Just (_, e@(u,v)) ->
-          if (Map.member u n) && (Map.member v n) then
-            (Just e, PQ.deleteMin q)
+          let du = Map.lookup u n
+              dv = Map.lookup v n
+          in if (isJust du) && (isJust dv) then
+            if noLoop du dv u v n then
+              (Just e, PQ.deleteMin q)
+            else
+              choose n (PQ.deleteMin q)
           else
             choose n (PQ.deleteMin q)
+    noLoop (Just du) (Just dv) u v n
+      | du /= 0 && dv /= 0 = Map.null $ n `Map.difference` Map.fromList [(u, du), (v, dv)]
+      | otherwise = True
     updateDegree u v n =
       let incDegOrDelete d = if d < 1 then Just (d+1) else Nothing
           n' = Map.update incDegOrDelete u n
