@@ -860,6 +860,12 @@ compareExpr e1 e2
                             else EUNK
                     _ -> EUNK
                   _ -> EUNK
+                BinEq -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> ENEQ
+                    ENEQ -> EGT
+                    _ -> EUNK
+                  _ -> EUNK
                 _ -> EUNK
               _ -> EUNK
             _ -> EUNK
