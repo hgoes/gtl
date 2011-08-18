@@ -18,7 +18,8 @@ module Language.GTL.LTL(
   mapLTL,
   baProduct,
   baMapAlphabet,
-  distributeNegation
+  distributeNegation,
+  extractAutomata
   ) where
 
 import Data.Set as Set
@@ -538,9 +539,9 @@ transUnion = (++)
 ltl2ba :: AtomContainer [a] a => LTL a -> BA [a] Integer
 ltl2ba f = let (f',auts) = extractAutomata f
                mprod b1 b2 = renameStates $ baProduct b1 b2
-           in case f' of
+           in renameStates $ optimizeTransitionsBA $ minimizeBA $ case f' of
              Nothing -> foldl1 mprod auts
-             Just rf -> foldl mprod (renameStates $ optimizeTransitionsBA $
+             Just rf -> foldl mprod (removeDeadlocks $ renameStates $ optimizeTransitionsBA $
                                      minimizeBA $ gba2ba $ minimizeGBA $
                                      vwaa2gba $ ltl2vwaa $ distributeNegation rf) auts
 
