@@ -8,7 +8,6 @@ import Data.Graph.Inductive as Graph
 import qualified Data.PQueue.Prio.Min as PQ
 import qualified Data.Map as Map
 import qualified Data.List as List
-import Data.Maybe
 
 -- Test data
 t1 = ([(-1, 2), (-0, 3), (-1, 4)], 1, (), [(-1, 2), (-0, 3), (-1, 4)]) :: Context () Integer
@@ -104,7 +103,7 @@ mkPath :: Map.Map Node [Edge] -> Path
 mkPath chosen =
   let deg1Node node edges Nothing = if List.length edges == 1 then Just node else Nothing
       deg1Node _ _ n@(Just _) = n
-      startNode = fromJust $ Map.foldrWithKey deg1Node Nothing chosen
+      Just startNode = Map.foldrWithKey deg1Node Nothing chosen
   in mkPath' startNode chosen [startNode]
     where
       mkPath' :: Node -> Map.Map Node [Edge] -> Path -> Path

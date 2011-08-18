@@ -31,7 +31,6 @@ import qualified Data.IntMap as IMap
 import qualified Data.IntSet as ISet
 import Data.Graph.Inductive as Graph (Gr(..), mkGraph, Graph(..), LNode, LEdge, Path, lab)
 import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
-import Data.Maybe (fromJust)
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -329,7 +328,10 @@ buildIntersectionGraph finals =
       let
         restGraph' = ISet.delete i restGraph
         -- multiply by -1 because we take later the _minimum_ spanning path but want the _maximum_!
-        commonTransitions i' = -1 * countIntersections tr (fromJust $ IMap.lookup i' numberedFinalFamily)
+        family i' =
+          case IMap.lookup i' numberedFinalFamily of
+            Just fam -> fam
+        commonTransitions i' = -1 * countIntersections tr (family i')
         es' = ISet.fold (\i' adj' -> (i', i, commonTransitions i') : (i, i', commonTransitions i') : adj') [] restGraph'
       in (es' ++ es, restGraph')
 
@@ -343,10 +345,14 @@ optimizeFinalFamilyOrder finals =
     intersectionGraph = buildIntersectionGraph finals :: Graph.Gr st Int
 
     -- graph complete => it is connected => always a valid result
-    msp = fromJust $ minSpanningPath intersectionGraph
+    Just msp = minSpanningPath intersectionGraph
+
+    getLabel g n =
+      case lab g n of
+        Just l -> l
 
     pathLabels :: (Graph gr) => gr nl el -> Path -> [nl]
-    pathLabels g p = List.map (\n -> fromJust $ lab g n) p
+    pathLabels g p = List.map (\n -> getLabel g n) p
 
     -- Find optimal start node:
     -- generate a pseudo node f0 = ⋃f_i, f_i € F. That is it contains all transitions
@@ -355,8 +361,8 @@ optimizeFinalFamilyOrder finals =
     needsReverse =
       let
         f0 = foldl (Map.unionWith Set.union) Map.empty finals
-        intersI1 = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head msp))
-        intersIn = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head $ reverse msp))
+        intersI1 = deepIntersection f0 $ (finals ! (getLabel intersectionGraph $ head msp))
+        intersIn = deepIntersection f0 $ (finals ! (getLabel intersectionGraph $ head $ reverse msp))
       in deepSize intersIn > deepSize intersI1
 
     msp' = if needsReverse then reverse msp else msp
