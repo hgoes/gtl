@@ -20,8 +20,12 @@ module Language.GTL.Expression
         constant,
         gnot,
         gand,
+        gor,
         geq,
         gneq,
+        galways,
+        gfinally,
+        gimplies,
         enumConst,
         typeCheck,
         compareExpr,
@@ -178,6 +182,11 @@ gand :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gand x y
   | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
 
+-- | Create the logical disjunction of two expressions
+gor :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gor x y
+  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr Or (Fix x) (Fix y))
+
 -- | Create an equality relation between two expressions
 geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 geq x y
@@ -187,6 +196,18 @@ geq x y
 gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gneq x y
   | getType x == getType y = Typed GTLBool (BinRelExpr BinNEq (Fix x) (Fix y))
+
+galways :: TypedExpr v -> TypedExpr v
+galways x
+  | getType x == GTLBool = Typed GTLBool (UnBoolExpr Always (Fix x))
+
+gfinally :: TypedExpr v -> TypedExpr v
+gfinally x
+  | getType x == GTLBool = Typed GTLBool (UnBoolExpr (Finally NoTime) (Fix x))
+
+gimplies :: TypedExpr v -> TypedExpr v -> TypedExpr v
+gimplies x y
+  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr Implies (Fix x) (Fix y))
 
 -- | Create a enumeration value for a given enumeration type
 enumConst :: [String] -> String -> TypedExpr v
