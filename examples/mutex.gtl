@@ -2,6 +2,7 @@ model[none] client() {
   input bool proceed;
   output enum { nc, acq, cs, rel } st;
   init st 'nc;
+  // Basic behaviour
   automaton {
     init state nc {
       st = 'nc;
@@ -23,6 +24,8 @@ model[none] client() {
       transition nc;
     }
   };
+  // Constrained behaviour
+  always (st = 'cs => (st = 'cs until[2cy] st = 'rel));
 }
 
 model[none] server() {
@@ -30,8 +33,8 @@ model[none] server() {
   output bool^3 procouts;
   init procouts [false,false,false];
   always (procstates[0] = 'acq and procstates[1] != 'cs and procstates[2] != 'cs and procouts = [true,false,false])
-         or (procstates[0] != 'acq and procstates[1] = 'acq and procstates[0] != 'cs and procstates[2] != 'cs and procouts = [false,true,false])
-         or (procstates[0] != 'acq and procstates[1] != 'acq and procstates[2] = 'acq and procstates[0] != 'cs and procstates[1] != 'cs and procouts = [false,false,true])
+         or (procstates[1] = 'acq and procstates[0] != 'cs and procstates[2] != 'cs and procouts = [false,true,false])
+         or (procstates[2] = 'acq and procstates[0] != 'cs and procstates[1] != 'cs and procouts = [false,false,true])
          or (procouts = [false,false,false]);
 }
 
@@ -49,17 +52,13 @@ connect s.procouts[0] c0.proceed;
 connect s.procouts[1] c1.proceed;
 connect s.procouts[2] c2.proceed;
 
-//safety
 verify {
+  //safety
   always (c0.st = 'cs => !(c1.st = 'cs or c2.st = 'cs));
   always (c1.st = 'cs => !(c0.st = 'cs or c2.st = 'cs));
   always (c2.st = 'cs => !(c0.st = 'cs or c1.st = 'cs));
+  //liveness
+  always (c0.st = 'cs => finally c0.st = 'rel);
+  always (c1.st = 'cs => finally c1.st = 'rel);
+  always (c2.st = 'cs => finally c2.st = 'rel);
 }
-
-//liveness
-//can't yet be verified because of missing fairness scheduler
-//verify {
-  //always (c0.st = 'acq => finally c0.st = 'rel);
-  //always (c1.st = 'acq => finally c1.st = 'rel);
-  //always (c2.st = 'acq => finally c2.st = 'rel);
-//}
