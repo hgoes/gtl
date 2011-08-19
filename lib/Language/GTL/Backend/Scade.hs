@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies,GADTs #-}
 {-| SCADE is a synchronous specification language for software-components.
     It provides a code-generator and a verification tool. -}
-module Language.GTL.Backend.Scade 
+module Language.GTL.Backend.Scade
        (Scade(..))
        where
 
@@ -17,6 +17,7 @@ import Language.GTL.Buchi
 import Data.Map as Map hiding (map)
 import Data.Set as Set hiding (map)
 import Control.Monad.Identity
+import Data.List (intercalate)
 
 import System.FilePath
 import System.Process as Proc
@@ -63,16 +64,18 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData name decls tps opFile) expr opts gtlName
-    = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-          scade = buchiToScade name (Map.fromList inp) (Map.fromList outp) (gtl2ba Nothing expr)
+  backendVerify Scade (ScadeData node decls tps opFile) expr opts gtlName
+    = let nodePath = scadeParseNodeName node
+          name = (intercalate "_" nodePath)
+          (inp,outp) = scadeInterface nodePath decls
+          scade = buchiToScade name inp outp (gtl2ba expr)
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
         writeFile testNodeFile (show $ prettyScade [scade])
-        writeFile proofNodeFile (show $ prettyScade [generateProver name inp outp])
+        writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
         case scadeRoot opts of
           Just p -> do
             report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
@@ -84,8 +87,8 @@ instance GTLBackend Scade where
                 return $ Just $ verified report
           Nothing -> return Nothing
 
-generateProver :: String -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
-generateProver name ins outs
+generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
+generateProver name nodePath ins outs
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -102,7 +105,7 @@ generateProver name ins outs
     , userOpContent = DataDef { dataSignals = []
                               , dataLocals = interfaceToDeclaration outs
                               , dataEquations = [
-                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path [name]) (map (IdExpr . Path . (:[]) . fst) ins))
+                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
                                   , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
                                 ]
                               }
@@ -366,8 +369,8 @@ buildTest opname ins outs = UserOpDecl
 
 -- | Convert a buchi automaton to SCADE.
 buchiToScade :: String -- ^ Name of the resulting SCADE node
-                -> Map String TypeExpr -- ^ Input variables
-                -> Map String TypeExpr -- ^ Output variables
+                -> [(String, TypeExpr)] -- ^ Input variables
+                -> [(String, TypeExpr)] -- ^ Output variables
                 -> BA [TypedExpr String] Integer -- ^ The buchi automaton
                 -> Sc.Declaration
 buchiToScade name ins outs buchi
@@ -378,7 +381,7 @@ buchiToScade name ins outs buchi
     , userOpName = name++"_testnode"
     , userOpSize = Nothing
     , userOpParams = [ VarDecl [VarId n False False] tp Nothing Nothing
-                     | (n,tp) <- Map.toList ins ++ Map.toList outs ]
+                     | (n,tp) <- ins ++ outs ]
     , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
                                , Sc.varType = TypeBool
                                , Sc.varDefault = Nothing
