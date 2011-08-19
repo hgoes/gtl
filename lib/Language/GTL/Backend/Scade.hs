@@ -64,11 +64,11 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls tps opFile) expr opts gtlName
+  backendVerify Scade (ScadeData node decls tps opFile) cy expr opts gtlName
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          scade = buchiToScade name inp outp (gtl2ba expr)
+          scade = buchiToScade name inp outp (gtl2ba (Just cy) expr)
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
