@@ -21,6 +21,7 @@ data KeyWord = KeyAll
              | KeyContract
              | KeyCycleTime
              | KeyEnum
+             | KeyLocal
              | KeyModel
              | KeyOutput
              | KeyFalse
@@ -62,6 +63,7 @@ data BinOp = GOpAnd
            | GOpGreaterThan
            | GOpGreaterThanEqual
            | GOpEqual
+           | GOpAssign
            | GOpNEqual
            | GOpPlus
            | GOpMinus

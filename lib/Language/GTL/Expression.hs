@@ -272,7 +272,8 @@ showTerm f (BinRelExpr rel l r) = "(" ++ (f l) ++ (case rel of
                                                       BinGT -> " > "
                                                       BinGTEq -> " >= "
                                                       BinEq -> " = "
-                                                      BinNEq -> " != ") ++ (f r) ++ ")"
+                                                      BinNEq -> " != "
+                                                      BinAssign -> " := ") ++ (f r) ++ ")"
 showTerm f (BinIntExpr op l r) = "(" ++ (f l) ++ (case op of
                                                      OpPlus -> " + "
                                                      OpMinus -> " - "
@@ -673,6 +674,7 @@ data Relation = BinLT -- ^ <
               | BinGTEq -- ^ \>=
               | BinEq -- ^ =
               | BinNEq -- ^ !=
+              | BinAssign -- ^ :=
               deriving (Eq,Ord,Enum)
 
 instance Binary Relation where
@@ -704,6 +706,7 @@ toRelOp GOpLessThanEqual = Just BinLTEq
 toRelOp GOpGreaterThan = Just BinGT
 toRelOp GOpGreaterThanEqual = Just BinGTEq
 toRelOp GOpEqual = Just BinEq
+toRelOp GOpAssign = Just BinAssign
 toRelOp GOpNEqual = Just BinNEq
 toRelOp _ = Nothing
 
@@ -734,6 +737,7 @@ relNot rel = case rel of
   BinGTEq -> BinLT
   BinEq -> BinNEq
   BinNEq -> BinEq
+  --BinAssign -> error "Can't negate assignments"
 
 -- | Switches the operands of a relation.
 --   Turns x < y into y > x.
@@ -745,6 +749,7 @@ relTurn rel = case rel of
   BinGTEq -> BinLTEq
   BinEq -> BinEq
   BinNEq -> BinNEq
+  --BinAssign -> error "Can't turn assignments"
 
 -- | Represents the relations in which two expressions can stand
 data ExprOrdering = EEQ -- ^ Both expressions define the same value space

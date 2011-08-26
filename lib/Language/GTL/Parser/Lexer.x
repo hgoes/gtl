@@ -33,6 +33,7 @@ tokens:-
   init                           { key KeyInit }
   int                            { key KeyInt }
   instance                       { key KeyInstance }
+  local                          { key KeyLocal }
   model                          { key KeyModel }
   finally                        { un GOpFinally }
   next                           { un GOpNext }
@@ -55,6 +56,7 @@ tokens:-
   "{"                            { const $ Bracket Curly False }
   "}"                            { const $ Bracket Curly True }
   ";"                            { const Semicolon }
+  ":="                           { bin GOpAssign }
   ":"                            { const Colon }
   "."                            { const Dot }
   ","                            { const Comma }

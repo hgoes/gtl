@@ -33,6 +33,7 @@ import qualified Data.Map as Map
   "float"           { Key KeyFloat }
   "implies"         { Binary GOpImplies }
   "int"             { Key KeyInt }
+  "local"           { Key KeyLocal }
   "model"           { Key KeyModel }
   "next"            { Unary GOpNext}
   "not"             { Unary GOpNot }
@@ -61,6 +62,7 @@ import qualified Data.Map as Map
   ">"               { Binary GOpGreaterThan }
   ">="              { Binary GOpGreaterThanEqual }
   "="               { Binary GOpEqual }
+  ":="              { Binary GOpAssign }
   "!="              { Binary GOpNEqual }
   "."               { Dot }
   "+"               { Binary GOpPlus }
@@ -80,7 +82,7 @@ import qualified Data.Map as Map
 %left "and"
 %left "implies"
 %left "not"
-%left "<" "<=" ">" ">=" "=" "!="
+%left "<" "<=" ">" ">=" "=" "!=" ":="
 %left "+"
 %left "-"
 %left "*"
@@ -107,6 +109,7 @@ model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                , modelInits = []
                                                                , modelInputs = Map.empty
                                                                , modelOutputs = Map.empty
+                                                               , modelLocals = Map.empty
                                                                , modelCycleTime = 1
                                                                })
                                                              }
@@ -145,6 +148,9 @@ formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars {
                            | "output" type id ";" formulas_or_inits_or_vars      { \decl -> let ndecl = $5 decl
                                                                                           in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
                                                                                                    } }
+                           | "local" type id ";" formulas_or_inits_or_vars       { \decl -> let ndecl = $5 decl
+                                                                                            in ndecl { modelLocals = Map.insert $3 $2 (modelLocals ndecl)
+                                                                                                   } }
                            | "cycle-time" int id ";" formulas_or_inits_or_vars { \decl -> let ndecl = $5 decl
                                                                                           in ndecl { modelCycleTime = $2 * (case $3 of
                                                                                                        "s" -> 1000000
@@ -176,6 +182,7 @@ expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
      | expr ">" expr                { GBin GOpGreaterThan NoTime $1 $3 }
      | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
      | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
+     | expr ":=" expr               { GBin GOpAssign NoTime $1 $3 }
      | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
      | "after" time_spec expr       { GUn GOpAfter $2 $3 }
      | "not" expr                   { GUn GOpNot NoTime $2 }

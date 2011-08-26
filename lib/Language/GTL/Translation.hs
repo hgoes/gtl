@@ -4,7 +4,8 @@
  -}
 module Language.GTL.Translation(
   gtl2ba,
-  gtlToLTL
+  gtlToLTL,
+  expandAutomaton
   ) where
 
 import Language.GTL.Expression as GTL

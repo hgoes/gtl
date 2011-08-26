@@ -18,6 +18,7 @@ data GTLModel a = GTLModel
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
+                  , gtlModelLocals :: Map a GTLType -- ^ The local variables with types of the model.
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
                   , gtlModelCycleTime :: Integer -- ^ Cycle time in us
                   }
@@ -66,7 +67,7 @@ gtlParseModel mdl = do
                        Nothing -> Left $ "Unknown type "++show str
                        Just rtp -> return rtp) (modelOutputs mdl)-}
       (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
-      let allType = Map.union inp outp
+      let allType = Map.unions [inp,outp,modelLocals mdl]
           enums = getEnums allType
       expr <- makeTypedExpr
               (\q n -> case q of
@@ -91,6 +92,7 @@ gtlParseModel mdl = do
                                      , gtlModelBackend = back
                                      , gtlModelInput = inp
                                      , gtlModelOutput = outp
+                                     , gtlModelLocals = modelLocals mdl
                                      , gtlModelDefaults = Map.fromList lst
                                      , gtlModelCycleTime = modelCycleTime mdl
                                      },enums)
