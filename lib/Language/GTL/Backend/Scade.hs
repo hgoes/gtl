@@ -466,7 +466,7 @@ stateToTransition cond trg
 
 exprToScade :: TypedExpr String -> Sc.Expr
 exprToScade expr = case getValue expr of
-  Var name lvl -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
+  Var name lvl _ -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
   Value val -> valueToScade (getType expr) val
   BinIntExpr op l r -> Sc.BinaryExpr (case op of
                                          OpPlus -> BinPlus

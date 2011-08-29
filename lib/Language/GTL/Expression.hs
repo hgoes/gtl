@@ -16,6 +16,7 @@ module Language.GTL.Expression
         IntOp(..),
         Relation(..),
         ExprOrdering(..),
+        VarUsage(..),
         var,
         constant,
         gnot,
@@ -64,8 +65,14 @@ import Debug.Trace
 --   Allows the construction of infinite data types from finite constructors.
 data Fix f = Fix { unfix :: f (Fix f) }
 
+data VarUsage = Input
+              | Output
+              | StateIn
+              | StateOut
+              deriving (Show,Eq,Ord)
+
 -- | Represents a GTL term without recursion, which can be added by applying the 'Fix' constructor.
-data Term v r = Var v Integer -- ^ A variable with a name and a history level
+data Term v r = Var v Integer VarUsage -- ^ A variable with a name and a history level
               | Value (GTLValue r) -- ^ A value which may contain more terms
               | BinBoolExpr BoolOp r r -- ^ A logical binary expression
               | BinRelExpr Relation r r -- ^ A relation between two terms
@@ -96,7 +103,7 @@ instance Show (Fix GTLValue) where
   showsPrec p x = showGTLValue show p (unfix x)
 
 instance Functor (Term v) where
-  fmap f (Var x lvl) = Var x lvl
+  fmap f (Var x lvl u) = Var x lvl u
   fmap f (Value val) = Value (fmap f val)
   fmap f (BinBoolExpr op l r) = BinBoolExpr op (f l) (f r)
   fmap f (BinRelExpr op l r) = BinRelExpr op (f l) (f r)
@@ -111,8 +118,22 @@ instance Functor a => Functor (Typed a) where
                    , getValue = fmap f (getValue t)
                    }
 
+instance Binary VarUsage where
+  put u = put ((case u of
+                   Input -> 0
+                   Output -> 1
+                   StateIn -> 2
+                   StateOut -> 3)::Word8)
+  get = do
+    w <- get
+    return $ case (w::Word8) of
+      0 -> Input
+      1 -> Output
+      2 -> StateIn
+      3 -> StateOut
+
 instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
-  put (Var v l) = put (0::Word8) >> put v >> put l
+  put (Var v l u) = put (0::Word8) >> put v >> put l >> put u
   put (Value val) = put (1::Word8) >> put val
   put (BinBoolExpr op l r) = put (2::Word8) >> put op >> put l >> put r
   put (BinRelExpr op l r) = put (3::Word8) >> put op >> put l >> put r
@@ -128,7 +149,8 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
       0 -> do
         v <- get
         l <- get
-        return $ Var v l
+        u <- get
+        return $ Var v l u
       1 -> fmap Value get
       2 -> do
         op <- get
@@ -165,8 +187,8 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
         return $ ClockRef x
 
 -- | Construct a variable of a given type
-var :: GTLType -> v -> Integer -> TypedExpr v
-var t name lvl = Typed t (Var name lvl)
+var :: GTLType -> v -> Integer -> VarUsage -> TypedExpr v
+var t name lvl u = Typed t (Var name lvl u)
 
 -- | Create a GTL value from a haskell constant
 constant :: ToGTL a => a -> TypedExpr v
@@ -256,9 +278,9 @@ instance Ord (Fix GTLValue) where
 
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
-showTerm f (Var name lvl) = show name ++ (if lvl==0
-                                          then ""
-                                          else "_"++show lvl)
+showTerm f (Var name lvl u) = show name ++ (if lvl==0
+                                            then ""
+                                            else "_"++show lvl)
 showTerm f (Value val) = showGTLValue f 0 val ""
 showTerm f (BinBoolExpr op l r) = "(" ++ (f l) ++ (case op of
                                                       And -> " and "
@@ -298,7 +320,7 @@ enforceType expr ac tp = if ac == tp
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
 -- | Convert a untyped, generalized expression into a typed expression by performing type checking
-makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String v) -- ^ A function to create variable names from qualified and unqualified variables
+makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
                  -> Map v GTLType -- ^ A type mapping for variables
                  -> Set [String] -- ^ All possible enum types
                  -> GExpr -- ^ The generalized expression to type check
@@ -326,9 +348,9 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
                   -> (r2 -> GTLType)
                   -> (r2 -> String)
                   -> Map v GTLType -> Set [String] -> Term v r1 -> Either String (Typed (Term v) r2)
-    typeCheck' mu mutp mus varmp enums (Var x lvl) = case Map.lookup x varmp of
+    typeCheck' mu mutp mus varmp enums (Var x lvl u) = case Map.lookup x varmp of
       Nothing -> Left $ "Unknown variable "++show x
-      Just tp -> return $ Typed tp (Var x lvl)
+      Just tp -> return $ Typed tp (Var x lvl u)
     typeCheck' mu mutp mus varmp enums (Value val) = case val of
       GTLIntVal i -> return $ Typed GTLInt (Value $ GTLIntVal i)
       GTLByteVal i -> return $ Typed GTLByte (Value $ GTLByteVal i)
@@ -410,14 +432,14 @@ untyped :: TypedExpr v -> Expr v
 untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
 
 -- | Convert a generalized expression into a regular one.
-parseTerm :: Ord v => (Maybe String -> String -> Either String v) -- ^ A function to create variable names from qualified or unqualified variables
+parseTerm :: Ord v => (Maybe String -> String -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
              -> ExistsBinding v -- ^ All existentially bound variables
              -> GExpr -- ^ The generalized expression
              -> Either String (Expr v)
 parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f ex
   where
     parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
-                  -> (Maybe String -> String -> Either String v) -> ExistsBinding v -> GExpr -> Either String (Term v r)
+                  -> (Maybe String -> String -> Either String (v,VarUsage)) -> ExistsBinding v -> GExpr -> Either String (Term v r)
     parseTerm' mu f ex (GBin op tspec l r) = do
       rec_l <- mu ex l
       rec_r <- mu ex r
@@ -430,7 +452,7 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
             Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
     parseTerm' mu f ex (GUn op ts p) = do
       rec <- mu (case op of
-                    GOpNext -> fmap (\(v,lvl) -> (v,lvl+1)) ex
+                    GOpNext -> fmap (\(v,lvl,u) -> (v,lvl+1,u)) ex
                     _ -> ex
                 ) p
       return $ UnBoolExpr (case op of
@@ -452,21 +474,21 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
     parseTerm' mu f ex (GVar q n) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
-          var <- f q n
-          return $ Var var 0
-        Just (r,lvl) -> return $ Var r lvl
+          (var,u) <- f q n
+          return $ Var var 0 u
+        Just (r,lvl,u) -> return $ Var r lvl u
       Just _ -> do
-        var <- f q n
-        return $ Var var 0
+        (var,u) <- f q n
+        return $ Var var 0 u
     parseTerm' mu f ex (GExists b q n expr) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
-          var <- f q n
-          parseTerm' mu f (Map.insert b (var,0) ex) expr
-        Just (v,lvl) -> parseTerm' mu f (Map.insert b (v,lvl) ex) expr
+          (var,u) <- f q n
+          parseTerm' mu f (Map.insert b (var,0,u) ex) expr
+        Just (v,lvl,u) -> parseTerm' mu f (Map.insert b (v,lvl,u) ex) expr
       Just _ -> do
-        var <- f q n
-        parseTerm' mu f (Map.insert b (var,0) ex) expr
+        (var,u) <- f q n
+        parseTerm' mu f (Map.insert b (var,0,u) ex) expr
     parseTerm' mu f ex (GAutomaton sts) = do
       stmp <- foldlM (\mp st -> do
                          let (exprs,nexts) = partitionEithers (stateContent st)
@@ -504,7 +526,7 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
 distributeNot :: TypedExpr v -> TypedExpr v
 distributeNot expr
   | getType expr == GTLBool = case getValue expr of
-    Var x lvl -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
+    Var x lvl u -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     Value (GTLBoolVal x) -> Typed GTLBool $ Value (GTLBoolVal (not x))
     BinBoolExpr op l r -> Typed GTLBool $ case op of
       And -> BinBoolExpr Or (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
@@ -543,7 +565,7 @@ getVars x = getTermVars (getVars . unfix) x
 -- | Extract all variables used in the given term.
 getTermVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,[Integer],Integer,GTLType)]
 getTermVars mu expr = case getValue expr of
-  Var n lvl -> [(n,[],lvl,getType expr)]
+  Var n lvl u -> [(n,[],lvl,getType expr)]
   Value x -> getValueVars mu x
   BinBoolExpr op l r -> (mu l)++(mu r)
   BinRelExpr op l r -> (mu l)++(mu r)
@@ -569,7 +591,7 @@ mapGTLVars f expr = Typed (getType expr) (mapTermVars f (Fix . mapGTLVars f . un
 
 -- | Change the type of the variables used in a term
 mapTermVars :: (Ord r1,Ord r2) => (v -> w) -> (r1 -> r2) -> Term v r1 -> Term w r2
-mapTermVars f mu (Var name lvl) = Var (f name) lvl
+mapTermVars f mu (Var name lvl u) = Var (f name) lvl u
 mapTermVars f mu (Value x) = Value (mapValueVars mu x)
 mapTermVars f mu (BinBoolExpr op l r) = BinBoolExpr op (mu l) (mu r)
 mapTermVars f mu (BinRelExpr rel l r) = BinRelExpr rel (mu l) (mu r)
@@ -717,7 +739,7 @@ toElemOp GOpNotIn = Just False
 toElemOp _ = Nothing
 
 -- | Binds variables to other variables from the past.
-type ExistsBinding a = Map String (a,Integer)
+type ExistsBinding a = Map String (a,Integer,VarUsage)
 
 
 -- | Cast a binary operator into an arithmetic operator. Returns `Nothing' if the cast fails.
@@ -778,7 +800,7 @@ automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
 -- | Convert a typed expression to a linear combination of variables.
 toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer) Integer) GTLConstant
 toLinearExpr e = case getValue e of
-  Var v h -> Map.singleton (Map.singleton (v,h) 1) one
+  Var v h u -> Map.singleton (Map.singleton (v,h) 1) one
   Value v -> let Just c = getConstant e
              in Map.singleton Map.empty c
   BinIntExpr op lhs rhs
@@ -820,10 +842,10 @@ compareExpr e1 e2
           EEQ -> ENEQ
           _ -> EUNK
         _ -> case getValue e1 of
-          Var v1 h1 -> case getValue e2 of
-            Var v2 h2 -> if v1==v2 && h1==h2
-                         then EEQ
-                         else EUNK
+          Var v1 h1 u1 -> case getValue e2 of
+            Var v2 h2 u2 -> if v1==v2 && h1==h2
+                            then EEQ
+                            else EUNK
             _ -> EUNK
           Value c1 -> case getValue e2 of
             Value c2 -> if c1 == c2

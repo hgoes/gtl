@@ -202,7 +202,7 @@ translateConstant (GTLEnum xs) (GTLEnumVal x)
 
 translateTExpr :: TypedExpr TargetVar -> (Maybe Pr.AnyExpression,[(Integer,Integer)])
 translateTExpr e = case getValue e of
-  Var (mdl,var,i) lvl -> (Just $ Pr.RefExpr (varName mdl var i lvl),[])
+  Var (mdl,var,i) lvl _ -> (Just $ Pr.RefExpr (varName mdl var i lvl),[])
   Value val -> (Just $ translateConstant (getType e) val,[])
   BinBoolExpr op (Fix lhs) (Fix rhs) -> let (l,cl) = translateTExpr lhs
                                             (r,cr) = translateTExpr rhs

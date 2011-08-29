@@ -86,7 +86,7 @@ gtlToLTL cycle_time expr = fst $ gtlToLTL' 0 cycle_time expr
 gtlToLTL' :: (Ord v,Show v) => Integer -> Maybe Integer -> TypedExpr v -> (LTL (TypedExpr v),Integer)
 gtlToLTL' clk cycle_time expr
   | getType expr == GTLBool = case getValue expr of
-    Var _ _ -> (Atom expr,clk)
+    Var _ _ _ -> (Atom expr,clk)
     Value (GTLBoolVal x) -> (Ground x,clk)
     BinBoolExpr op l r -> let (lhs,clk1) = gtlToLTL' clk cycle_time (unfix l)
                               (rhs,clk2) = gtlToLTL' clk1 cycle_time (unfix r)
@@ -170,7 +170,7 @@ expandAutomaton ba = ba { baTransitions = fmap (\ts -> Set.fromList
 expandExpr :: Ord v => TypedExpr v -> [Set (TypedExpr v)]
 expandExpr expr
   | getType expr == GTLBool = case getValue expr of
-    Var _ _ -> [Set.singleton expr]
+    Var _ _ _ -> [Set.singleton expr]
     Value (GTLBoolVal False) -> []
     Value (GTLBoolVal True) -> [Set.empty]
     BinBoolExpr op l r -> case op of

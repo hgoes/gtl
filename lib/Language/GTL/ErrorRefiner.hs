@@ -63,7 +63,7 @@ atomToC :: CNameGen -- ^ Function to generate C-names
            -> TypedExpr (String,String) -- ^ GTL atom to convert
            -> String
 atomToC f expr = case getValue expr of
-  Var (q,n) l -> f q n l
+  Var (q,n) l _ -> f q n l
   Value val -> valueToC (getType expr) val
   BinRelExpr rel l r -> "("++atomToC f (unfix l)++relToC rel++atomToC f (unfix r)++")"
   BinIntExpr op l r -> "("++atomToC f (unfix l)++intOpToC op++atomToC f (unfix r)++")"

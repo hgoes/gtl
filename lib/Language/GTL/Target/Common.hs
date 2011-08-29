@@ -217,7 +217,7 @@ allPossibleIdx tp = [(tp,[])]
 
 flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
 flattenExpr f idx e = Typed (getType e) $ case getValue e of
-  Var v i -> Var (f v idx) i
+  Var v i u -> Var (f v idx) i u
   Value v -> case idx of
     [] -> Value (fmap (Fix . flattenExpr f [].unfix) v)
     (i:is) -> case v of
@@ -233,10 +233,10 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
 
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
-  Var v lvl -> case getType e of
-    GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl)) | j <- [0..(sz-1)] ]
-    GTLTuple tps -> concat [ unpackExpr f (j:i) (Typed t (Var v lvl)) | (t,j) <- zip tps [0..] ]
-    _ -> [Typed (getType e) (Var (f v i) lvl)]
+  Var v lvl u -> case getType e of
+    GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl u)) | j <- [0..(sz-1)] ]
+    GTLTuple tps -> concat [ unpackExpr f (j:i) (Typed t (Var v lvl u)) | (t,j) <- zip tps [0..] ]
+    _ -> [Typed (getType e) (Var (f v i) lvl u)]
   Value (GTLArrayVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value (GTLTupleVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value v -> [Typed (getType e) (Value $ fmap (Fix . flattenExpr f i . unfix) v)]
@@ -258,12 +258,10 @@ translateAtom :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -
 translateAtom f g mmdl expr t idx
   = case getValue expr of
     BinRelExpr rel lhs rhs -> case translateExpr f g mmdl (unfix lhs) of
-      Left trg -> case translateExpr f g mmdl (unfix rhs) of
-        Left _ -> error "Can't relate more than one output var (yet)"
-        Right src -> Left $ buildAssign rrel (getType $ unfix lhs) trg src
-      Right src -> case translateExpr f g mmdl (unfix rhs) of
-        Left trg -> Left $ buildAssign (relTurn rrel) (getType $ unfix lhs) trg src
-        Right src2 -> Right [ Typed GTLBool (BinRelExpr rrel (Fix s1) (Fix s2)) | (s1,s2) <- zip src src2 ]
+      Left var -> Left $ buildAssign rrel (getType $ unfix lhs) var (translateCheckExpr f mmdl (unfix rhs) [])
+      Right l -> case translateExpr f g mmdl (unfix rhs) of
+        Left var -> Left $ buildAssign (relTurn rrel) (getType $ unfix lhs) var l
+        Right r -> Right [ Typed GTLBool (BinRelExpr rrel (Fix s1) (Fix s2)) | (s1,s2) <- zip l r ]
       where
         rrel = if t then rel else relNot rel
         buildAssign BinLT tp trg [src] = [(trg,(emptyRestriction tp) { upperLimits = [(False,src)] })]
@@ -274,22 +272,22 @@ translateAtom f g mmdl expr t idx
         buildAssign BinEq tp trg src = [ (g trg i,(emptyRestriction tp) { equals = [s] }) | (i,s) <- zip [0..] src ]
         buildAssign BinNEq tp trg [src] = [ (trg,(emptyRestriction tp) { unequals = [src] }) ]
         buildAssign BinNEq tp trg src = [ (g trg i,(emptyRestriction tp) { unequals = [s] }) | (i,s) <- zip [0..] src ]
-    Var var lvl -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (f var idx) lvl))]
-                   in case mmdl of
-                     Nothing -> Right chk
-                     Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                                        then Right chk
-                                        else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
+    Var var lvl u -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (f var idx) lvl u))]
+                     in case mmdl of
+                       Nothing -> Right chk
+                       Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
+                                          then Right chk
+                                          else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
     IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
     UnBoolExpr GTL.Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
 translateExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
 translateExpr f g mmdl expr = case getValue expr of
-  Var var 0 -> case mmdl of
-    Nothing -> Right $ translateCheckExpr f Nothing expr []
-    Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
-                       then Left $ f var []
-                       else Right $ translateCheckExpr f mmdl expr []
+  Var var 0 u -> case u of
+    Input -> Right $ translateCheckExpr f mmdl expr []
+    StateIn -> Right $ translateCheckExpr f mmdl expr []
+    Output -> Left $ f var []
+    StateOut -> Left $ f var []
   IndexExpr e i -> case translateExpr f g mmdl (unfix e) of
     Left v -> Left $ g v i
     Right _ -> Right $ translateCheckExpr f mmdl (unfix e) [i]
@@ -297,19 +295,17 @@ translateExpr f g mmdl expr = case getValue expr of
 
 translateCheckExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
 translateCheckExpr f mmdl expr idx = case getValue expr of
-    Var var lvl -> case mmdl of
-      Nothing -> [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
-      Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                         then [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
-                         else error "Can't relate more than one output var (yet)"
-    Value (GTLTupleVal xs) -> case idx of
-      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
-    Value (GTLArrayVal xs) -> case idx of
-      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
-    BinIntExpr op lhs rhs -> [ Typed (getType expr) (BinIntExpr op (Fix l) (Fix r))
-                             | (l,r) <- zip (translateCheckExpr f mmdl (unfix lhs) idx)
-                                        (translateCheckExpr f mmdl (unfix rhs) idx) ]
-    IndexExpr e i -> translateCheckExpr f mmdl (unfix e) (i:idx)
-    _ -> [mapGTLVars (const undefined) expr]
+  Var var lvl Input -> [Typed (getType expr) (Var (f var (reverse idx)) lvl Input)]
+  Var var lvl StateIn -> [Typed (getType expr) (Var (f var (reverse idx)) lvl StateIn)]
+  Var var _ _ -> error $ "Can't (yet) relate more than two output variables"
+  Value (GTLTupleVal xs) -> case idx of
+    i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+    [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
+  Value (GTLArrayVal xs) -> case idx of
+    i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+    [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
+  BinIntExpr op lhs rhs -> [ Typed (getType expr) (BinIntExpr op (Fix l) (Fix r))
+                           | (l,r) <- zip (translateCheckExpr f mmdl (unfix lhs) idx)
+                                      (translateCheckExpr f mmdl (unfix rhs) idx) ]
+  IndexExpr e i -> translateCheckExpr f mmdl (unfix e) (i:idx)
+  _ -> [mapGTLVars (const undefined) expr]
