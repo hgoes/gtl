@@ -70,12 +70,17 @@ gtlParseModel mdl = do
       let allType = Map.unions [inp,outp,modelLocals mdl]
           enums = getEnums allType
       expr <- makeTypedExpr
-              (\q n -> case q of
+              (\q n inf -> case q of
                   Nothing -> Right (n,if Map.member n inp
                                       then Input
                                       else (if Map.member n outp
                                             then Output
-                                            else StateIn))
+                                            else (case inf of
+                                                     Nothing -> StateIn
+                                                     Just ContextIn -> StateIn
+                                                     Just ContextOut -> StateOut
+                                                 )
+                                           ))
                   _ -> Left "Contract may not contain qualified variables") 
               allType enums (case modelContract mdl of
                                 [] -> GConstBool True
@@ -83,7 +88,7 @@ gtlParseModel mdl = do
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
                       InitOne c -> do
-                        ce <- makeTypedExpr (\q n -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
+                        ce <- makeTypedExpr (\q n _ -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
                         case Map.lookup var allType of
                           Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
                           Just tp -> if tp == getType ce
@@ -128,12 +133,16 @@ gtlParseSpec decls = do
                     Just m -> return m
                   contr <- case instanceContract i of
                     [] -> return Nothing
-                    _ -> makeTypedExpr (\q n -> case q of
+                    _ -> makeTypedExpr (\q n inf -> case q of
                              Nothing -> Right (n,if Map.member n (gtlModelInput mdl)
                                                  then Input
                                                  else (if Map.member n (gtlModelOutput mdl)
                                                        then Output
-                                                       else StateIn))
+                                                       else (case inf of
+                                                                Nothing -> StateIn
+                                                                Just ContextIn -> StateIn
+                                                                Just ContextOut -> StateOut
+                                                            )))
                              _ -> Left "Contract may not contain qualified variables") (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums
                          (foldl1 (GBin GOpAnd NoTime) (instanceContract i)) >>= return.Just
                   return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
@@ -147,7 +156,7 @@ gtlParseSpec decls = do
                              , let mdl = mdl_mp!(gtlInstanceModel inst)
                              , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
                              ]
-    vexpr <- makeTypedExpr (\q n -> case q of
+    vexpr <- makeTypedExpr (\q n inf -> case q of
                                  Nothing -> Left "No unqualified variables allowed in verify clause"
                                  Just rq -> Right ((rq,n),Input)
                              ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of

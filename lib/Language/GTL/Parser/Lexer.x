@@ -73,6 +73,8 @@ tokens:-
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
   "^"                            { bin GOpPow }
+  "#in"                          { const $ CtxIn }
+  "#out"                         { const $ CtxOut }
   "'" $letter ($letter | $digit10)* { \s -> ConstEnum (tail s) }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }

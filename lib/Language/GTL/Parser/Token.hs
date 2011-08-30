@@ -12,6 +12,8 @@ data Token = Identifier String
            | ConstInt Integer
            | Unary UnOp
            | Binary BinOp
+           | CtxIn
+           | CtxOut
            deriving Show
 
 data KeyWord = KeyAll

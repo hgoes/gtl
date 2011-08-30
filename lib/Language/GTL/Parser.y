@@ -70,11 +70,14 @@ import qualified Data.Map as Map
   "*"               { Binary GOpMult }
   "/"               { Binary GOpDiv }
   "^"               { Binary GOpPow }
+  "#in"             { CtxIn }
+  "#out"            { CtxOut }
   id                { Identifier $$ }
   enum              { ConstEnum $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
 
+%left "#in" "#out"
 %left ":"
 %left "always" "next" "finally" "after"
 %left "until"
@@ -182,7 +185,7 @@ expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
      | expr ">" expr                { GBin GOpGreaterThan NoTime $1 $3 }
      | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
      | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
-     | expr ":=" expr               { GBin GOpAssign NoTime $1 $3 }
+     | expr ":=" expr               { GBin GOpEqual NoTime (GContext ContextOut $1) (GContext ContextIn $3) }
      | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
      | "after" time_spec expr       { GUn GOpAfter $2 $3 }
      | "not" expr                   { GUn GOpNot NoTime $2 }
@@ -212,7 +215,9 @@ expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
      | "true"                       { GConstBool True }
      | "false"                      { GConstBool False }
      | id "(" expr_list ")"         { GBuiltIn $1 $3 }
-
+     | "#in" expr                   { GContext ContextIn $2 }  
+     | "#out" expr                  { GContext ContextOut $2 }
+       
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }
 

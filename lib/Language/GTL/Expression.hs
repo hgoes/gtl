@@ -278,9 +278,11 @@ instance Ord (Fix GTLValue) where
 
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
-showTerm f (Var name lvl u) = show name ++ (if lvl==0
-                                            then ""
-                                            else "_"++show lvl)
+showTerm f (Var name lvl u) = (if u == StateOut
+                              then "#out " 
+                              else "") ++ show name ++ (if lvl==0
+                                                        then ""
+                                                        else "_"++show lvl)
 showTerm f (Value val) = showGTLValue f 0 val ""
 showTerm f (BinBoolExpr op l r) = "(" ++ (f l) ++ (case op of
                                                       And -> " and "
@@ -320,12 +322,12 @@ enforceType expr ac tp = if ac == tp
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
 -- | Convert a untyped, generalized expression into a typed expression by performing type checking
-makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Either String (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
+makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
                  -> Map v GTLType -- ^ A type mapping for variables
                  -> Set [String] -- ^ All possible enum types
                  -> GExpr -- ^ The generalized expression to type check
                  -> Either String (TypedExpr v)
-makeTypedExpr f varmp enums expr = parseTerm f Map.empty expr >>= typeCheck varmp enums
+makeTypedExpr f varmp enums expr = parseTerm f Map.empty Nothing expr >>= typeCheck varmp enums
 
 -- | Convert an expression into a constant, if it is one.
 --   If not, return 'Nothing'.
@@ -432,17 +434,21 @@ untyped :: TypedExpr v -> Expr v
 untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
 
 -- | Convert a generalized expression into a regular one.
-parseTerm :: Ord v => (Maybe String -> String -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
+parseTerm :: Ord v => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
              -> ExistsBinding v -- ^ All existentially bound variables
+             -> Maybe ContextInfo -- ^ Information about variable context (input or output)
              -> GExpr -- ^ The generalized expression
              -> Either String (Expr v)
-parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f ex
+parseTerm f ex inf = parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr >>= return.Fix) f ex inf
   where
-    parseTerm' :: Ord r => (ExistsBinding v -> GExpr -> Either String r)
-                  -> (Maybe String -> String -> Either String (v,VarUsage)) -> ExistsBinding v -> GExpr -> Either String (Term v r)
-    parseTerm' mu f ex (GBin op tspec l r) = do
-      rec_l <- mu ex l
-      rec_r <- mu ex r
+    parseTerm' :: Ord r => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> Either String r)
+                  -> (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage))
+                  -> ExistsBinding v
+                  -> Maybe ContextInfo
+                  -> GExpr -> Either String (Term v r)
+    parseTerm' mu f ex inf (GBin op tspec l r) = do
+      rec_l <- mu ex inf l
+      rec_r <- mu ex inf r
       case toBoolOp op tspec of
         Just rop -> return $ BinBoolExpr rop rec_l rec_r
         Nothing -> case toRelOp op of
@@ -450,11 +456,11 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
           Nothing -> case toIntOp op of
             Just rop -> return $ BinIntExpr rop rec_l rec_r
             Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
-    parseTerm' mu f ex (GUn op ts p) = do
+    parseTerm' mu f ex inf (GUn op ts p) = do
       rec <- mu (case op of
                     GOpNext -> fmap (\(v,lvl,u) -> (v,lvl+1,u)) ex
                     _ -> ex
-                ) p
+                ) inf p
       return $ UnBoolExpr (case op of
                               GOpAlways -> Always
                               GOpNext -> Next ts
@@ -462,42 +468,42 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
                               GOpFinally -> Finally ts
                               GOpAfter -> After ts
                           ) rec
-    parseTerm' mu f ex (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
-    parseTerm' mu f ex (GConstBool x) = return $ Value (GTLBoolVal x)
-    parseTerm' mu f ex (GEnum x) = return $ Value (GTLEnumVal x)
-    parseTerm' mu f ex (GTuple args) = do
-      res <- mapM (mu ex) args
+    parseTerm' mu f ex inf (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
+    parseTerm' mu f ex inf (GConstBool x) = return $ Value (GTLBoolVal x)
+    parseTerm' mu f ex inf (GEnum x) = return $ Value (GTLEnumVal x)
+    parseTerm' mu f ex inf (GTuple args) = do
+      res <- mapM (mu ex inf) args
       return $ Value (GTLTupleVal res)
-    parseTerm' mu f ex (GArray args) = do
-      res <- mapM (mu ex) args
+    parseTerm' mu f ex inf (GArray args) = do
+      res <- mapM (mu ex inf) args
       return $ Value (GTLArrayVal res)
-    parseTerm' mu f ex (GVar q n) = case q of
+    parseTerm' mu f ex inf (GVar q n) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
-          (var,u) <- f q n
+          (var,u) <- f q n inf
           return $ Var var 0 u
         Just (r,lvl,u) -> return $ Var r lvl u
       Just _ -> do
-        (var,u) <- f q n
+        (var,u) <- f q n inf
         return $ Var var 0 u
-    parseTerm' mu f ex (GExists b q n expr) = case q of
+    parseTerm' mu f ex inf (GExists b q n expr) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
-          (var,u) <- f q n
-          parseTerm' mu f (Map.insert b (var,0,u) ex) expr
-        Just (v,lvl,u) -> parseTerm' mu f (Map.insert b (v,lvl,u) ex) expr
+          (var,u) <- f q n inf
+          parseTerm' mu f (Map.insert b (var,0,u) ex) inf expr
+        Just (v,lvl,u) -> parseTerm' mu f (Map.insert b (v,lvl,u) ex) inf expr
       Just _ -> do
-        (var,u) <- f q n
-        parseTerm' mu f (Map.insert b (var,0,u) ex) expr
-    parseTerm' mu f ex (GAutomaton sts) = do
+        (var,u) <- f q n inf
+        parseTerm' mu f (Map.insert b (var,0,u) ex) inf expr
+    parseTerm' mu f ex inf (GAutomaton sts) = do
       stmp <- foldlM (\mp st -> do
                          let (exprs,nexts) = partitionEithers (stateContent st)
-                         rexpr <- mapM (mu ex) exprs
+                         rexpr <- mapM (mu ex inf) exprs
                          rnexts <- mapM (\(trg,cond) -> do
                                             rcond <- case cond of
                                               Nothing -> return Nothing
                                               Just cond' -> do
-                                                r <- mu ex cond'
+                                                r <- mu ex inf cond'
                                                 return $ Just r
                                             return (rcond,trg)
                                         ) nexts
@@ -512,15 +518,16 @@ parseTerm f ex = parseTerm' (\ex' expr -> parseTerm f ex' expr >>= return.Fix) f
                               , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
                               , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
                               }
-    parseTerm' mu f ex (GIndex expr ind) = do
+    parseTerm' mu f ex inf (GIndex expr ind) = do
       rind <- case ind of
         GConst x -> return x
         _ -> Left $ "Index must be an integer"
-      rexpr <- mu ex expr
+      rexpr <- mu ex inf expr
       return $ IndexExpr rexpr (fromIntegral rind)
-    parseTerm' mu f ex (GBuiltIn name args) = do
-      res <- mapM (mu ex) args
+    parseTerm' mu f ex inf (GBuiltIn name args) = do
+      res <- mapM (mu ex inf) args
       return $ BuiltIn name res
+    parseTerm' mu f ex _ (GContext inf expr) = parseTerm' mu f ex (Just inf) expr
 
 -- | Distribute a negation as deep as possible into an expression until it only ever occurs in front of variables.
 distributeNot :: TypedExpr v -> TypedExpr v
@@ -798,9 +805,9 @@ automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
                                ]
 
 -- | Convert a typed expression to a linear combination of variables.
-toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer) Integer) GTLConstant
+toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer,VarUsage) Integer) GTLConstant
 toLinearExpr e = case getValue e of
-  Var v h u -> Map.singleton (Map.singleton (v,h) 1) one
+  Var v h u -> Map.singleton (Map.singleton (v,h,u) 1) one
   Value v -> let Just c = getConstant e
              in Map.singleton Map.empty c
   BinIntExpr op lhs rhs
@@ -843,7 +850,7 @@ compareExpr e1 e2
           _ -> EUNK
         _ -> case getValue e1 of
           Var v1 h1 u1 -> case getValue e2 of
-            Var v2 h2 u2 -> if v1==v2 && h1==h2
+            Var v2 h2 u2 -> if v1==v2 && h1==h2 && u1 == u2
                             then EEQ
                             else EUNK
             _ -> EUNK

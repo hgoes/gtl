@@ -58,6 +58,10 @@ instance Show TimeSpec where
   show (TimeSteps i) = "["++show i++" cy]"
   show (TimeUSecs i) = "["++show i++" us]"
 
+data ContextInfo = ContextIn
+                 | ContextOut
+                 deriving (Show,Eq,Ord)
+
 -- | An untyped expression type.
 --   Used internally in the parser.
 data GExpr = GBin BinOp TimeSpec GExpr GExpr
@@ -73,6 +77,7 @@ data GExpr = GBin BinOp TimeSpec GExpr GExpr
            | GIndex GExpr GExpr
            | GEnum String
            | GBuiltIn String [GExpr]
+           | GContext ContextInfo GExpr
            deriving (Show,Eq,Ord)
 
 -- | A state of a state machine.
