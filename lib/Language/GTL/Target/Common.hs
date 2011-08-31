@@ -77,7 +77,9 @@ buildTargetModel' spec inmp outmp
                         in Map.foldrWithKey
                            (\var def mp
                             -> let tp = case Map.lookup var (gtlModelInput mdl) of
-                                     Nothing -> (gtlModelOutput mdl)!var
+                                     Nothing -> case Map.lookup var (gtlModelOutput mdl) of
+                                       Nothing -> (gtlModelLocals mdl)!var
+                                       Just p -> p
                                      Just p -> p
                                in case def of
                                  Just v -> foldl (\mp (c,(rtp,idx))
@@ -99,7 +101,15 @@ buildTargetModel' spec inmp outmp
     in TargetModel
        { tmodelVars = [ ((mdl,var,idx),lvl,tp,inits)
                       | ((mdl,var,idx),(lvl,inp,tp,inits)) <- Map.toList all_vars2
-                      ]
+                      ] {- ++ 
+                      [ ((iname,var,
+                      | (iname,inst) <- Map.toList (gtlSpecInstances spec)
+                      , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                      , (var,tp) <- Map.toList (gtlModelLocals mdl) 
+                      , let def = case Map.lookup var (gtlModelDefaults mdl) of
+                            Nothing -> Nothing
+                            Just p -> p
+                      ]-}
        , tmodelProcs = buildModelProcs spec outmp inmp
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
        }
@@ -150,12 +160,12 @@ buildOutputMap spec
                             mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing,tp)) | (tp,i) <- flattenVar tp_out fi ]
                         in Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,nvr1,tp1)) mp mp_out
                     ) Map.empty (gtlSpecConnections spec)
-        mp2 = foldl (\mp (var,idx,lvl,tp)
+        mp2 = foldl (\mp (var,u,idx,lvl,tp)
                      -> Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,case nvr1 of
-                                                                                  Nothing -> nvr2
-                                                                                  Just rnvr1 -> case nvr2 of
-                                                                                    Nothing -> nvr1
-                                                                                    Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
+                                                                               Nothing -> nvr2
+                                                                               Just rnvr1 -> case nvr2 of
+                                                                                 Nothing -> nvr1
+                                                                                 Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
                         mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp)) | (tp,i) <- flattenVar tp idx ])
                     ) mp1 (getVars $ gtlSpecVerify spec)
     in mp2
@@ -166,8 +176,8 @@ buildInputMap spec
                       -> let mdl = case Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec) of
                                Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel inst)++" not found."
                                Just p -> p
-                         in foldl (\mp' (var,idx,lvl,tp)
-                                   -> if Map.member var (gtlModelInput mdl)
+                         in foldl (\mp' (var,u,idx,lvl,tp)
+                                   -> if isInput u
                                       then foldl (\mp'' (tp',idx')
                                                   -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
                                                      (name,var,idx') (lvl,tp') mp'') mp' (flattenVar tp idx)

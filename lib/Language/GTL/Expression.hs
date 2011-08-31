@@ -28,6 +28,7 @@ module Language.GTL.Expression
         gfinally,
         gimplies,
         enumConst,
+        isInput,isOutput,isState,
         typeCheck,
         compareExpr,
         compareExprDebug,
@@ -185,6 +186,21 @@ instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
       9 -> do
         x <- get
         return $ ClockRef x
+
+isInput :: VarUsage -> Bool
+isInput Input = True
+isInput StateIn = True
+isInput _ = False
+
+isOutput :: VarUsage -> Bool
+isOutput Output = True
+isOutput StateOut = True
+isOutput _ = False
+
+isState :: VarUsage -> Bool
+isState StateIn = True
+isState StateOut = True
+isState _ = False
 
 -- | Construct a variable of a given type
 var :: GTLType -> v -> Integer -> VarUsage -> TypedExpr v
@@ -562,23 +578,23 @@ pushNot expr
 
 -- | Extracts the maximum level of history for each variable in the expression.
 maximumHistory :: Ord v => TypedExpr v -> Map v Integer
-maximumHistory exprs = foldl (\mp (n,_,lvl,_) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
+maximumHistory exprs = foldl (\mp (n,_,_,lvl,_) -> Map.insertWith max n lvl mp) Map.empty (getVars exprs)
 
 
 -- | Extracts all variables with their level of history from an expression.
-getVars :: TypedExpr v -> [(v,[Integer],Integer,GTLType)]
+getVars :: TypedExpr v -> [(v,VarUsage,[Integer],Integer,GTLType)]
 getVars x = getTermVars (getVars . unfix) x
 
 -- | Extract all variables used in the given term.
-getTermVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,[Integer],Integer,GTLType)]
+getTermVars :: (r -> [(v,VarUsage,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,VarUsage,[Integer],Integer,GTLType)]
 getTermVars mu expr = case getValue expr of
-  Var n lvl u -> [(n,[],lvl,getType expr)]
+  Var n lvl u -> [(n,u,[],lvl,getType expr)]
   Value x -> getValueVars mu x
   BinBoolExpr op l r -> (mu l)++(mu r)
   BinRelExpr op l r -> (mu l)++(mu r)
   BinIntExpr op l r -> (mu l)++(mu r)
   UnBoolExpr op p -> mu p
-  IndexExpr e i -> fmap (\(v,idx,lvl,tp) -> (v,i:idx,lvl,tp)) (mu e)
+  IndexExpr e i -> fmap (\(v,u,idx,lvl,tp) -> (v,u,i:idx,lvl,tp)) (mu e)
   Automaton buchi -> concat [ concat $ fmap mu cond
                             | trans <- Map.elems (baTransitions buchi), 
                               (cond,_) <- Set.toList trans
@@ -586,7 +602,7 @@ getTermVars mu expr = case getValue expr of
   BuiltIn _ args -> concat $ fmap mu args
 
 -- | Get all variables used in a GTL value.
-getValueVars :: (r -> [(v,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,[Integer],Integer,GTLType)]
+getValueVars :: (r -> [(v,VarUsage,[Integer],Integer,GTLType)]) -> GTLValue r -> [(v,VarUsage,[Integer],Integer,GTLType)]
 getValueVars mu (GTLArrayVal xs) = concat (fmap mu xs)
 getValueVars mu (GTLTupleVal xs) = concat (fmap mu xs)
 getValueVars _ _ = []
