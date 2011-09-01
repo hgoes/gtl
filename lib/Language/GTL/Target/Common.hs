@@ -153,20 +153,26 @@ atomsToRestr name mdl outmp inmp atm
 
 buildOutputMap :: GTLSpec String -> OutputMap
 buildOutputMap spec
-  = let mp1 = foldl (\mp (GTLConnPt mf vf fi,GTLConnPt mt vt ti)
+  = let mp0 = Map.fromList [ ((iname,var,i),(Set.empty,Just 0,tp'))
+                           | (iname,inst) <- Map.toList (gtlSpecInstances spec),
+                             let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
+                             (var,tp) <- Map.toList (gtlModelLocals mdl),
+                             (tp',i) <- allPossibleIdx tp
+                           ]
+        mp1 = foldl (\mp (GTLConnPt mf vf fi,GTLConnPt mt vt ti)
                      -> let tp_out = getInstanceVariableType spec False mf vf
                             tp_in = getInstanceVariableType spec True mt vt
                             idx_in = Set.fromList [ (mt,vt,i) | (_,i) <- flattenVar tp_in ti ]
                             mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing,tp)) | (tp,i) <- flattenVar tp_out fi ]
                         in Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,nvr1,tp1)) mp mp_out
-                    ) Map.empty (gtlSpecConnections spec)
+                    ) mp0 (gtlSpecConnections spec)
         mp2 = foldl (\mp (var,u,idx,lvl,tp)
                      -> Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,case nvr1 of
                                                                                Nothing -> nvr2
                                                                                Just rnvr1 -> case nvr2 of
                                                                                  Nothing -> nvr1
                                                                                  Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
-                        mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp)) | (tp,i) <- flattenVar tp idx ])
+                        mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp')) | (tp',i) <- flattenVar tp idx ])
                     ) mp1 (getVars $ gtlSpecVerify spec)
     in mp2
 
