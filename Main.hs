@@ -25,6 +25,7 @@ import Language.GTL.Model
 import Language.GTL.Target.Promela as PrNat
 import Language.GTL.Target.UPPAAL as UPP
 import Language.GTL.Target.Printer
+import Language.GTL.Target.SMT as SMT
 
 import Misc.ProgramOptions
 
@@ -94,4 +95,5 @@ main = do
     Pretty -> putStrLn (simplePrettyPrint rgtl)
     Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
     UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
+    SMT -> SMT.verifyModel rgtl
   return ()

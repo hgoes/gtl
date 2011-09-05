@@ -6,6 +6,7 @@ module Language.GTL.Types
         GTLValue(..),
         ToGTL(..),
         resolveIndices,
+        allPossibleIdx,
         isInstanceOf,
         showGTLValue) where
 
@@ -83,6 +84,11 @@ resolveIndices (GTLTuple tps) (x:xs) = if x < (genericLength tps)
                                        then resolveIndices (tps `genericIndex` x) xs
                                        else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
 resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
+
+allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
+allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
+allPossibleIdx (GTLTuple tps) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
+allPossibleIdx tp = [(tp,[])]
 
 -- | Given a type, a function to extract type information from sub-values and a
 --   value, this function checks if the value is in the domain of the given type.

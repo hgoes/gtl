@@ -10,7 +10,8 @@ Description:
 
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
-    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue
+    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue,
+    smtlib2,text,atto-lisp
   Hs-Source-Dirs: lib
   GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
@@ -38,6 +39,7 @@ Library
     Language.GTL.Target.Common
     Language.GTL.Target.UPPAAL
     Language.GTL.Target.Printer
+    Language.GTL.Target.SMT
     Misc.ProgramOptions
     Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
