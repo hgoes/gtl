@@ -20,6 +20,7 @@ verifyModel spec = withZ3 $ do
   let enummp = enumMap spec
   declareEnums enummp
   buildTransitionFunctions T.pack enummp spec
+  buildConnectionFun enummp spec
 
 data EnumVal = EnumVal [String] Integer String deriving Typeable
 
@@ -29,6 +30,34 @@ instance SMTType EnumVal where
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
+
+buildConnectionFun :: Map [String] Integer -> GTLSpec String -> SMT ()
+buildConnectionFun enums spec
+  = defineFun (T.pack "__conn")
+    [ getUndefined enums t $ \u -> (varName (T.pack $ i++"_"++v) usage 0 idx,getSort u) 
+    | (i,v,idx,usage,t) <- (allVars spec Input)++(allVars spec Output) ]
+    (getSort (undefined::Bool))
+    (toLisp $ and' [ getUndefined enums tp' $ \u -> (assertEq u (SMT.Var (varName (T.pack $ i1++"_"++v1) Output 0 (idx'++idx1)))) .==.
+                                                    (SMT.Var (varName (T.pack $ i2++"_"++v2) Input 0 (idx'++idx2)))
+          | (GTLConnPt i1 v1 idx1,GTLConnPt i2 v2 idx2) <- gtlSpecConnections spec, 
+            let tp = getInstanceVariableType spec False i1 v1,
+            (tp',idx') <- allPossibleIdx tp
+            ])
+
+allVars :: GTLSpec String -> VarUsage -> [(String,String,[Integer],VarUsage,GTLType)]
+allVars spec usage 
+  = Prelude.concat
+    [ [ (iname,v,i,usage,t') 
+      | (v,t) <- Map.toList (case usage of
+                                Input -> gtlModelInput mdl
+                                Output -> gtlModelOutput mdl
+                                _ -> gtlModelLocals mdl
+                            ), 
+        (t',i) <- allPossibleIdx t
+      ]
+    | (iname,inst) <- Map.toList $ gtlSpecInstances spec,
+      let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+    ]
 
 getUndefined :: Map [String] Integer -> GTLType -> (forall a. (Typeable a,SMTType a) => a -> b) -> b
 getUndefined mp rep f = case rep of
