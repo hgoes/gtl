@@ -42,7 +42,8 @@ module Language.GTL.Expression
         maximumHistory,
         getClocks,
         automatonClocks,
-        flattenExpr,flattenVar,flattenConstant
+        flattenExpr,flattenVar,flattenConstant,
+        defaultValue,constantToExpr
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -54,7 +55,7 @@ import Data.Binary
 import Data.Maybe
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List (genericLength,genericIndex)
+import Data.List as List (genericLength,genericIndex,genericReplicate)
 import Data.Either
 import Data.Foldable
 import Data.Traversable
@@ -990,7 +991,7 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
   Var v lvl u -> case resolveIndices (getType e) i of
-    Left err -> error $ "Internal error in unpackExpr: "++err
+    Left err -> [Typed (getType e) (Var (f v i) lvl u)]
     Right tp -> case tp of
       GTLArray sz tp' -> concat [ unpackExpr f [j] (Typed tp' (Var v lvl u)) | j <- [0..(sz-1)] ]
       GTLTuple tps -> concat [ unpackExpr f [j] (Typed tp' (Var v lvl u)) | (tp',j) <- zip tps [0..] ]
@@ -1004,3 +1005,27 @@ unpackExpr f i e = case getValue e of
   UnBoolExpr op ne -> [Typed (getType e) (UnBoolExpr op (Fix $ flattenExpr f i $ unfix ne))]
   IndexExpr ne ni -> unpackExpr f (ni:i) (unfix ne)
   Automaton buchi -> [ flattenExpr f i e ]
+
+defaultValue :: GTLType -> GTLConstant
+defaultValue GTLInt = Fix $ GTLIntVal 0
+defaultValue GTLByte = Fix $ GTLByteVal 0
+defaultValue GTLBool = Fix $ GTLBoolVal False
+defaultValue GTLFloat = Fix $ GTLFloatVal 0
+defaultValue (GTLEnum (x:xs)) = Fix $ GTLEnumVal x
+defaultValue (GTLArray sz tp) = Fix $ GTLArrayVal (genericReplicate sz (defaultValue tp))
+defaultValue (GTLTuple tps) = Fix $ GTLTupleVal (fmap defaultValue tps)
+
+constantToExpr :: Set [String] -> GTLConstant -> TypedExpr v
+constantToExpr enums c = case unfix c of
+  GTLIntVal v -> Typed GTLInt (Value (GTLIntVal v))
+  GTLByteVal v -> Typed GTLByte (Value (GTLByteVal v))
+  GTLBoolVal v -> Typed GTLBool (Value (GTLBoolVal v))
+  GTLFloatVal v -> Typed GTLBool (Value (GTLFloatVal v))
+  GTLEnumVal v -> case find (elem v) enums of 
+    Just enum -> Typed (GTLEnum enum) (Value (GTLEnumVal v))
+  GTLArrayVal vs -> let e:es = fmap (constantToExpr enums) vs
+                        tp = getType e
+                    in Typed (GTLArray (genericLength vs) tp) (Value (GTLArrayVal (fmap Fix (e:es))))
+  GTLTupleVal vs -> let es = fmap (constantToExpr enums) vs
+                        tps = fmap getType es
+                    in Typed (GTLTuple tps) (Value (GTLTupleVal (fmap Fix es)))

@@ -14,13 +14,17 @@ import Data.Text as T
 import Data.Map as Map
 import Data.Set as Set
 import Data.AttoLisp as L
+import Data.Maybe (catMaybes)
 
 verifyModel :: GTLSpec String -> IO ()
-verifyModel spec = withZ3 $ do
-  let enummp = enumMap spec
-  declareEnums enummp
-  buildTransitionFunctions T.pack enummp spec
-  buildConnectionFun enummp spec
+verifyModel spec = do
+  res <- withZ3 $ do
+    let enummp = enumMap spec
+    declareEnums enummp
+    buildTransitionFunctions T.pack enummp spec
+    buildConnectionFun enummp spec
+    checkSat
+  print res
 
 data EnumVal = EnumVal [String] Integer String deriving Typeable
 
@@ -30,7 +34,7 @@ instance SMTType EnumVal where
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
-
+    
 buildConnectionFun :: Map [String] Integer -> GTLSpec String -> SMT ()
 buildConnectionFun enums spec
   = defineFun (T.pack "__conn")
@@ -41,7 +45,8 @@ buildConnectionFun enums spec
                                                     (SMT.Var (varName (T.pack $ i2++"_"++v2) Input 0 (idx'++idx2)))
           | (GTLConnPt i1 v1 idx1,GTLConnPt i2 v2 idx2) <- gtlSpecConnections spec, 
             let tp = getInstanceVariableType spec False i1 v1,
-            (tp',idx') <- allPossibleIdx tp
+            let Right rtp = resolveIndices tp idx1,
+            (tp',idx') <- allPossibleIdx rtp
             ])
 
 allVars :: GTLSpec String -> VarUsage -> [(String,String,[Integer],VarUsage,GTLType)]
@@ -81,8 +86,8 @@ assertEq _ = id
 
 buildTransitionFunctions :: (Ord v,Show v) => (v -> Text) -> Map [String] Integer -> GTLSpec v -> SMT ()
 buildTransitionFunctions f enums spec
-  = mapM_ (\(name,inp,outp,loc,ba) -> buildTransitionFunction name f enums (fmap (\tp -> (0,tp)) inp) (fmap (\tp -> (0,tp)) outp) (fmap (\tp -> (0,tp)) loc) ba)
-    [ (T.pack iname,gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl,gtl2ba (Just (gtlModelCycleTime mdl)) formula)
+  = mapM_ (\(name,inp,outp,loc,def,ba) -> buildTransitionFunction name f enums (fmap (\tp -> (0,tp)) inp) (fmap (\tp -> (0,tp)) outp) (fmap (\tp -> (0,tp)) loc) def ba)
+    [ (T.pack iname,gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl,gtlModelDefaults mdl,gtl2ba (Just (gtlModelCycleTime mdl)) formula)
     | (iname,inst) <- Map.toList (gtlSpecInstances spec), 
       let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
       let formula = case gtlInstanceContract inst of
@@ -95,37 +100,57 @@ buildTransitionFunction :: Ord v => Text -> (v -> Text) ->
                            Map v (Integer,GTLType) ->
                            Map v (Integer,GTLType) ->
                            Map v (Integer,GTLType) ->
+                           Map v (Maybe GTLConstant) ->
                            BA [TypedExpr v] Integer -> SMT ()
-buildTransitionFunction name f enums inp outp loc ba
-  = defineFun ((T.pack "__trans_") `T.append` name) 
-    ([ (T.pack "__st",getSort (undefined::Integer)),
-       (T.pack "__st'",getSort (undefined::Integer)) ]++
-     [ (varName (f var) Input lvl idx,getUndefined enums tp' getSort)
-     | (var,(lvls,tp)) <- Map.toList inp
-     , lvl <- [0..lvls]
-     , (tp',idx) <- allPossibleIdx tp ] ++
-     [ (varName (f var) StateIn lvl idx,getUndefined enums tp' getSort)
-     | (var,(lvls,tp)) <- Map.toList loc
-     , lvl <- [0..lvls]
-     , (tp',idx) <- allPossibleIdx tp ] ++
-     [ (varName (f var) StateOut lvl idx,getUndefined enums tp' getSort)
-     | (var,(lvls,tp)) <- Map.toList loc
-     , lvl <- [0..lvls]
-     , (tp',idx) <- allPossibleIdx tp ] ++
-     [ (varName (f var) Output lvl idx,getUndefined enums tp' getSort)
-     | (var,(lvls,tp)) <- Map.toList outp
-     , lvl <- [0..lvls]
-     , (tp',idx) <- allPossibleIdx tp ]) (getSort (undefined::Bool))
-    (toLisp (and' [ (var_st .==. (SMT.constant st)) .=>. 
-                    (or' [ and' $ (fmap (toSMTExpr f enums) cond) ++ [var_st' .==. (SMT.constant st')]
-                         | (cond,st') <- Set.toList trans
-                         ])
-                  | (st,trans) <- Map.toList (baTransitions ba)
-                  ]))
+buildTransitionFunction name f enums inp outp loc inits ba
+  = do
+    let inps = [ (varName (f var) Input lvl idx,getUndefined enums tp' getSort)
+               | (var,(lvls,tp)) <- Map.toList inp
+               , lvl <- [0..lvls]
+               , (tp',idx) <- allPossibleIdx tp ]
+        stins = [ (varName (f var) StateIn lvl idx,getUndefined enums tp' getSort)
+                | (var,(lvls,tp)) <- Map.toList loc
+                , lvl <- [0..lvls]
+                , (tp',idx) <- allPossibleIdx tp ]
+        stouts = [ (varName (f var) StateOut lvl idx,getUndefined enums tp' getSort)
+                 | (var,(lvls,tp)) <- Map.toList loc
+                 , lvl <- [0..lvls]
+                 , (tp',idx) <- allPossibleIdx tp ]
+        outps = [ (varName (f var) Output lvl idx,getUndefined enums tp' getSort)
+                | (var,(lvls,tp)) <- Map.toList outp
+                , lvl <- [0..lvls]
+                , (tp',idx) <- allPossibleIdx tp ]
+    defineFun ((T.pack "__trans_") `T.append` name) 
+      ([ (T.pack "__st",getSort (undefined::Integer)),
+         (T.pack "__st2",getSort (undefined::Integer)) ]++
+       inps ++
+       stins ++
+       stouts ++
+       outps) (getSort (undefined::Bool))
+      (toLisp (and' [ (var_st .==. (SMT.constant st)) .=>. 
+                      (or' [ and' $ (fmap (toSMTExpr f enums) cond) ++ [var_st' .==. (SMT.constant st')]
+                           | (cond,st') <- Set.toList trans
+                           ])
+                    | (st,trans) <- Map.toList (baTransitions ba)
+                    ]))
+    defineFun ((T.pack "__init_") `T.append` name)
+      ([ (T.pack "__st",getSort (undefined::Integer)) ] ++
+       inps ++
+       stins ++
+       stouts) (getSort (undefined::Bool))
+      (toLisp $ and' $ 
+       [or' [ (SMT.Var $ T.pack "__st") .==. SMT.constant c
+            | c <- Set.toList $ baInits ba ]] ++
+       (catMaybes [ case Map.lookup var inits of
+                       Nothing -> Just $ toSMTExpr f enums (geq (Typed tp $ GTL.Var var 0 Input) (constantToExpr (Map.keysSet enums) $ defaultValue tp))
+                       Just Nothing -> Nothing
+                       Just (Just val) -> Just $ toSMTExpr f enums (geq (Typed tp $ GTL.Var var 0 Input) (constantToExpr (Map.keysSet enums) val))
+                  | (var,(h,tp)) <- Map.toList inp ])
+      )
     where
       var_st,var_st' :: SMTExpr Integer
       var_st = SMT.Var $ T.pack "__st"
-      var_st' = SMT.Var $ T.pack "__st'"
+      var_st' = SMT.Var $ T.pack "__st2"
 
 enumMap :: Ord v => GTLSpec v -> Map [String] Integer
 enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]
@@ -150,7 +175,7 @@ varName var u history idx = let base = case history of
                                              StateOut -> base `T.append` (T.pack "_out")
                           in if Prelude.null idx
                              then base'
-                             else Prelude.foldl (\cur i -> cur `T.append` (T.pack $ "_"++show i)) (base'`T.snoc` '_') idx
+                             else Prelude.foldl (\cur i -> cur `T.append` (T.pack $ "_"++show i)) (base' `T.snoc` '_') idx
 
 toSMTExpr :: (Typeable b,Ord v) => (v -> Text) -> Map [String] Integer -> TypedExpr v -> SMTExpr b
 toSMTExpr f enums expr = toSMTExpr' f enums (\e -> case gcast e of
@@ -219,3 +244,11 @@ toSMTExpr' f enums g expr
     GTL.UnBoolExpr GTL.Not (Fix arg) -> g (SMT.Not (toSMTExpr' f enums (\cl -> case gcast cl of
                                                                            Nothing -> error "internal type error in toSMTExpr'"
                                                                            Just res -> res) arg))
+    GTL.IndexExpr _ _ -> error "Index expressions shouldn't appear here in toSMTExpr'"
+    GTL.BinBoolExpr GTL.And (Fix l) (Fix r) -> g $ and' [toSMTExpr' f enums (\cl -> case gcast cl of
+                                                                                Nothing -> error "internal type error in toSMTExpr'"
+                                                                                Just res -> res) l
+                                                        ,toSMTExpr' f enums (\cr -> case gcast cr of
+                                                                                Nothing -> error "internal type error in toSMTExpr'"
+                                                                                Just res -> res) r]
+    --GTL.BinBoolExpr op _ _ -> error $ "Binary boolean expressions ("++show op++") shouldn't appear here in toSMTExpr'"
