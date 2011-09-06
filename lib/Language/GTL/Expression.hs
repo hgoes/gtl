@@ -989,10 +989,12 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
 
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
-  Var v lvl u -> case getType e of
-    GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl u)) | j <- [0..(sz-1)] ]
-    GTLTuple tps -> concat [ unpackExpr f (j:i) (Typed t (Var v lvl u)) | (t,j) <- zip tps [0..] ]
-    _ -> [Typed (getType e) (Var (f v i) lvl u)]
+  Var v lvl u -> case resolveIndices (getType e) i of
+    Left err -> error $ "Internal error in unpackExpr: "++err
+    Right tp -> case tp of
+      GTLArray sz tp' -> concat [ unpackExpr f [j] (Typed tp' (Var v lvl u)) | j <- [0..(sz-1)] ]
+      GTLTuple tps -> concat [ unpackExpr f [j] (Typed tp' (Var v lvl u)) | (tp',j) <- zip tps [0..] ]
+      _ -> [Typed tp (Var (f v i) lvl u)]
   Value (GTLArrayVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value (GTLTupleVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value v -> [Typed (getType e) (Value $ fmap (Fix . flattenExpr f i . unfix) v)]
