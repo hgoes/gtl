@@ -12,6 +12,8 @@ data Token = Identifier String
            | ConstInt Integer
            | Unary UnOp
            | Binary BinOp
+           | CtxIn
+           | CtxOut
            deriving Show
 
 data KeyWord = KeyAll
@@ -19,7 +21,9 @@ data KeyWord = KeyAll
              | KeyByte
              | KeyConnect
              | KeyContract
+             | KeyCycleTime
              | KeyEnum
+             | KeyLocal
              | KeyModel
              | KeyOutput
              | KeyFalse
@@ -46,7 +50,8 @@ data BracketType = Parentheses
 data UnOp = GOpAlways
           | GOpNext
           | GOpNot
-          | GOpFinally (Maybe Integer)
+          | GOpFinally
+          | GOpAfter
           deriving (Show,Eq,Ord)
 
 data BinOp = GOpAnd
@@ -60,6 +65,7 @@ data BinOp = GOpAnd
            | GOpGreaterThan
            | GOpGreaterThanEqual
            | GOpEqual
+           | GOpAssign
            | GOpNEqual
            | GOpPlus
            | GOpMinus

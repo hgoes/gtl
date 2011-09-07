@@ -11,8 +11,9 @@
 (defconst gtl-font-lock-keywords-1
   (list
    (cons "//.*" 'font-lock-comment-face)
+   (cons "/\\*[^\\*]*\\*/" 'font-lock-comment-face)
    (cons (concat "\\<" (regexp-opt '("automaton" "state" "transition" "connect" "verify" "contract" "init") t) "\\>") 'font-lock-keyword-face)
-   (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies") t) "\\>") 'font-lock-builtin-face)
+   (cons (concat "\\<" (regexp-opt '("always" "until" "and" "or" "not" "implies" "after" "finally" "next") t) "\\>") 'font-lock-builtin-face)
    )
   "Highlighting expressions for GTL mode")
 
@@ -74,13 +75,27 @@
 	  (indent-line-to cur-indent)
 	(indent-line-to 0)))))
 
+(defvar gtl-mode-syntax-table
+  (let ((st (make-syntax-table)))
+    (modify-syntax-entry ?_ "w" st)
+    (modify-syntax-entry ?/ ". 124b" st)
+    (modify-syntax-entry ?* ". 23" st)
+    (modify-syntax-entry ?\n "> b" st)
+    st) 
+  "Syntax table for gtl-mode")
+
 (defun gtl-mode ()
   "Major mode for editing GTL specifications"
   (interactive)
   (kill-all-local-variables)
+  (set-syntax-table gtl-mode-syntax-table)
   (use-local-map gtl-mode-map)
   (set (make-local-variable 'font-lock-defaults) '(gtl-font-lock-keywords))
   (set (make-local-variable 'indent-line-function) 'gtl-indent-line)
+  (setq comment-start-skip "//\\|/\\*+ *")
+  (setq comment-start "/* ")
+  (setq comment-end " */")
+  (setq comment-multi-line t)
   (setq major-mode 'gtl-mode)
   (setq mode-name "GTL")
   (run-hooks 'gtl-mode-hook))

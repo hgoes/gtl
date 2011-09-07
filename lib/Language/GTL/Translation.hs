@@ -3,7 +3,9 @@
 {-| Translates GTL expressions into LTL formula.
  -}
 module Language.GTL.Translation(
-  gtl2ba
+  gtl2ba,
+  gtlToLTL,
+  expandAutomaton
   ) where
 
 import Language.GTL.Expression as GTL
@@ -18,8 +20,8 @@ import Data.Set as Set
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
 --   true into the variable type of the buchi automaton.
-gtl2ba :: (Ord v,Show v) => TypedExpr v -> BA [TypedExpr v] Integer
-gtl2ba e = ltl2ba $ gtlToLTL e
+gtl2ba :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> BA [TypedExpr v] Integer
+gtl2ba cy e = ltl2ba $ gtlToLTL cy e
 
 instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
   atomsTrue = []
@@ -69,39 +71,79 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
           Just ys' -> Just (y:ys')
         ENEQ -> Nothing
 
+getSteps :: Integer -> TimeSpec -> Integer
+getSteps _ NoTime = 0
+getSteps _ (TimeSteps s) = s
+getSteps cy (TimeUSecs s) = s `div` cy
+
+getUSecs :: TimeSpec -> Integer
+getUSecs (TimeUSecs s) = s
+
+gtlToLTL :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> LTL (TypedExpr v)
+gtlToLTL cycle_time expr = fst $ gtlToLTL' 0 cycle_time expr
+
 -- | Translate a GTL expression into a LTL formula.
-gtlToLTL :: (Ord v,Show v) => TypedExpr v -> LTL (TypedExpr v)
-gtlToLTL expr
+gtlToLTL' :: (Ord v,Show v) => Integer -> Maybe Integer -> TypedExpr v -> (LTL (TypedExpr v),Integer)
+gtlToLTL' clk cycle_time expr
   | getType expr == GTLBool = case getValue expr of
-    Var _ _ -> Atom expr
-    Value (GTLBoolVal x) -> Ground x
-    BinBoolExpr op l r -> case op of
-      GTL.And -> LTL.Bin LTL.And (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-      GTL.Or -> LTL.Bin LTL.Or (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-      GTL.Implies -> LTL.Bin LTL.Or (LTL.Un LTL.Not (gtlToLTL (unfix l))) (gtlToLTL (unfix r))
-      GTL.Until -> LTL.Bin LTL.Until (gtlToLTL (unfix l)) (gtlToLTL (unfix r))
-    BinRelExpr rel lhs rhs -> case getType (unfix lhs) of
-      GTLBool -> let l = gtlToLTL (unfix lhs)
-                     r = gtlToLTL (unfix rhs)
-                     nl = gtlToLTL (distributeNot (unfix lhs))
-                     nr = gtlToLTL (distributeNot (unfix rhs))
-                 in case rel of
-                   BinEq -> LTL.Bin LTL.Or (LTL.Bin LTL.And l r) (LTL.Bin LTL.And nl nr)
-                   BinNEq -> LTL.Bin LTL.Or (LTL.Bin LTL.And l nr) (LTL.Bin LTL.And nl r)
-      _ -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
-        [e] -> e
-        es -> foldl1 (LTL.Bin LTL.And) es
-    UnBoolExpr op p -> case op of
-      GTL.Not -> LTL.Un LTL.Not (gtlToLTL (unfix p))
-      GTL.Always -> LTL.Bin LTL.UntilOp (LTL.Ground False) (gtlToLTL (unfix p))
-      GTL.Next -> LTL.Un LTL.Next (gtlToLTL (unfix p))
-      GTL.Finally Nothing -> LTL.Bin LTL.Until (LTL.Ground True) (gtlToLTL (unfix p))
-    IndexExpr _ _ -> Atom expr
-    Automaton buchi -> LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi)
+    Var _ _ _ -> (Atom expr,clk)
+    Value (GTLBoolVal x) -> (Ground x,clk)
+    BinBoolExpr op l r -> let (lhs,clk1) = gtlToLTL' clk cycle_time (unfix l)
+                              (rhs,clk2) = gtlToLTL' clk1 cycle_time (unfix r)
+                          in case op of
+                            GTL.And -> (LTL.Bin LTL.And lhs rhs,clk2)
+                            GTL.Or -> (LTL.Bin LTL.Or lhs rhs,clk2)
+                            GTL.Implies -> (LTL.Bin LTL.Or (LTL.Un LTL.Not lhs) rhs,clk2)
+                            GTL.Until NoTime -> (LTL.Bin LTL.Until lhs rhs,clk2)
+                            GTL.Until ti -> case cycle_time of
+                              Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or rhs (LTL.Bin LTL.And lhs (LTL.Un LTL.Next expr))) rhs [1..(getSteps rcycle_time ti)],clk2)
+                              Nothing -> (LTL.Bin LTL.Or rhs (LTL.Bin LTL.And
+                                                              (LTL.Bin LTL.And
+                                                               (Atom (Typed GTLBool $ ClockReset clk2 (getUSecs ti)))
+                                                               lhs)
+                                                              (LTL.Un LTL.Next
+                                                               (LTL.Bin LTL.Until (LTL.Bin LTL.And
+                                                                                   lhs
+                                                                                   (Atom (Typed GTLBool $ ClockRef clk2)))
+                                                                (LTL.Bin LTL.And
+                                                                 rhs
+                                                                 (Atom (Typed GTLBool $ ClockReset clk2 0))
+                                                                )
+                                                               )
+                                                              )
+                                                             ),clk2+1)
+    BinRelExpr rel lhs rhs -> case fmap Atom $ flattenRel rel (unfix lhs) (unfix rhs) of
+      [e] -> (e,clk)
+      es -> (foldl1 (LTL.Bin LTL.And) es,clk)
+    UnBoolExpr op p -> let (arg,clk1) = gtlToLTL' clk cycle_time (unfix p)
+                       in case op of
+                         GTL.Not -> (LTL.Un LTL.Not arg,clk1)
+                         GTL.Always -> (LTL.Bin LTL.UntilOp (LTL.Ground False) arg,clk1)
+                         GTL.Next NoTime -> (LTL.Un LTL.Next arg,clk1)
+                         GTL.Next ti -> case cycle_time of
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
+                         GTL.Finally NoTime -> (LTL.Bin LTL.Until (LTL.Ground True) arg,clk1)
+                         GTL.Finally ti -> case cycle_time of
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
+                           Nothing -> gtlToLTL' clk cycle_time (Typed GTLBool $ BinBoolExpr (GTL.Until ti) (Fix $ Typed GTLBool (Value (GTLBoolVal True))) p)
+                         GTL.After ti -> case cycle_time of
+                           Just rcycle_time -> (foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..(getSteps rcycle_time ti)],clk1)
+                           Nothing
+                             | getUSecs ti == 0 -> (arg,clk1)
+                             | otherwise -> (LTL.Bin LTL.And
+                                             (Atom $ Typed GTLBool $ ClockReset clk1 (getUSecs ti))
+                                             (LTL.Un LTL.Next
+                                              ((LTL.Bin LTL.Until
+                                                (LTL.Ground True)
+                                                (LTL.Bin LTL.And
+                                                 (LTL.Un LTL.Not (Atom $ Typed GTLBool $ ClockRef clk1))
+                                                 arg)))),clk1+1)
+    IndexExpr _ _ -> (Atom expr,clk)
+    Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ baMapAlphabet (fmap unfix) $ renameStates buchi),clk)
     BuiltIn "equal" args@(x:xs) -> case getType (unfix x) of
-      GTLBool -> let tt = fmap (gtlToLTL.unfix) args
-                     ff = fmap (gtlToLTL.distributeNot.unfix) args
-                 in LTL.Bin LTL.Or (foldl1 (LTL.Bin LTL.And) tt) (foldl1 (LTL.Bin LTL.And) ff)
+      GTLBool -> let (clk1,tt) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time (unfix arg) in (nclk,nres:cres)) (clk,[]) args
+                     (clk2,ff) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time (distributeNot (unfix arg)) in (nclk,nres:cres)) (clk1,[]) args
+                 in (LTL.Bin LTL.Or (foldl1 (LTL.Bin LTL.And) tt) (foldl1 (LTL.Bin LTL.And) ff),clk2)
   | otherwise = error "Internal error: Non-bool expression passed to gtlToLTL"
     where
       flattenRel :: Relation -> TypedExpr v -> TypedExpr v -> [TypedExpr v]
@@ -128,21 +170,21 @@ expandAutomaton ba = ba { baTransitions = fmap (\ts -> Set.fromList
 expandExpr :: Ord v => TypedExpr v -> [Set (TypedExpr v)]
 expandExpr expr
   | getType expr == GTLBool = case getValue expr of
-    Var _ _ -> [Set.singleton expr]
+    Var _ _ _ -> [Set.singleton expr]
     Value (GTLBoolVal False) -> []
     Value (GTLBoolVal True) -> [Set.empty]
     BinBoolExpr op l r -> case op of
       GTL.And -> [ Set.union lm rm | lm <- expandExpr (unfix l), rm <- expandExpr (unfix r) ]
       GTL.Or -> expandExpr (unfix l) ++ expandExpr (unfix r)
       GTL.Implies -> expandExpr (Typed GTLBool (BinBoolExpr GTL.Or (Fix $ Typed GTLBool (UnBoolExpr GTL.Not l)) r))
-      GTL.Until -> error "Can't use until in state formulas yet"
+      GTL.Until _ -> error "Can't use until in state formulas yet"
     BinRelExpr _ _ _ -> [Set.singleton expr]
     UnBoolExpr op p -> case op of
       GTL.Not -> let expandNot [] = [Set.empty]
                      expandNot (x:xs) = let res = expandNot xs
                                         in Set.fold (\at cur -> fmap (Set.insert (distributeNot at)) res ++ cur) res x
                  in expandNot (expandExpr $ unfix p)
-      GTL.Next -> error "Can't use next in state formulas yet"
+      GTL.Next _ -> error "Can't use next in state formulas yet"
       GTL.Always -> error "Can't use always in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
     Automaton _ -> error "Can't use automata in state formulas yet"

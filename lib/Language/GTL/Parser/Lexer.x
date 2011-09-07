@@ -1,4 +1,5 @@
 {
+{-# LANGUAGE BangPatterns #-}  
 {-| The GTL Lexer  
  -}
 module Language.GTL.Parser.Lexer (lexGTL) where
@@ -14,6 +15,8 @@ $digit10 = [0-9]
 tokens:-
   $white+                        ;
   "//".*                         ;
+  "/*" ([\x00-\xff] # [\*] | \* [\x00-\xff] # [\/])* "*/" ;
+  after                          { un GOpAfter }
   all                            { key KeyAll }
   always                         { un GOpAlways }
   and                            { bin GOpAnd }
@@ -22,6 +25,7 @@ tokens:-
   byte                           { key KeyByte }
   connect                        { key KeyConnect }
   contract                       { key KeyContract }
+  cycle\-time                    { key KeyCycleTime }
   enum                           { key KeyEnum }
   false                          { key KeyFalse }
   float                          { key KeyFloat }
@@ -29,10 +33,9 @@ tokens:-
   init                           { key KeyInit }
   int                            { key KeyInt }
   instance                       { key KeyInstance }
+  local                          { key KeyLocal }
   model                          { key KeyModel }
-  finally $digit10*              { \s -> Unary (GOpFinally (case drop 7 s of
-                                                            [] -> Nothing
-                                                            r -> Just (read r))) }
+  finally                        { un GOpFinally }
   next                           { un GOpNext }
   exists                         { key KeyExists }
   final                          { key KeyFinal }
@@ -53,6 +56,7 @@ tokens:-
   "{"                            { const $ Bracket Curly False }
   "}"                            { const $ Bracket Curly True }
   ";"                            { const Semicolon }
+  ":="                           { bin GOpAssign }
   ":"                            { const Colon }
   "."                            { const Dot }
   ","                            { const Comma }
@@ -69,6 +73,8 @@ tokens:-
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
   "^"                            { bin GOpPow }
+  "#in"                          { const $ CtxIn }
+  "#out"                         { const $ CtxOut }
   "'" $letter ($letter | $digit10)* { \s -> ConstEnum (tail s) }
   \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
   $letter ($letter | $digit10)*  { Identifier }

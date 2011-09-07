@@ -18,7 +18,9 @@ data GTLModel a = GTLModel
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
+                  , gtlModelLocals :: Map a GTLType -- ^ The local variables with types of the model.
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
+                  , gtlModelCycleTime :: Integer -- ^ Cycle time in us
                   }
 
 -- | Represents the start or end of a connection, by specifying the instance
@@ -65,19 +67,28 @@ gtlParseModel mdl = do
                        Nothing -> Left $ "Unknown type "++show str
                        Just rtp -> return rtp) (modelOutputs mdl)-}
       (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
-      let allType = Map.union inp outp
+      let allType = Map.unions [inp,outp,modelLocals mdl]
           enums = getEnums allType
       expr <- makeTypedExpr
-              (\q n -> case q of
-                  Nothing -> Right n
+              (\q n inf -> case q of
+                  Nothing -> Right (n,if Map.member n inp
+                                      then Input
+                                      else (if Map.member n outp
+                                            then Output
+                                            else (case inf of
+                                                     Nothing -> StateIn
+                                                     Just ContextIn -> StateIn
+                                                     Just ContextOut -> StateOut
+                                                 )
+                                           ))
                   _ -> Left "Contract may not contain qualified variables") 
               allType enums (case modelContract mdl of
                                 [] -> GConstBool True
-                                c -> foldl1 (GBin GOpAnd) c)
+                                c -> foldl1 (GBin GOpAnd NoTime) c)
       lst <- mapM (\(var,init) -> case init of
                       InitAll -> return (var,Nothing)
                       InitOne c -> do
-                        ce <- makeTypedExpr (\q n -> Left "Init expression may not contain variables"::Either String String) allType enums c
+                        ce <- makeTypedExpr (\q n _ -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
                         case Map.lookup var allType of
                           Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
                           Just tp -> if tp == getType ce
@@ -90,7 +101,9 @@ gtlParseModel mdl = do
                                      , gtlModelBackend = back
                                      , gtlModelInput = inp
                                      , gtlModelOutput = outp
+                                     , gtlModelLocals = modelLocals mdl
                                      , gtlModelDefaults = Map.fromList lst
+                                     , gtlModelCycleTime = modelCycleTime mdl
                                      },enums)
 
 -- | Get all possible enum types.
@@ -120,10 +133,18 @@ gtlParseSpec decls = do
                     Just m -> return m
                   contr <- case instanceContract i of
                     [] -> return Nothing
-                    _ -> makeTypedExpr (\q n -> case q of
-                             Nothing -> Right n
+                    _ -> makeTypedExpr (\q n inf -> case q of
+                             Nothing -> Right (n,if Map.member n (gtlModelInput mdl)
+                                                 then Input
+                                                 else (if Map.member n (gtlModelOutput mdl)
+                                                       then Output
+                                                       else (case inf of
+                                                                Nothing -> StateIn
+                                                                Just ContextIn -> StateIn
+                                                                Just ContextOut -> StateOut
+                                                            )))
                              _ -> Left "Contract may not contain qualified variables") (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums
-                         (foldl1 (GBin GOpAnd) (instanceContract i)) >>= return.Just
+                         (foldl1 (GBin GOpAnd NoTime) (instanceContract i)) >>= return.Just
                   return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
                                                      , gtlInstanceContract = contr
                                                      , gtlInstanceDefaults = Map.empty
@@ -135,12 +156,12 @@ gtlParseSpec decls = do
                              , let mdl = mdl_mp!(gtlInstanceModel inst)
                              , (n,tp) <- Map.toList $ Map.union (gtlModelInput mdl) (gtlModelOutput mdl)
                              ]
-    vexpr <- makeTypedExpr (\q n -> case q of
+    vexpr <- makeTypedExpr (\q n inf -> case q of
                                  Nothing -> Left "No unqualified variables allowed in verify clause"
-                                 Just rq -> Right (rq,n)
+                                 Just rq -> Right ((rq,n),Input)
                              ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of
                                              [] -> GConstBool True
-                                             x -> foldl1 (GBin GOpAnd) x)
+                                             x -> foldl1 (GBin GOpAnd NoTime) x)
     conns <- sequence [ do
                            finst <- case Map.lookup f inst_mp of
                              Nothing -> Left $ "Instance "++f++" not found."

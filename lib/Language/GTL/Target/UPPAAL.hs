@@ -62,7 +62,7 @@ translateTarget tm
       templates = [Template (noPos $ pname++"_tmpl") Nothing []
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
-                  | (pname,buchi) <- Map.toList (tmodelProcs tm),
+                  | (pname,TargetProc buchi cycle_time) <- Map.toList (tmodelProcs tm),
                     let st_locs = [ noPos $ Location { locId = ("l"++show name)
                                                      , locName = Just (noPos $ "l"++show name)
                                                      , locLabels = []
@@ -176,7 +176,7 @@ translateConstant (GTLEnum xs) (GTLEnumVal x) = let Just i = elemIndex x xs
 -- | Translate a GTL expression into a UPPAAL one.
 translateExpression :: TypedExpr TargetVar -> Expression
 translateExpression expr = case getValue expr of
-  Var v h -> ExprIndex (ExprId (varString v)) (ExprNat h)
+  Var v h _ -> ExprIndex (ExprId (varString v)) (ExprNat h)
   Value val -> translateConstant (getType expr) val
   BinBoolExpr op (Fix l) (Fix r) -> ExprBinary (case op of
                                                    And -> BinAnd

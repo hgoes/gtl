@@ -15,6 +15,7 @@ import qualified Data.Map as Map
 %error { parseError }
 
 %token
+  "after"           { Unary GOpAfter }
   "all"             { Key KeyAll }
   "always"          { Unary GOpAlways }
   "and"             { Binary GOpAnd }
@@ -23,14 +24,16 @@ import qualified Data.Map as Map
   "byte"            { Key KeyByte }
   "connect"         { Key KeyConnect }
   "contract"        { Key KeyContract }
+  "cycle-time"      { Key KeyCycleTime }
   "enum"            { Key KeyEnum }
   "exists"          { Key KeyExists }
   "false"           { Key KeyFalse }
   "final"           { Key KeyFinal }
-  "finally"         { Unary (GOpFinally $$) }
+  "finally"         { Unary GOpFinally }
   "float"           { Key KeyFloat }
   "implies"         { Binary GOpImplies }
   "int"             { Key KeyInt }
+  "local"           { Key KeyLocal }
   "model"           { Key KeyModel }
   "next"            { Unary GOpNext}
   "not"             { Unary GOpNot }
@@ -59,6 +62,7 @@ import qualified Data.Map as Map
   ">"               { Binary GOpGreaterThan }
   ">="              { Binary GOpGreaterThanEqual }
   "="               { Binary GOpEqual }
+  ":="              { Binary GOpAssign }
   "!="              { Binary GOpNEqual }
   "."               { Dot }
   "+"               { Binary GOpPlus }
@@ -66,19 +70,22 @@ import qualified Data.Map as Map
   "*"               { Binary GOpMult }
   "/"               { Binary GOpDiv }
   "^"               { Binary GOpPow }
+  "#in"             { CtxIn }
+  "#out"            { CtxOut }
   id                { Identifier $$ }
   enum              { ConstEnum $$ }
   string            { ConstString $$ }
   int               { ConstInt $$ }
 
+%left "#in" "#out"
 %left ":"
-%left "always" "next" "finally"
+%left "always" "next" "finally" "after"
 %left "until"
 %left "or"
 %left "and"
 %left "implies"
 %left "not"
-%left "<" "<=" ">" ">=" "=" "!="
+%left "<" "<=" ">" ">=" "=" "!=" ":="
 %left "+"
 %left "-"
 %left "*"
@@ -105,6 +112,8 @@ model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                , modelInits = []
                                                                , modelInputs = Map.empty
                                                                , modelOutputs = Map.empty
+                                                               , modelLocals = Map.empty
+                                                               , modelCycleTime = 1
                                                                })
                                                              }
 
@@ -142,6 +151,14 @@ formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars {
                            | "output" type id ";" formulas_or_inits_or_vars      { \decl -> let ndecl = $5 decl
                                                                                           in ndecl { modelOutputs = Map.insert $3 $2 (modelOutputs ndecl)
                                                                                                    } }
+                           | "local" type id ";" formulas_or_inits_or_vars       { \decl -> let ndecl = $5 decl
+                                                                                            in ndecl { modelLocals = Map.insert $3 $2 (modelLocals ndecl)
+                                                                                                   } }
+                           | "cycle-time" int id ";" formulas_or_inits_or_vars { \decl -> let ndecl = $5 decl
+                                                                                          in ndecl { modelCycleTime = $2 * (case $3 of
+                                                                                                       "s" -> 1000000
+                                                                                                       "ms" -> 1000
+                                                                                                       "us" -> 1) } }
                            |                                                   { id }
 
 formulas_or_inits : mb_contract formula ";" formulas_or_inits { \decl -> let ndecl = $4 decl
@@ -158,22 +175,27 @@ formulas : formula ";" formulas { $1:$3 }
 
 formula : expr { $1 }
 
-expr : expr "and" expr              { GBin GOpAnd $1 $3 }
-     | expr "or" expr               { GBin GOpOr $1 $3 }
-     | expr "implies" expr          { GBin GOpImplies $1 $3 }
-     | expr "until" expr            { GBin GOpUntil $1 $3 }
-     | expr "<" expr                { GBin GOpLessThan $1 $3 }
-     | expr "<=" expr               { GBin GOpLessThanEqual $1 $3 }
-     | expr ">" expr                { GBin GOpGreaterThan $1 $3 }
-     | expr ">=" expr               { GBin GOpGreaterThanEqual $1 $3 }
-     | expr "=" expr                { GBin GOpEqual $1 $3 }
-     | expr "!=" expr               { GBin GOpNEqual $1 $3 }
-     | "not" expr                   { GUn GOpNot $2 }
-     | "always" expr                { GUn GOpAlways $2 }
-     | "next" expr                  { GUn GOpNext $2 }
-     | "finally" expr               { GUn (GOpFinally $1) $2 }
-     | expr "in" expr               { GBin GOpIn $1 $3 }
-     | expr "not" "in" expr         { GBin GOpNotIn $1 $4 }
+expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
+     | expr "or" expr               { GBin GOpOr NoTime $1 $3 }
+     | expr "implies" expr          { GBin GOpImplies NoTime $1 $3 }
+     | expr "until" expr            { GBin GOpUntil NoTime $1 $3 }
+     | expr "until" time_spec expr  { GBin GOpUntil $3 $1 $4 }
+     | expr "<" expr                { GBin GOpLessThan NoTime $1 $3 }
+     | expr "<=" expr               { GBin GOpLessThanEqual NoTime $1 $3 }
+     | expr ">" expr                { GBin GOpGreaterThan NoTime $1 $3 }
+     | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
+     | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
+     | expr ":=" expr               { GBin GOpEqual NoTime (GContext ContextOut $1) (GContext ContextIn $3) }
+     | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
+     | "after" time_spec expr       { GUn GOpAfter $2 $3 }
+     | "not" expr                   { GUn GOpNot NoTime $2 }
+     | "always" expr                { GUn GOpAlways NoTime $2 }
+     | "next" expr                  { GUn GOpNext NoTime $2 }
+     | "next" time_spec expr        { GUn GOpNext $2 $3 }
+     | "finally" expr               { GUn GOpFinally NoTime $2 }
+     | "finally" time_spec expr     { GUn GOpFinally $2 $3 }
+     | expr "in" expr               { GBin GOpIn NoTime $1 $3 }
+     | expr "not" "in" expr         { GBin GOpNotIn NoTime $1 $4 }
      | "{" ints "}"                 { GSet $2 }
      | "(" expr_list ")"            { case $2 of
                                          [x] -> x
@@ -182,10 +204,10 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "[" expr_list "]"            { GArray $2 }
      | var                          { GVar (fst $1) (snd $1) }
      | int                          { GConst $ fromIntegral $1 }
-     | expr "+" expr                { GBin GOpPlus $1 $3 }
-     | expr "-" expr                { GBin GOpMinus $1 $3 }
-     | expr "/" expr                { GBin GOpDiv $1 $3 }
-     | expr "*" expr                { GBin GOpMult $1 $3 }
+     | expr "+" expr                { GBin GOpPlus NoTime $1 $3 }
+     | expr "-" expr                { GBin GOpMinus NoTime $1 $3 }
+     | expr "/" expr                { GBin GOpDiv NoTime $1 $3 }
+     | expr "*" expr                { GBin GOpMult NoTime $1 $3 }
      | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" states "}"   { GAutomaton $3 }
      | expr "[" expr "]"            { GIndex $1 $3 }
@@ -193,7 +215,9 @@ expr : expr "and" expr              { GBin GOpAnd $1 $3 }
      | "true"                       { GConstBool True }
      | "false"                      { GConstBool False }
      | id "(" expr_list ")"         { GBuiltIn $1 $3 }
-
+     | "#in" expr                   { GContext ContextIn $2 }  
+     | "#out" expr                  { GContext ContextOut $2 }
+       
 expr_list : expr expr_lists { $1:$2 }
           |                 { [] }
 
@@ -256,6 +280,12 @@ type_list : type type_lists { $1:$2 }
 
 type_lists : "," type type_lists { $2:$3 }
            |                     { [] }
+
+time_spec : "[" int id "]" { case $3 of
+                                "cy" -> TimeSteps $2
+                                "s" -> TimeUSecs ($2*1000000)
+                                "ms" -> TimeUSecs ($2*1000)
+                                "us" -> TimeUSecs $2 }
 
 {
 parseError xs = error ("Parse error at "++show (take 5 xs))

@@ -6,7 +6,9 @@ module Language.GTL.Target.Common
        (TargetModel(..),
         TransitionConditions(..),
         TargetVar,
-        buildTargetModel
+        TargetProc(..),
+        buildTargetModel,
+        getVerifyAutomaton
         ) where
 
 import Language.GTL.Model
@@ -39,12 +41,20 @@ data TransitionConditions = TransitionConditions
 -- | A flattened out model without arrays or tuples.
 data TargetModel = TargetModel
                    { tmodelVars :: [(TargetVar,Integer,GTLType,Maybe (Set GTLConstant))] -- ^ All variables used in the model with type and default values
-                   , tmodelProcs :: Map String (BA TransitionConditions Integer) -- ^ A map of processes, represented by B&#xFC;chi automata
+                   , tmodelProcs :: Map String TargetProc -- ^ A map of processes, represented by B&#xFC;chi automata
                    , tmodelVerify :: TypedExpr TargetVar -- ^ The verification goal
                    } deriving Show
 
+data TargetProc = TargetProc
+                  { tprocAutomaton :: BA TransitionConditions Integer
+                  , tprocCycleTime :: Integer
+                  } deriving Show
+
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
+
+getVerifyAutomaton :: TargetModel -> BA [TypedExpr TargetVar] Integer
+getVerifyAutomaton tm = gtl2ba Nothing (gnot $ tmodelVerify tm)
 
 -- | Creates a flattened model from a GTL specification.
 buildTargetModel :: GTLSpec String -> TargetModel
@@ -67,7 +77,9 @@ buildTargetModel' spec inmp outmp
                         in Map.foldrWithKey
                            (\var def mp
                             -> let tp = case Map.lookup var (gtlModelInput mdl) of
-                                     Nothing -> (gtlModelOutput mdl)!var
+                                     Nothing -> case Map.lookup var (gtlModelOutput mdl) of
+                                       Nothing -> (gtlModelLocals mdl)!var
+                                       Just p -> p
                                      Just p -> p
                                in case def of
                                  Just v -> foldl (\mp (c,(rtp,idx))
@@ -89,17 +101,28 @@ buildTargetModel' spec inmp outmp
     in TargetModel
        { tmodelVars = [ ((mdl,var,idx),lvl,tp,inits)
                       | ((mdl,var,idx),(lvl,inp,tp,inits)) <- Map.toList all_vars2
-                      ]
+                      ] {- ++ 
+                      [ ((iname,var,
+                      | (iname,inst) <- Map.toList (gtlSpecInstances spec)
+                      , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                      , (var,tp) <- Map.toList (gtlModelLocals mdl) 
+                      , let def = case Map.lookup var (gtlModelDefaults mdl) of
+                            Nothing -> Nothing
+                            Just p -> p
+                      ]-}
        , tmodelProcs = buildModelProcs spec outmp inmp
        , tmodelVerify = flattenExpr (\(m,v) i -> (m,v,i)) [] (gtlSpecVerify spec)
        }
 
-buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String (BA TransitionConditions Integer)
-buildModelProcs spec outmp inmp = Map.mapWithKey instanceToBuchi (gtlSpecInstances spec)
+buildModelProcs :: GTLSpec String -> OutputMap -> InputMap -> Map String TargetProc
+buildModelProcs spec outmp inmp = Map.mapWithKey instanceToProc (gtlSpecInstances spec)
   where
-    instanceToBuchi :: String -> (GTLInstance String) -> BA TransitionConditions Integer
-    instanceToBuchi name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                in baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba $ gtlModelContract mdl
+    instanceToProc :: String -> GTLInstance String -> TargetProc
+    instanceToProc name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                                in TargetProc
+                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl)
+                                   , tprocCycleTime = gtlModelCycleTime mdl
+                                   }
 
 atomsToRestr :: String -> GTLModel String -> OutputMap -> InputMap -> [TypedExpr String] -> TransitionConditions
 atomsToRestr name mdl outmp inmp atm 
@@ -130,20 +153,26 @@ atomsToRestr name mdl outmp inmp atm
 
 buildOutputMap :: GTLSpec String -> OutputMap
 buildOutputMap spec
-  = let mp1 = foldl (\mp (GTLConnPt mf vf fi,GTLConnPt mt vt ti)
+  = let mp0 = Map.fromList [ ((iname,var,i),(Set.empty,Just 0,tp'))
+                           | (iname,inst) <- Map.toList (gtlSpecInstances spec),
+                             let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
+                             (var,tp) <- Map.toList (gtlModelLocals mdl),
+                             (tp',i) <- allPossibleIdx tp
+                           ]
+        mp1 = foldl (\mp (GTLConnPt mf vf fi,GTLConnPt mt vt ti)
                      -> let tp_out = getInstanceVariableType spec False mf vf
                             tp_in = getInstanceVariableType spec True mt vt
                             idx_in = Set.fromList [ (mt,vt,i) | (_,i) <- flattenVar tp_in ti ]
                             mp_out = Map.fromList [ ((mf,vf,i),(idx_in,Nothing,tp)) | (tp,i) <- flattenVar tp_out fi ]
                         in Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,nvr1,tp1)) mp mp_out
-                    ) Map.empty (gtlSpecConnections spec)
-        mp2 = foldl (\mp (var,idx,lvl,tp)
+                    ) mp0 (gtlSpecConnections spec)
+        mp2 = foldl (\mp (var,u,idx,lvl,tp)
                      -> Map.unionWith (\(set1,nvr1,tp1) (set2,nvr2,tp2) -> (Set.union set1 set2,case nvr1 of
-                                                                                  Nothing -> nvr2
-                                                                                  Just rnvr1 -> case nvr2 of
-                                                                                    Nothing -> nvr1
-                                                                                    Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
-                        mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp)) | (tp,i) <- flattenVar tp idx ])
+                                                                               Nothing -> nvr2
+                                                                               Just rnvr1 -> case nvr2 of
+                                                                                 Nothing -> nvr1
+                                                                                 Just rnvr2 -> Just $ max rnvr1 rnvr2,tp1))
+                        mp (Map.fromList [ ((fst var,snd var,i),(Set.empty,Just lvl,tp')) | (tp',i) <- flattenVar tp idx ])
                     ) mp1 (getVars $ gtlSpecVerify spec)
     in mp2
 
@@ -153,8 +182,8 @@ buildInputMap spec
                       -> let mdl = case Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec) of
                                Nothing -> error $ "Internal error: Model "++show (gtlInstanceModel inst)++" not found."
                                Just p -> p
-                         in foldl (\mp' (var,idx,lvl,tp)
-                                   -> if Map.member var (gtlModelInput mdl)
+                         in foldl (\mp' (var,u,idx,lvl,tp)
+                                   -> if isInput u
                                       then foldl (\mp'' (tp',idx')
                                                   -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
                                                      (name,var,idx') (lvl,tp') mp'') mp' (flattenVar tp idx)
@@ -204,7 +233,7 @@ allPossibleIdx tp = [(tp,[])]
 
 flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
 flattenExpr f idx e = Typed (getType e) $ case getValue e of
-  Var v i -> Var (f v idx) i
+  Var v i u -> Var (f v idx) i u
   Value v -> case idx of
     [] -> Value (fmap (Fix . flattenExpr f [].unfix) v)
     (i:is) -> case v of
@@ -220,10 +249,10 @@ flattenExpr f idx e = Typed (getType e) $ case getValue e of
 
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i e = case getValue e of
-  Var v lvl -> case getType e of
-    GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl)) | j <- [0..(sz-1)] ]
-    GTLTuple tps -> concat [ unpackExpr f (j:i) (Typed t (Var v lvl)) | (t,j) <- zip tps [0..] ]
-    _ -> [Typed (getType e) (Var (f v i) lvl)]
+  Var v lvl u -> case getType e of
+    GTLArray sz tp -> concat [ unpackExpr f (j:i) (Typed tp (Var v lvl u)) | j <- [0..(sz-1)] ]
+    GTLTuple tps -> concat [ unpackExpr f (j:i) (Typed t (Var v lvl u)) | (t,j) <- zip tps [0..] ]
+    _ -> [Typed (getType e) (Var (f v i) lvl u)]
   Value (GTLArrayVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value (GTLTupleVal vs) -> concat $ fmap (unpackExpr f i . unfix) vs
   Value v -> [Typed (getType e) (Value $ fmap (Fix . flattenExpr f i . unfix) v)]
@@ -245,12 +274,10 @@ translateAtom :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -
 translateAtom f g mmdl expr t idx
   = case getValue expr of
     BinRelExpr rel lhs rhs -> case translateExpr f g mmdl (unfix lhs) of
-      Left trg -> case translateExpr f g mmdl (unfix rhs) of
-        Left _ -> error "Can't relate more than one output var (yet)"
-        Right src -> Left $ buildAssign rrel (getType $ unfix lhs) trg src
-      Right src -> case translateExpr f g mmdl (unfix rhs) of
-        Left trg -> Left $ buildAssign (relTurn rrel) (getType $ unfix lhs) trg src
-        Right src2 -> Right [ Typed GTLBool (BinRelExpr rrel (Fix s1) (Fix s2)) | (s1,s2) <- zip src src2 ]
+      Left var -> Left $ buildAssign rrel (getType $ unfix lhs) var (translateCheckExpr f mmdl (unfix rhs) [])
+      Right l -> case translateExpr f g mmdl (unfix rhs) of
+        Left var -> Left $ buildAssign (relTurn rrel) (getType $ unfix lhs) var l
+        Right r -> Right [ Typed GTLBool (BinRelExpr rrel (Fix s1) (Fix s2)) | (s1,s2) <- zip l r ]
       where
         rrel = if t then rel else relNot rel
         buildAssign BinLT tp trg [src] = [(trg,(emptyRestriction tp) { upperLimits = [(False,src)] })]
@@ -261,22 +288,22 @@ translateAtom f g mmdl expr t idx
         buildAssign BinEq tp trg src = [ (g trg i,(emptyRestriction tp) { equals = [s] }) | (i,s) <- zip [0..] src ]
         buildAssign BinNEq tp trg [src] = [ (trg,(emptyRestriction tp) { unequals = [src] }) ]
         buildAssign BinNEq tp trg src = [ (g trg i,(emptyRestriction tp) { unequals = [s] }) | (i,s) <- zip [0..] src ]
-    Var var lvl -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (f var idx) lvl))]
-                   in case mmdl of
-                     Nothing -> Right chk
-                     Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                                        then Right chk
-                                        else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
+    Var var lvl u -> let chk = [(if t then id else gnot) (Typed GTLBool (Var (f var idx) lvl u))]
+                     in case mmdl of
+                       Nothing -> Right chk
+                       Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
+                                          then Right chk
+                                          else Left [ (f var (reverse idx),(emptyRestriction GTLBool) { allowedValues = Just (Set.singleton (GTLBoolVal t)) }) ]
     IndexExpr e i -> translateAtom f g mmdl (unfix e) t (i:idx)
     UnBoolExpr GTL.Not p -> translateAtom f g mmdl (unfix p) (not t) idx
 
 translateExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> Either b [TypedExpr b]
 translateExpr f g mmdl expr = case getValue expr of
-  Var var 0 -> case mmdl of
-    Nothing -> Right $ translateCheckExpr f Nothing expr []
-    Just (name,mdl) -> if Map.member var (gtlModelOutput mdl)
-                       then Left $ f var []
-                       else Right $ translateCheckExpr f mmdl expr []
+  Var var 0 u -> case u of
+    Input -> Right $ translateCheckExpr f mmdl expr []
+    StateIn -> Right $ translateCheckExpr f mmdl expr []
+    Output -> Left $ f var []
+    StateOut -> Left $ f var []
   IndexExpr e i -> case translateExpr f g mmdl (unfix e) of
     Left v -> Left $ g v i
     Right _ -> Right $ translateCheckExpr f mmdl (unfix e) [i]
@@ -284,19 +311,17 @@ translateExpr f g mmdl expr = case getValue expr of
 
 translateCheckExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> Maybe (String,GTLModel a) -> TypedExpr a -> [Integer] -> [TypedExpr b]
 translateCheckExpr f mmdl expr idx = case getValue expr of
-    Var var lvl -> case mmdl of
-      Nothing -> [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
-      Just (name,mdl) -> if Map.member var (gtlModelInput mdl)
-                         then [Typed (getType expr) (Var (f var (reverse idx)) lvl)]
-                         else error "Can't relate more than one output var (yet)"
-    Value (GTLTupleVal xs) -> case idx of
-      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
-    Value (GTLArrayVal xs) -> case idx of
-      i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
-      [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
-    BinIntExpr op lhs rhs -> [ Typed (getType expr) (BinIntExpr op (Fix l) (Fix r))
-                             | (l,r) <- zip (translateCheckExpr f mmdl (unfix lhs) idx)
-                                        (translateCheckExpr f mmdl (unfix rhs) idx) ]
-    IndexExpr e i -> translateCheckExpr f mmdl (unfix e) (i:idx)
-    _ -> [mapGTLVars (const undefined) expr]
+  Var var lvl Input -> [Typed (getType expr) (Var (f var (reverse idx)) lvl Input)]
+  Var var lvl StateIn -> [Typed (getType expr) (Var (f var (reverse idx)) lvl StateIn)]
+  Var var _ _ -> error $ "Can't (yet) relate more than two output variables"
+  Value (GTLTupleVal xs) -> case idx of
+    i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+    [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
+  Value (GTLArrayVal xs) -> case idx of
+    i:is -> translateCheckExpr f mmdl (unfix $ xs `genericIndex` i) is
+    [] -> concat [ translateCheckExpr f mmdl (unfix x) [] | x <- xs ]
+  BinIntExpr op lhs rhs -> [ Typed (getType expr) (BinIntExpr op (Fix l) (Fix r))
+                           | (l,r) <- zip (translateCheckExpr f mmdl (unfix lhs) idx)
+                                      (translateCheckExpr f mmdl (unfix rhs) idx) ]
+  IndexExpr e i -> translateCheckExpr f mmdl (unfix e) (i:idx)
+  _ -> [mapGTLVars (const undefined) expr]

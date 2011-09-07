@@ -59,11 +59,12 @@ instance (Show a,Show st,Ord st) => Show (VWAA a st) where
                                 | (st,trans) <- Map.toList $ vwaaTransitions vwaa ])++
               ["inits: "++concat (List.intersperse ", " [ show (Set.toList f) | f <- Set.toList $ vwaaInits vwaa ])]
 
-instance (Show a,Show st) => Show (GBA a st) where
-  show gba = unlines $ (concat [ [ "state "++show st ] ++
+instance (Show a,Show st,Ord st) => Show (GBA a st) where
+  show gba = unlines $ (concat [ [ (if Set.member st (gbaInits gba)
+                                    then "initial "
+                                    else "")++"state "++show st ] ++
                                  [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
-                               | (st,trans) <- Map.toList (gbaTransitions gba) ])++
-             ["inits: "++concat (List.intersperse ", " [  show (Set.toList f) | f <- Set.toList $ gbaInits gba ])]
+                               | (st,trans) <- Map.toList (gbaTransitions gba) ])
 
 class BAState st where
   -- | Generates a new state which isn't in use, yet.
@@ -87,5 +88,24 @@ renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions
                         , baFinals = fins'
                         }
 
+removeDeadlocks :: (Ord a,Ord st) => BA a st -> BA a st
+removeDeadlocks ba
+  = let (rem,keep) = Map.partition Set.null (baTransitions ba)
+        loop rem mp
+          | Map.null rem = mp
+          | otherwise = let (rem',mp') = Map.mapEither (\trans -> let ntrans = Set.filter (\(_,st) -> not $ Map.member st rem) trans
+                                                                  in if Set.null ntrans
+                                                                     then Left ntrans
+                                                                     else Right ntrans
+                                                       ) mp
+                        in loop rem' mp'
+        ntrans = loop rem keep
+    in BA { baTransitions = ntrans
+          , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
+          , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
+          }
+
 {- Farewell, all joys! Oh death, come close mine eyes!
-   More geese than swans now live, more fools than wise. -}
+   More geese than swans now live, more fools than wise.
+
+                                        -- Orlando Gibbons -}

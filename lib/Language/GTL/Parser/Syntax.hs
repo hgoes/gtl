@@ -21,6 +21,8 @@ data ModelDecl = ModelDecl
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
                  , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
                  , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
+                 , modelLocals :: Map String GTLType
+                 , modelCycleTime :: Integer -- ^ Cycle time given in us
                  } deriving Show
 
 -- | Declares a connection between two variables
@@ -46,10 +48,24 @@ data InstanceDecl = InstanceDecl
                     , instanceInits :: [(String,InitExpr)] -- ^ Additional initialization values
                     } deriving Show
 
+data TimeSpec = NoTime
+              | TimeSteps Integer
+              | TimeUSecs Integer
+              deriving (Eq,Ord)
+
+instance Show TimeSpec where
+  show NoTime = ""
+  show (TimeSteps i) = "["++show i++" cy]"
+  show (TimeUSecs i) = "["++show i++" us]"
+
+data ContextInfo = ContextIn
+                 | ContextOut
+                 deriving (Show,Eq,Ord)
+
 -- | An untyped expression type.
 --   Used internally in the parser.
-data GExpr = GBin BinOp GExpr GExpr
-           | GUn UnOp GExpr
+data GExpr = GBin BinOp TimeSpec GExpr GExpr
+           | GUn UnOp TimeSpec GExpr
            | GConst Int
            | GConstBool Bool
            | GVar (Maybe String) String
@@ -61,6 +77,7 @@ data GExpr = GBin BinOp GExpr GExpr
            | GIndex GExpr GExpr
            | GEnum String
            | GBuiltIn String [GExpr]
+           | GContext ContextInfo GExpr
            deriving (Show,Eq,Ord)
 
 -- | A state of a state machine.

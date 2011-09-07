@@ -15,7 +15,7 @@ import Misc.ProgramOptions as Opts
 data AllBackend = AllBackend
                   { allTypecheck :: ModelInterface -> Either String ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: TypedExpr String -> Opts.Options -> String -> IO (Maybe Bool)
+                  , allVerifyLocal :: Integer -> TypedExpr String -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 -- | Try to initialize a given backend with a name and arguments.
@@ -35,8 +35,8 @@ tryInit be name args
 --   by applying the arguments to them.
 firstM :: Monad m => [x -> y -> m (Maybe a)] -> x -> y -> m (Maybe a)
 firstM (x:xs) p q = do
-  r <- x p q
-  case r of
+  res <- x p q
+  case res of
     Nothing -> firstM xs p q
     Just rr -> return (Just rr)
 firstM [] _ _ = return Nothing

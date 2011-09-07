@@ -64,11 +64,11 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls tps opFile) expr opts gtlName
+  backendVerify Scade (ScadeData node decls tps opFile) cy expr opts gtlName
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba expr
+          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba (Just cy) expr
           scade = fmap (dfaToScade name inp outp) dfa
           --scade = buchiToScade name inp outp ()
       in do
@@ -476,7 +476,7 @@ stateToTransition cond trg
 
 exprToScade :: TypedExpr String -> Sc.Expr
 exprToScade expr = case getValue expr of
-  Var name lvl -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
+  Var name lvl _ -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
   Value val -> valueToScade (getType expr) val
   BinIntExpr op l r -> Sc.BinaryExpr (case op of
                                          OpPlus -> BinPlus

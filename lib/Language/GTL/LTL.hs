@@ -17,7 +17,9 @@ module Language.GTL.LTL(
   AtomContainer(..),
   mapLTL,
   baProduct,
-  baMapAlphabet
+  baMapAlphabet,
+  distributeNegation,
+  extractAutomata
   ) where
 
 import Data.Set as Set
@@ -31,7 +33,6 @@ import qualified Data.IntMap as IMap
 import qualified Data.IntSet as ISet
 import Data.Graph.Inductive as Graph (Gr(..), mkGraph, Graph(..), LNode, LEdge, Path, lab)
 import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
-import Data.Maybe (fromJust)
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -111,6 +112,7 @@ instance Show a => Show (LTL a) where
                              else str
   showsPrec _ (Ground x) = if x then showString "tt" --showChar '\x22a4'
                            else showString "ff" --showChar '\x22a5'
+  showsPrec p (LTLAutomaton b) = showsPrec p b
 
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
@@ -204,21 +206,24 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
 -- | Merge redundant states in a B&#xFC;chi automaton.
 minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
 minimizeBA ba = BA { baTransitions = ntrans
-                   , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
+                   , baInits = ninit
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
                    }
   where
-    ntrans = Map.fromList $ minimizeBA' False [] (Map.toList (baTransitions ba))
+    ntrans = Map.fromList ntrans'
+    (ntrans',ninit) = minimizeBA' False [] (Map.toList (baTransitions ba)) (baInits ba)
 
-    minimizeBA' False d [] = d
-    minimizeBA' True d [] = minimizeBA' False [] d
-    minimizeBA' ch d ((st,trans):xs) = minimizeBA'' ch d st trans [] xs
+    minimizeBA' False d [] ini = (d,ini)
+    minimizeBA' True d [] ini = minimizeBA' False [] d ini
+    minimizeBA' ch d ((st,trans):xs) ini = minimizeBA'' ch d st trans [] xs ini
 
-    minimizeBA'' ch d st trans d' [] = minimizeBA' ch ((st,trans):d) d'
-    minimizeBA'' ch d st trans d' ((st',trans'):xs) = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
-                                                      then minimizeBA'' True (updateTranss st st' d) st
-                                                           (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs)
-                                                      else minimizeBA'' ch d st trans ((st',trans'):d') xs
+    minimizeBA'' ch d st trans d' [] ini = minimizeBA' ch ((st,trans):d) d' ini
+    minimizeBA'' ch d st trans d' ((st',trans'):xs) ini = if (trans==trans') && (Set.member st (baFinals ba) == Set.member st' (baFinals ba))
+                                                          then minimizeBA'' True (updateTranss st st' d) st
+                                                               (updateTrans st st' trans) (updateTranss st st' d') (updateTranss st st' xs) (if Set.member st' ini
+                                                                                                                                             then Set.insert st (Set.delete st' ini)
+                                                                                                                                             else ini)
+                                                          else minimizeBA'' ch d st trans ((st',trans'):d') xs ini
 
     updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
                                                        then (cond,st)
@@ -329,7 +334,10 @@ buildIntersectionGraph finals =
       let
         restGraph' = ISet.delete i restGraph
         -- multiply by -1 because we take later the _minimum_ spanning path but want the _maximum_!
-        commonTransitions i' = -1 * countIntersections tr (fromJust $ IMap.lookup i' numberedFinalFamily)
+        family i' =
+          case IMap.lookup i' numberedFinalFamily of
+            Just fam -> fam
+        commonTransitions i' = -1 * countIntersections tr (family i')
         es' = ISet.fold (\i' adj' -> (i', i, commonTransitions i') : (i, i', commonTransitions i') : adj') [] restGraph'
       in (es' ++ es, restGraph')
 
@@ -343,10 +351,14 @@ optimizeFinalFamilyOrder finals =
     intersectionGraph = buildIntersectionGraph finals :: Graph.Gr st Int
 
     -- graph complete => it is connected => always a valid result
-    msp = fromJust $ minSpanningPath intersectionGraph
+    Just msp = minSpanningPath intersectionGraph
+
+    getLabel g n =
+      case lab g n of
+        Just l -> l
 
     pathLabels :: (Graph gr) => gr nl el -> Path -> [nl]
-    pathLabels g p = List.map (\n -> fromJust $ lab g n) p
+    pathLabels g p = List.map (\n -> getLabel g n) p
 
     -- Find optimal start node:
     -- generate a pseudo node f0 = ⋃f_i, f_i € F. That is it contains all transitions
@@ -355,8 +367,8 @@ optimizeFinalFamilyOrder finals =
     needsReverse =
       let
         f0 = foldl (Map.unionWith Set.union) Map.empty finals
-        intersI1 = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head msp))
-        intersIn = deepIntersection f0 $ (finals ! (fromJust $ lab intersectionGraph $ head $ reverse msp))
+        intersI1 = deepIntersection f0 $ (finals ! (getLabel intersectionGraph $ head msp))
+        intersIn = deepIntersection f0 $ (finals ! (getLabel intersectionGraph $ head $ reverse msp))
       in deepSize intersIn > deepSize intersI1
 
     msp' = if needsReverse then reverse msp else msp
@@ -533,9 +545,9 @@ transUnion = (++)
 ltl2ba :: AtomContainer [a] a => LTL a -> BA [a] Integer
 ltl2ba f = let (f',auts) = extractAutomata f
                mprod b1 b2 = renameStates $ baProduct b1 b2
-           in case f' of
+           in renameStates $ optimizeTransitionsBA $ minimizeBA $ case f' of
              Nothing -> foldl1 mprod auts
-             Just rf -> foldl mprod (renameStates $ optimizeTransitionsBA $
+             Just rf -> foldl mprod (removeDeadlocks $ renameStates $ optimizeTransitionsBA $
                                      minimizeBA $ gba2ba $ minimizeGBA $
                                      vwaa2gba $ ltl2vwaa $ distributeNegation rf) auts
 
