@@ -16,7 +16,7 @@ import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map)
 import Control.Monad.Identity
-import Data.List as List (intercalate, null)
+import Data.List as List (intercalate, null, mapAccumL)
 import Data.Maybe (maybeToList)
 
 import System.FilePath
@@ -64,12 +64,12 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls tps opFile) cy expr opts gtlName
+  backendVerify Scade (ScadeData node decls tps opFile) cy expr locals opts gtlName
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
           dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba (Just cy) expr
-          scade = fmap (dfaToScade name inp outp) dfa
+          scade = fmap (dfaToScade name inp outp locals) dfa
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
@@ -398,10 +398,11 @@ buildTest opname ins outs = UserOpDecl
 dfaToScade :: String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
+                -> Map String GTLType
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
-dfaToScade name ins outs dfa
+dfaToScade name ins outs locals dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -417,7 +418,7 @@ dfaToScade name ins outs dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = []
+                              , dataLocals = declarationsToScade $ Map.toList locals
                               , dataEquations = [StateEquation
                                                  (StateMachine Nothing (dfaToStates dfa))
                                                  [] True
@@ -506,6 +507,33 @@ valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
 valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
 valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
 valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
+
+declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
+declarationsToScade = concat . map declarationsToScade'
+  where
+    declarationsToScade' (n, GTLTuple ts) = makeTupleDecls n [] ts
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade t) Nothing Nothing]
+
+    -- Tuples are declared as follows:
+    -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
+    -- If tuples are nested, this scheme is extended for every layer:
+    -- x : ((a0, a1), a2) becomes x_0_0 : a0; x_0_1 : a1; x_1 : a2;
+    makeTupleDecls n indcs ts  = concat $ snd $ mapAccumL (makeTupleDecl n indcs) 0 ts
+      where
+        makeTupleDecl :: String -> [Int] -> Int -> GTLType -> (Int, [Sc.VarDecl])
+        makeTupleDecl n indcs indx (GTLTuple ts) = (indx + 1, makeTupleDecls n (indx : indcs) ts)
+        makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade t) Nothing Nothing])
+        expandName = foldl (\n i -> n ++ "_" ++ show i ) ""
+
+gtlTypeToScade :: GTLType -> Sc.TypeExpr
+gtlTypeToScade GTLInt = Sc.TypeInt
+-- gtlTypeToScade GTLByte = ?
+gtlTypeToScade GTLBool = Sc.TypeBool
+gtlTypeToScade GTLFloat = Sc.TypeReal
+-- gtlTypeToScade (GTLEnum decls) = Sc.TypeEnum decls -- We can't use this one here as we may want to refer to a already declared enum. That information is lost.
+-- So we're missing something like GTLTypeVar String just like Sc.TypePath.
+gtlTypeToScade (GTLArray size t) = Sc.TypePower (gtlTypeToScade t) (Sc.ConstIntExpr size)
+--gtlTypeToScade (GTLTuple ts) = map gtlTypeToScade ts
 
 relsToExpr :: [TypedExpr String] -> Sc.Expr
 relsToExpr [] = Sc.ConstBoolExpr True
