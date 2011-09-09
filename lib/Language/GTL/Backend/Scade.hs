@@ -17,7 +17,7 @@ import Language.GTL.DFA
 import Data.Map as Map hiding (map)
 import Control.Monad.Identity
 import Data.List as List (intercalate, null, mapAccumL)
-import Data.Maybe (maybeToList)
+import Data.Maybe (maybeToList, isJust)
 import Data.Set as Set (member)
 
 import System.FilePath
@@ -480,44 +480,79 @@ failState = Sc.State
 
 -- | Given a state this function creates a transition into the state.
 stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
-stateToTransition cond trg
-  = Transition
-    (relsToExpr cond)
-    Nothing
-    (TargetFork Restart ("st"++show trg))
+stateToTransition cond trg =
+  let (e, a) = relsToExpr cond
+  in Transition
+      e
+      (fmap Sc.ActionDef a)
+      (TargetFork Restart ("st"++show trg))
 
-exprToScade :: TypedExpr String -> Sc.Expr
+exprToScade :: TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 exprToScade expr = case getValue expr of
-  Var name lvl _ -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
-  Value val -> valueToScade (getType expr) val
-  BinIntExpr op l r -> Sc.BinaryExpr (case op of
-                                         OpPlus -> BinPlus
-                                         OpMinus -> BinMinus
-                                         OpMult -> BinTimes
-                                         OpDiv -> BinDiv
-                                     ) (exprToScade (unfix l)) (exprToScade (unfix r))
-  BinBoolExpr op l r -> Sc.BinaryExpr (case op of
-                                        GTL.And -> Sc.BinAnd
-                                        GTL.Or -> Sc.BinOr
-                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
-  BinRelExpr rel l r -> BinaryExpr (case rel of
-                                      BinLT -> BinLesser
-                                      BinLTEq -> BinLessEq
-                                      BinGT -> BinGreater
-                                      BinGTEq -> BinGreaterEq
-                                      BinEq -> BinEquals
-                                      BinNEq -> BinDifferent
-                                   ) (exprToScade (unfix l)) (exprToScade (unfix r))
-  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
-  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade $ unfix r) (Sc.ConstIntExpr i)
+  Var name lvl _ -> (foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl], Nothing)
+  Value val -> (valueToScade (getType expr) val, Nothing)
+  BinIntExpr op l r ->
+    let (lExpr, lAssign) = exprToScade (unfix l)
+        (rExpr, rAssign) = exprToScade (unfix r)
+    in (Sc.BinaryExpr (case op of
+                         OpPlus -> BinPlus
+                         OpMinus -> BinMinus
+                         OpMult -> BinTimes
+                         OpDiv -> BinDiv
+                     ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  BinBoolExpr op l r ->
+    let (lExpr, lAssign) = exprToScade (unfix l)
+        (rExpr, rAssign) = exprToScade (unfix r)
+    in (Sc.BinaryExpr (case op of
+                        GTL.And -> Sc.BinAnd
+                        GTL.Or -> Sc.BinOr
+                      ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  BinRelExpr BinEq l r -> mkEqExprBinEquals (unfix l) (unfix r)
+  BinRelExpr rel l r ->
+    let (lExpr, lAssign) = exprToScade (unfix l)
+        (rExpr, rAssign) = exprToScade (unfix r)
+    in (BinaryExpr (case rel of
+                      BinLT -> BinLesser
+                      BinLTEq -> BinLessEq
+                      BinGT -> BinGreater
+                      BinGTEq -> BinGreaterEq
+                      BinNEq -> BinDifferent
+                   ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  UnBoolExpr GTL.Not p -> first (Sc.UnaryExpr Sc.UnNot) (exprToScade (unfix p))
+  GTL.IndexExpr r i -> first (flip Sc.IndexExpr $ (Sc.ConstIntExpr i)) (exprToScade $ unfix r)
+
+-- | If on the lhs of an equality expression a state output variable is found
+-- this expression is transformed into an assignment on the transition.
+mkEqExprBinEquals :: TypedExpr String -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
+mkEqExprBinEquals l r = case getValue l of
+  (Var name lvl StateOut) -> (Sc.ConstBoolExpr True, Just $ Sc.DataDef [] [] [SimpleEquation [Named name] (exprToScadeNoAssigns r)])
+  _ ->
+    let (lExpr, lAssign) = exprToScade l
+        (rExpr, rAssign) = exprToScade r
+    in (BinaryExpr BinEquals lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+-- | Merge two data definitions for one transition.
+mergeAssigns :: Maybe Sc.DataDef -> Maybe Sc.DataDef -> Maybe Sc.DataDef
+mergeAssigns = maybeComb (\d1 d2 -> DataDef (dataSignals d1 ++ dataSignals d2) (dataLocals d1 ++ dataLocals d2) (dataEquations d1 ++ dataEquations d2))
+  where
+    maybeComb f (Just x) (Just y) = Just $ f x y
+    maybeComb _ Nothing y = y
+    maybeComb _ x Nothing = x
+
+exprToScadeNoAssigns e =
+  let (e', a) = exprToScade e
+  in if isJust a then error "assignment not allowed here" else e'
 
 valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
 valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
 valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
 valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
 valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
-valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
-valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
+valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns.unfix) xs) -- no assignments should be generated inside index expression
+valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns.unfix) xs) -- or tuple expressions
 
 declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
 declarationsToScade = concat . map declarationsToScade'
@@ -546,6 +581,8 @@ gtlTypeToScade GTLFloat = Sc.TypeReal
 gtlTypeToScade (GTLArray size t) = Sc.TypePower (gtlTypeToScade t) (Sc.ConstIntExpr size)
 --gtlTypeToScade (GTLTuple ts) = map gtlTypeToScade ts
 
-relsToExpr :: [TypedExpr String] -> Sc.Expr
-relsToExpr [] = Sc.ConstBoolExpr True
-relsToExpr xs = foldl1 (Sc.BinaryExpr Sc.BinAnd) (fmap exprToScade xs)
+apPairs f g = \(x1,y1) (x2,y2) -> (f x1 x2, g y1 y2)
+
+relsToExpr :: [TypedExpr String] -> (Sc.Expr, Maybe Sc.DataDef)
+relsToExpr [] = (Sc.ConstBoolExpr True, Nothing)
+relsToExpr xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap exprToScade xs)
