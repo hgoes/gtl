@@ -18,6 +18,7 @@ import Data.Map as Map hiding (map)
 import Control.Monad.Identity
 import Data.List as List (intercalate, null, mapAccumL)
 import Data.Maybe (maybeToList)
+import Data.Set as Set (member)
 
 import System.FilePath
 import System.Process as Proc
@@ -68,7 +69,8 @@ instance GTLBackend Scade where
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba (Just cy) expr
+          buchi = gtl2ba (Just cy) expr
+          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA buchi
           scade = fmap (dfaToScade name inp outp locals) dfa
           --scade = buchiToScade name inp outp ()
       in do
@@ -76,6 +78,7 @@ instance GTLBackend Scade where
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
+        dump opts gtlName name buchi
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
@@ -97,6 +100,12 @@ instance GTLBackend Scade where
                           return $ Just $ verified report
                 Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
               else return Nothing
+
+-- | Deals with dumping debug informations.
+dump opts gtlName name buchi =
+  if "dump-buchi" `Set.member` (debug opts) then
+    writeFile ((outputPath opts) </> (gtlName ++ name ++ "-buchi" ++ ".txt")) (show buchi)
+  else return ()
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs
