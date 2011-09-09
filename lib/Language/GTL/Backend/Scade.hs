@@ -81,20 +81,22 @@ instance GTLBackend Scade where
           Just scade' -> do
             writeFile testNodeFile (show $ prettyScade [scade'])
             writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
-            case scadeRoot opts of
-              Just p -> do
-                reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-                case reportFile' of
-                  Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
-                  Just reportFile -> do
-                    report' <- readReport reportFile
-                    case report' of
-                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
-                      Just report -> do
-                        when (not (verified report))
-                          (generateScenario scenarioFile report)
-                        return $ Just $ verified report
-              Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+            if not (dryRun opts) then
+              case scadeRoot opts of
+                Just p -> do
+                  reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+                  case reportFile' of
+                    Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+                    Just reportFile -> do
+                      report' <- readReport reportFile
+                      case report' of
+                        Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                        Just report -> do
+                          when (not (verified report))
+                            (generateScenario scenarioFile report)
+                          return $ Just $ verified report
+                Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+              else return Nothing
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs

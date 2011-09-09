@@ -61,16 +61,19 @@ runVerification
   -> String -- ^ Name of the GTL file without extension
   -> [Pr.Module] -- ^ The Promela modules which should be verified
     -> IO([String]) -- ^ Returns a list of trace files in case of errors
-runVerification opts name pr = do
+runVerification opts name pr =
   let outputDir = (outputPath opts)
       verifier = (name ++ "-verifier")
-  writeFile (outputDir </> name <.> "pr") (show $ prettyPromela pr)
-  generatePan (name <.> "pr") outputDir
-  compile opts outputDir verifier
-  outp <- runVerifier verifier outputDir
-  putStrLn "--- Output ---"
-  putStrLn outp
-  return $ filterTraces outp
+  in
+    writeFile (outputDir </> name <.> "pr") (show $ prettyPromela pr) >>
+      if not (dryRun opts) then do
+        generatePan (name <.> "pr") outputDir
+        compile opts outputDir verifier
+        outp <- runVerifier verifier outputDir
+        putStrLn "--- Output ---"
+        putStrLn outp
+        return $ filterTraces outp
+      else return []
 
 -- | Parses the given traces using Spin, then tracks down which
 -- transitions have been used in the error and writes the atoms
