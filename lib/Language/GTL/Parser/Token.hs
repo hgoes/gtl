@@ -39,6 +39,7 @@ data KeyWord = KeyAll
              | KeyState
              | KeyTransition
              | KeyTrue
+             | KeyType
              | KeyUntil
              deriving Show
 

@@ -47,6 +47,7 @@ tokens:-
   state                          { key KeyState }
   transition                     { key KeyTransition }
   true                           { key KeyTrue }
+  type                           { key KeyType }
   until                          { key KeyUntil }
   verify                         { key KeyVerify }
   "("                            { const $ Bracket Parentheses False }

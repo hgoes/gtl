@@ -89,7 +89,7 @@ translateTarget tm
                                                            }
                                       | i <- Set.toList (baInits buchi),
                                         let ts = (baTransitions buchi)!i,
-                                        (cond,trg) <- Set.toList ts
+                                        (cond,trg) <- ts
                                       ],
                     let st_trans = [ noPos $ Transition { transId = Nothing 
                                                         , transSource = "l"++show s 
@@ -100,7 +100,7 @@ translateTarget tm
                                                         , transColor = Nothing
                                                         }
                                    | (s,trans) <- Map.toList (baTransitions buchi),
-                                     (cond,t) <- Set.toList trans
+                                     (cond,t) <- trans
                                    ]
                   ]
 
@@ -170,39 +170,39 @@ translateRestriction i restr
 translateConstant :: GTLType -> GTLValue r -> Expression
 translateConstant _ (GTLBoolVal b) = ExprNat (if b then 1 else 0)
 translateConstant _ (GTLIntVal b) = ExprNat b
-translateConstant (GTLEnum xs) (GTLEnumVal x) = let Just i = elemIndex x xs
-                                                in ExprNat (fromIntegral i)
+translateConstant (Fix (GTLEnum xs)) (GTLEnumVal x) = let Just i = elemIndex x xs
+                                                      in ExprNat (fromIntegral i)
 
 -- | Translate a GTL expression into a UPPAAL one.
 translateExpression :: TypedExpr TargetVar -> Expression
-translateExpression expr = case getValue expr of
+translateExpression expr = case getValue $ unfix expr of
   Var v h _ -> ExprIndex (ExprId (varString v)) (ExprNat h)
-  Value val -> translateConstant (getType expr) val
-  BinBoolExpr op (Fix l) (Fix r) -> ExprBinary (case op of
-                                                   And -> BinAnd
-                                                   Or -> BinOr
-                                                   Implies -> BinImply) (translateExpression l) (translateExpression r)
-  BinRelExpr op (Fix l) (Fix r) -> ExprBinary (case op of
-                                                  G.BinLT -> U.BinLT
-                                                  G.BinLTEq -> U.BinLTE
-                                                  G.BinGT -> U.BinGT
-                                                  G.BinGTEq -> U.BinGTE
-                                                  G.BinEq -> U.BinEq
-                                                  G.BinNEq -> U.BinNEq) (translateExpression l) (translateExpression r)
-  BinIntExpr op (Fix l) (Fix r) -> ExprBinary (case op of
-                                                  G.OpPlus -> U.BinPlus
-                                                  G.OpMinus -> U.BinMinus
-                                                  G.OpMult -> U.BinMult
-                                                  G.OpDiv -> U.BinDiv) (translateExpression l) (translateExpression r)
-  UnBoolExpr op (Fix e) -> ExprUnary (case op of
-                                         G.Not -> U.UnNot) (translateExpression e)
+  Value val -> translateConstant (getType $ unfix expr) val
+  BinBoolExpr op l r -> ExprBinary (case op of
+                                       And -> BinAnd
+                                       Or -> BinOr
+                                       Implies -> BinImply) (translateExpression l) (translateExpression r)
+  BinRelExpr op l r -> ExprBinary (case op of
+                                      G.BinLT -> U.BinLT
+                                      G.BinLTEq -> U.BinLTE
+                                      G.BinGT -> U.BinGT
+                                      G.BinGTEq -> U.BinGTE
+                                      G.BinEq -> U.BinEq
+                                      G.BinNEq -> U.BinNEq) (translateExpression l) (translateExpression r)
+  BinIntExpr op l r -> ExprBinary (case op of
+                                      G.OpPlus -> U.BinPlus
+                                      G.OpMinus -> U.BinMinus
+                                      G.OpMult -> U.BinMult
+                                      G.OpDiv -> U.BinDiv) (translateExpression l) (translateExpression r)
+  UnBoolExpr op e -> ExprUnary (case op of
+                                   G.Not -> U.UnNot) (translateExpression e)
 
 -- | Translate a GTL type into a UPPAAL type.
 convertType :: GTLType -> TypeId
-convertType GTLInt = TypeInt Nothing
-convertType GTLByte = TypeInt (Just (ExprNat 0,ExprNat 255))
-convertType GTLBool = TypeInt (Just (ExprNat 0,ExprNat 1))
-convertType (GTLEnum xs) = TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1)))
+convertType (Fix GTLInt) = TypeInt Nothing
+convertType (Fix GTLByte) = TypeInt (Just (ExprNat 0,ExprNat 255))
+convertType (Fix GTLBool) = TypeInt (Just (ExprNat 0,ExprNat 1))
+convertType (Fix (GTLEnum xs)) = TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1)))
 
 -- | Get the UPPAAL name of a variable.
 varString :: TargetVar -> String

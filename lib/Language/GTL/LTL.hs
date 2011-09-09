@@ -60,7 +60,7 @@ mapLTL f (Atom x) = Atom (f x)
 mapLTL f (Bin op l r) = Bin op (mapLTL f l) (mapLTL f r)
 mapLTL f (Un op x) = Un op (mapLTL f x)
 mapLTL f (Ground p) = Ground p
-mapLTL f (LTLAutomaton b) = LTLAutomaton $ b { baTransitions = fmap (Set.map (\(cond,trg) -> (fmap f cond,trg))) (baTransitions b) }
+mapLTL f (LTLAutomaton b) = LTLAutomaton $ b { baTransitions = fmap (fmap (\(cond,trg) -> (fmap f cond,trg))) (baTransitions b) }
 --mapLTL f (LTLSimpleAutomaton b) = LTLSimpleAutomaton $ fmap (\st -> st { vars = Set.map f (vars st) }) b
 
 binPrec :: BinOp -> Int
@@ -189,7 +189,7 @@ optimizeTransitionsBA ba = BA { baTransitions = ntrans
                               , baFinals = baFinals ba
                               }
   where
-    ntrans = fmap (\set -> Set.fromList $ minimizeTrans [] (Set.toList set)) (baTransitions ba)
+    ntrans = fmap (minimizeTrans []) (baTransitions ba)
 
     minimizeTrans d [] = d
     minimizeTrans d ((c,st):ts) = minimizeTrans' d c st [] ts
@@ -225,9 +225,9 @@ minimizeBA ba = BA { baTransitions = ntrans
                                                                                                                                              else ini)
                                                           else minimizeBA'' ch d st trans ((st',trans'):d') xs ini
 
-    updateTrans st st' trans = Set.map (\(cond,trg) -> if trg==st'
-                                                       then (cond,st)
-                                                       else (cond,trg)) trans
+    updateTrans st st' trans = fmap (\(cond,trg) -> if trg==st'
+                                                    then (cond,st)
+                                                    else (cond,trg)) trans
 
     updateTranss st st' = fmap (\(cst,trans) -> (cst,updateTrans st st' trans))
 
@@ -245,8 +245,8 @@ gba2ba gba = BA { baInits = inits
     buildTrans [] mp = mp
     buildTrans ((st,i):sts) mp
       | Map.member (st,i) mp = buildTrans sts mp
-      | otherwise = let ntrans = Set.map (\(cond,trg,fins) -> (cond,(trg,next i fins))) ((gbaTransitions gba)!st)
-                    in buildTrans ([ trg | (_,trg) <- Set.toList ntrans ]++sts) (Map.insert (st,i) ntrans mp)
+      | otherwise = let ntrans = fmap (\(cond,trg,fins) -> (cond,(trg,next i fins))) (Set.toList $ (gbaTransitions gba)!st)
+                    in buildTrans ([ trg | (_,trg) <- ntrans ]++sts) (Map.insert (st,i) ntrans mp)
 
     next j fin = let j' = if j==final_size
                           then 0
@@ -576,13 +576,13 @@ baProduct b1 b2 = BA { baTransitions = trans'
                                                   || (i && (Set.member nst2 (baFinals b2)))
                                                then not i
                                                else i))
-                               | (c1,nst1) <- Set.toList t1
-                               , (c2,nst2) <- Set.toList t2
+                               | (c1,nst1) <- t1
+                               , (c2,nst2) <- t2
                                , c <- case mergeAtoms c1 c2 of
                                  Nothing -> []
                                  Just x -> [x]
                                ]
-                    in traceStates ((fmap snd trgs)++xs) (Map.insert (s1,s2,i) (Set.fromList trgs) mp)
+                    in traceStates ((fmap snd trgs)++xs) (Map.insert (s1,s2,i) trgs mp)
 
 extractAutomata :: LTL a -> (Maybe (LTL a),[BA [a] Integer])
 extractAutomata (LTLAutomaton buchi) = (Nothing,[buchi])

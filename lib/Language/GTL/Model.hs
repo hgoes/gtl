@@ -54,72 +54,78 @@ getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstanc
       Just tp -> tp
 
 -- | Parse a GTL model from a unchecked model declaration.
-gtlParseModel :: ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
-gtlParseModel mdl = do
-  mback <- initAllBackend (modelType mdl) (modelArgs mdl)
-  case mback of
-    Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
-    Just back -> return $ do
-      {-oinp <- mapM (\str -> case parseGTLType str of
-                       Nothing -> Left $ "Unknown type "++show str
-                       Just rtp -> return rtp) (modelInputs mdl)
-      oout <- mapM (\str -> case parseGTLType str of
-                       Nothing -> Left $ "Unknown type "++show str
-                       Just rtp -> return rtp) (modelOutputs mdl)-}
-      (inp,outp) <- allTypecheck back (modelInputs mdl,modelOutputs mdl)
-      let allType = Map.unions [inp,outp,modelLocals mdl]
-          enums = getEnums allType
-      expr <- makeTypedExpr
-              (\q n inf -> case q of
-                  Nothing -> Right (n,if Map.member n inp
-                                      then Input
-                                      else (if Map.member n outp
-                                            then Output
-                                            else (case inf of
-                                                     Nothing -> StateIn
-                                                     Just ContextIn -> StateIn
-                                                     Just ContextOut -> StateOut
-                                                 )
-                                           ))
-                  _ -> Left "Contract may not contain qualified variables") 
-              allType enums (case modelContract mdl of
-                                [] -> GConstBool True
-                                c -> foldl1 (GBin GOpAnd NoTime) c)
-      lst <- mapM (\(var,init) -> case init of
-                      InitAll -> return (var,Nothing)
-                      InitOne c -> do
-                        ce <- makeTypedExpr (\q n _ -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
-                        case Map.lookup var allType of
-                          Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
-                          Just tp -> if tp == getType ce
-                                     then (case getConstant ce of
-                                              Just p -> return $ (var,Just p)
-                                              Nothing -> Left $ "Init expression must be a constant"
-                                          )
-                                     else Left $ show var ++ " has type "++show tp++", but is initialized with "++show (getType ce)) (modelInits mdl)
-      return (modelName mdl,GTLModel { gtlModelContract = expr
-                                     , gtlModelBackend = back
-                                     , gtlModelInput = inp
-                                     , gtlModelOutput = outp
-                                     , gtlModelLocals = modelLocals mdl
-                                     , gtlModelDefaults = Map.fromList lst
-                                     , gtlModelCycleTime = modelCycleTime mdl
-                                     },enums)
+gtlParseModel :: Map String UnResolvedType -> ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
+gtlParseModel aliases mdl = do
+  let rtps = do
+        rinps <- mapM (resolveType aliases) (modelInputs mdl)
+        routps <- mapM (resolveType aliases) (modelOutputs mdl)
+        rlocs <- mapM (resolveType aliases) (modelLocals mdl)
+        return (rinps,routps,rlocs)
+  case rtps of
+    Left err -> return $ Left err
+    Right (inps,outps,locs) -> do
+      mback <- initAllBackend (modelType mdl) (modelArgs mdl)
+      case mback of
+        Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
+        Just back -> return $ do
+          (inp,outp) <- allTypecheck back (inps,outps)
+          let allType = Map.unions [inp,outp,locs]
+              enums = getEnums allType
+          expr <- makeTypedExpr
+                  (\q n inf -> case q of
+                      Nothing -> Right (n,if Map.member n inp
+                                          then Input
+                                          else (if Map.member n outp
+                                                then Output
+                                                else (case inf of
+                                                         Nothing -> StateIn
+                                                         Just ContextIn -> StateIn
+                                                         Just ContextOut -> StateOut
+                                                     )
+                                               ))
+                      _ -> Left "Contract may not contain qualified variables")
+                  allType enums (case modelContract mdl of
+                                    [] -> GConstBool True
+                                    c -> foldl1 (GBin GOpAnd NoTime) c)
+          lst <- mapM (\(var,init) -> case init of
+                          InitAll -> return (var,Nothing)
+                          InitOne c -> do
+                            ce <- makeTypedExpr (\q n _ -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
+                            case Map.lookup var allType of
+                              Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
+                              Just tp -> if tp == getType (unfix ce)
+                                         then (case getConstant ce of
+                                                  Just p -> return $ (var,Just p)
+                                                  Nothing -> Left $ "Init expression must be a constant"
+                                              )
+                                         else Left $ show var ++ " has type "++show tp++", but is initialized with "++show (getType $ unfix ce)) (modelInits mdl)
+          return (modelName mdl,GTLModel { gtlModelContract = expr
+                                         , gtlModelBackend = back
+                                         , gtlModelInput = inp
+                                         , gtlModelOutput = outp
+                                         , gtlModelLocals = locs
+                                         , gtlModelDefaults = Map.fromList lst
+                                         , gtlModelCycleTime = modelCycleTime mdl
+                                         },enums)
 
 -- | Get all possible enum types.
 getEnums :: Map a GTLType -> Set [String]
 getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
   where
     getEnums' :: GTLType -> Set [String]
-    getEnums' (GTLEnum xs) = Set.singleton xs
-    getEnums' (GTLArray sz tp) = getEnums' tp
-    getEnums' (GTLTuple xs) = Set.unions (fmap getEnums' xs)
+    getEnums' (Fix (GTLEnum xs)) = Set.singleton xs
+    getEnums' (Fix (GTLArray sz tp)) = getEnums' tp
+    getEnums' (Fix (GTLTuple xs)) = Set.unions (fmap getEnums' xs)
+    getEnums' (Fix (GTLNamed name tp)) = getEnums' tp
     getEnums' _ = Set.empty
 
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
 gtlParseSpec decls = do
-  mdls <- fmap sequence $ sequence [ gtlParseModel m
+  let aliases = foldl (\mp decl -> case decl of
+                          TypeAlias name tp -> Map.insert name tp mp
+                          _ -> mp) Map.empty decls
+  mdls <- fmap sequence $ sequence [ gtlParseModel aliases m
                                    | Model m <- decls
                                    ]
   return $ do
