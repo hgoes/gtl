@@ -409,7 +409,7 @@ buildTest opname ins outs = UserOpDecl
 dfaToScade :: String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
-                -> Map String GTLType
+                -> Map String GTLType -- ^ Local variables of the mode
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
@@ -431,15 +431,15 @@ dfaToScade name ins outs locals dfa
     , userOpContent = DataDef { dataSignals = []
                               , dataLocals = declarationsToScade $ Map.toList locals
                               , dataEquations = [StateEquation
-                                                 (StateMachine Nothing (dfaToStates dfa))
+                                                 (StateMachine Nothing (dfaToStates locals dfa))
                                                  [] True
                                                 ]
                               }
     }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-dfaToStates :: DFA [TypedExpr String] Integer -> [Sc.State]
-dfaToStates dfa = failState :
+dfaToStates :: Map String GTLType -> DFA [TypedExpr String] Integer -> [Sc.State]
+dfaToStates locals dfa = failState :
                   [ Sc.State
                    { stateInitial = s == dfaInit dfa
                    , stateFinal = False
@@ -448,10 +448,10 @@ dfaToStates dfa = failState :
                                          , dataLocals = []
                                          , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
                                          }
-                   , stateUnless = [ stateToTransition cond trg
+                   , stateUnless = [ stateToTransition locals cond trg
                                    | (cond, trg) <- Map.toList trans, not (List.null cond) ] ++
                                    -- put unconditional transition at the end if available
-                                   (maybeToList $ fmap (stateToTransition []) $ Map.lookup [] trans) ++
+                                   (maybeToList $ fmap (stateToTransition locals []) $ Map.lookup [] trans) ++
                                    [failTransition]
                    , stateUntil = []
                    , stateSynchro = Nothing
@@ -479,21 +479,25 @@ failState = Sc.State
   }
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
-stateToTransition cond trg =
-  let (e, a) = relsToExpr cond
+stateToTransition :: Map String GTLType -> [TypedExpr String] -> Integer -> Sc.Transition
+stateToTransition locals cond trg =
+  let (e, a) = relsToExpr locals cond
   in Transition
       e
       (fmap Sc.ActionDef a)
       (TargetFork Restart ("st"++show trg))
 
-exprToScade :: TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
-exprToScade expr = case getValue expr of
+-- | There is a special case for state output constraints using
+-- equality if it involves a local variable on the lhs.
+-- This corresponds to an assignment which has to be executed.
+-- TODO: is this the correct behaviour and the only case.
+exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
+exprToScade locals expr = case getValue expr of
   Var name lvl _ -> (foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl], Nothing)
-  Value val -> (valueToScade (getType expr) val, Nothing)
+  Value val -> (valueToScade locals (getType expr) val, Nothing)
   BinIntExpr op l r ->
-    let (lExpr, lAssign) = exprToScade (unfix l)
-        (rExpr, rAssign) = exprToScade (unfix r)
+    let (lExpr, lAssign) = exprToScade locals (unfix l)
+        (rExpr, rAssign) = exprToScade locals (unfix r)
     in (Sc.BinaryExpr (case op of
                          OpPlus -> BinPlus
                          OpMinus -> BinMinus
@@ -502,17 +506,17 @@ exprToScade expr = case getValue expr of
                      ) lExpr rExpr
         , mergeAssigns lAssign rAssign)
   BinBoolExpr op l r ->
-    let (lExpr, lAssign) = exprToScade (unfix l)
-        (rExpr, rAssign) = exprToScade (unfix r)
+    let (lExpr, lAssign) = exprToScade locals (unfix l)
+        (rExpr, rAssign) = exprToScade locals (unfix r)
     in (Sc.BinaryExpr (case op of
                         GTL.And -> Sc.BinAnd
                         GTL.Or -> Sc.BinOr
                       ) lExpr rExpr
         , mergeAssigns lAssign rAssign)
-  BinRelExpr BinEq l r -> mkEqExprBinEquals (unfix l) (unfix r)
+  BinRelExpr BinEq l r -> mkEqExprBinEquals locals (unfix l) (unfix r)
   BinRelExpr rel l r ->
-    let (lExpr, lAssign) = exprToScade (unfix l)
-        (rExpr, rAssign) = exprToScade (unfix r)
+    let (lExpr, lAssign) = exprToScade locals (unfix l)
+        (rExpr, rAssign) = exprToScade locals (unfix r)
     in (BinaryExpr (case rel of
                       BinLT -> BinLesser
                       BinLTEq -> BinLessEq
@@ -521,18 +525,24 @@ exprToScade expr = case getValue expr of
                       BinNEq -> BinDifferent
                    ) lExpr rExpr
         , mergeAssigns lAssign rAssign)
-  UnBoolExpr GTL.Not p -> first (Sc.UnaryExpr Sc.UnNot) (exprToScade (unfix p))
-  GTL.IndexExpr r i -> first (flip Sc.IndexExpr $ (Sc.ConstIntExpr i)) (exprToScade $ unfix r)
+  UnBoolExpr GTL.Not p -> first (Sc.UnaryExpr Sc.UnNot) (exprToScade locals (unfix p))
+  GTL.IndexExpr r i -> first (flip Sc.IndexExpr $ (Sc.ConstIntExpr i)) (exprToScade locals $ unfix r)
 
 -- | If on the lhs of an equality expression a state output variable is found
 -- this expression is transformed into an assignment on the transition.
-mkEqExprBinEquals :: TypedExpr String -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
-mkEqExprBinEquals l r = case getValue l of
-  (Var name lvl StateOut) -> (Sc.ConstBoolExpr True, Just $ Sc.DataDef [] [] [SimpleEquation [Named name] (exprToScadeNoAssigns r)])
-  _ ->
-    let (lExpr, lAssign) = exprToScade l
-        (rExpr, rAssign) = exprToScade r
-    in (BinaryExpr BinEquals lExpr rExpr
+mkEqExprBinEquals :: Map String GTLType -> TypedExpr String -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
+mkEqExprBinEquals locals l r =
+  case getValue l of
+    (Var name lvl StateOut) ->
+      if name `Map.member` locals then
+        (Sc.ConstBoolExpr True, Just $ Sc.DataDef [] [] [SimpleEquation [Named name] (exprToScadeNoAssigns locals r)])
+      else mkNonAssign
+    _ -> mkNonAssign
+  where
+    mkNonAssign =
+      let (lExpr, lAssign) = exprToScade locals l
+          (rExpr, rAssign) = exprToScade locals r
+      in (BinaryExpr BinEquals lExpr rExpr
         , mergeAssigns lAssign rAssign)
 -- | Merge two data definitions for one transition.
 mergeAssigns :: Maybe Sc.DataDef -> Maybe Sc.DataDef -> Maybe Sc.DataDef
@@ -542,17 +552,17 @@ mergeAssigns = maybeComb (\d1 d2 -> DataDef (dataSignals d1 ++ dataSignals d2) (
     maybeComb _ Nothing y = y
     maybeComb _ x Nothing = x
 
-exprToScadeNoAssigns e =
-  let (e', a) = exprToScade e
+exprToScadeNoAssigns locals e =
+  let (e', a) = exprToScade locals e
   in if isJust a then error "assignment not allowed here" else e'
 
-valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
-valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
-valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
-valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
-valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
-valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns.unfix) xs) -- no assignments should be generated inside index expression
-valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns.unfix) xs) -- or tuple expressions
+valueToScade :: Map String GTLType -> GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
+valueToScade locals _ (GTLIntVal v) = Sc.ConstIntExpr v
+valueToScade locals _ (GTLBoolVal v) = Sc.ConstBoolExpr v
+valueToScade locals _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
+valueToScade locals _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
+valueToScade locals _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals . unfix) xs) -- no assignments should be generated inside index expression
+valueToScade locals _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals . unfix) xs) -- or tuple expressions
 
 declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
 declarationsToScade = concat . map declarationsToScade'
@@ -583,6 +593,6 @@ gtlTypeToScade (GTLArray size t) = Sc.TypePower (gtlTypeToScade t) (Sc.ConstIntE
 
 apPairs f g = \(x1,y1) (x2,y2) -> (f x1 x2, g y1 y2)
 
-relsToExpr :: [TypedExpr String] -> (Sc.Expr, Maybe Sc.DataDef)
-relsToExpr [] = (Sc.ConstBoolExpr True, Nothing)
-relsToExpr xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap exprToScade xs)
+relsToExpr :: Map String GTLType -> [TypedExpr String] -> (Sc.Expr, Maybe Sc.DataDef)
+relsToExpr _ [] = (Sc.ConstBoolExpr True, Nothing)
+relsToExpr locals xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap (exprToScade locals) xs)

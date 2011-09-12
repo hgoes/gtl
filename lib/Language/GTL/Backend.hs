@@ -36,7 +36,7 @@ class GTLBackend b where
   backendVerify :: b -> GTLBackendModel b
                    -> Integer -- ^ Cycle time
                    -> TypedExpr String -- ^ Contract
-                   -> Map String GTLType -- Wird für Zugriff auf lokale Variablen Benötigt
+                   -> Map String GTLType -- ^ Local variables of the model
                    -> Opts.Options -- ^ Options
                    -> String -- ^ Name of the GTL file without extension
                    -> IO (Maybe Bool)
