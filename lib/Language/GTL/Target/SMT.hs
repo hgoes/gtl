@@ -15,6 +15,8 @@ import Data.Map as Map
 import Data.Set as Set
 import Data.AttoLisp as L
 import Data.Maybe (catMaybes)
+import Data.Array (Array)
+import Control.Monad
 
 verifyModel :: GTLSpec String -> IO ()
 verifyModel spec = do
@@ -23,13 +25,178 @@ verifyModel spec = do
     if Map.null enummp
       then return ()
       else declareEnums enummp
+    l <- SMT.varNamed $ T.pack "__l"
+    inloop <- SMT.varNamed $ T.pack "__inloop"
+    loop_exists <- SMT.varNamed $ T.pack "__loop_exists"
     declareVars enummp spec
     buildTransitionFunctions T.pack enummp spec
     buildConnectionFun enummp spec
     buildEqFun spec
-    makeInit 0 spec
-    findDiameter spec 0
+    let ver = GTL.flattenExpr (\x i -> (x,i)) [] $ GTL.pushNot (gtlSpecVerify spec)
+    temp_arrs <- mkTemporalArrays ver
+    last_m <- varNamed $ T.pack "__last_m"
+    end_m <- varNamed $ T.pack "__end_m"
+    findLoop spec l inloop loop_exists temp_arrs ver last_m end_m 0
   print res
+
+findLoop spec l inloop loop_exists temp_arrays ver last_m end_m i = do
+  res <- solve spec l inloop loop_exists temp_arrays ver last_m end_m i checkSat
+  if not res 
+    then return i
+    else findLoop spec l inloop loop_exists temp_arrays ver last_m end_m (i+1)
+
+type NameGenerator v = v -> VarUsage -> [Integer] -> Integer -> Text
+
+type TimeOpMap v = Map (TypedExpr (v,[Integer])) (SMTExpr Bool)
+
+type TimeOpMap2 v = Map (TypedExpr (v,[Integer]),TypedExpr (v,[Integer])) (SMTExpr Bool)
+
+type GenVarState v = (TimeOpMap v,TimeOpMap2 v,TimeOpMap2 v)
+
+type TemporalArrays v = (Map (TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool)),
+                         Map (TypedExpr (v,[Integer]),TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool)),
+                         Map (TypedExpr (v,[Integer]),TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool)))
+
+mkTemporalArrays :: Ord v => TypedExpr (v,[Integer]) -> SMT (TemporalArrays v)
+mkTemporalArrays expr = do
+  (arr,_) <- mkTemporalArrays' (Map.empty,Map.empty,Map.empty) 0 expr
+  return arr
+
+mkTemporalArrays' :: Ord v => TemporalArrays v -> Integer -> TypedExpr (v,[Integer]) -> SMT (TemporalArrays v,Integer)
+mkTemporalArrays' p@(nexts,untils,until_ops) n expr
+  = case GTL.getValue expr of
+    GTL.BinBoolExpr op (Fix lhs) (Fix rhs) -> do
+      (p1,n1) <- mkTemporalArrays' p n lhs
+      (p2@(nexts2,untils2,until_ops2),n2) <- mkTemporalArrays' p1 n1 rhs
+      case op of
+        GTL.Until NoTime -> if Map.member (lhs,rhs) untils2
+                            then return (p2,n2)
+                            else do
+                              arr <- SMT.varNamed (T.pack $ "__untils"++show n2)
+                              return ((nexts2,Map.insert (lhs,rhs) arr untils2,until_ops2),n2+1)
+        GTL.UntilOp NoTime -> if Map.member (lhs,rhs) until_ops2
+                              then return (p2,n2)
+                              else do
+                                arr <- SMT.varNamed (T.pack $ "__until_ops"++show n2)
+                                return ((nexts2,untils2,Map.insert (lhs,rhs) arr until_ops2),n2+1)
+        _ -> return (p2,n2)
+    GTL.UnBoolExpr op (Fix e) -> do
+      (p1@(nexts1,untils1,until_ops1),n1) <- mkTemporalArrays' p n e
+      case op of
+        GTL.Always -> if Map.member (GTL.constant False,e) until_ops1
+                      then return (p1,n1)
+                      else do
+                        arr <- SMT.varNamed (T.pack $ "__until_ops"++show n1)
+                        return ((nexts1,untils1,Map.insert (GTL.constant False,e) arr until_ops1),n1+1)
+        GTL.Next NoTime -> if Map.member e nexts1
+                           then return (p1,n1)
+                           else do
+                             arr <- SMT.varNamed (T.pack $ "__nexts"++show n1)
+                             return ((Map.insert e arr nexts1,untils1,until_ops1),n1+1)
+        GTL.Finally NoTime -> if Map.member (GTL.constant True,e) untils1
+                              then return (p1,n1)
+                              else do
+                                arr <- SMT.varNamed (T.pack $ "__untils"++show n1)
+                                return ((nexts1,Map.insert (GTL.constant True,e) arr untils1,until_ops1),n1+1)
+        _ -> return (p1,n1)
+    _ -> return (p,n)
+        
+
+generateFormulaVar :: (Ord v,Typeable a,SMTType a) => NameGenerator v
+                      -> TemporalArrays v
+                      -> TypedExpr (v,[Integer])
+                      -> Integer
+                      -> Bool
+                      -> SMT (SMTExpr a)
+generateFormulaVar f arrs@(nexts,untils,until_ops) expr i create
+  = case GTL.getValue expr of
+    GTL.Var (name,idx) h u -> return $ select (SMT.Var (f name u idx h)) (SMT.constant i)
+    GTL.Value val -> return $ case val of
+      GTLBoolVal v -> resCast $ SMT.constant v
+      GTLIntVal v -> resCast $ SMT.constant v
+      GTLEnumVal v -> resCast $ SMT.constant (EnumVal undefined undefined v)
+    GTL.BinBoolExpr op (Fix lhs) (Fix rhs) -> do
+      l <- generateFormulaVar f arrs lhs i create
+      r <- generateFormulaVar f arrs rhs i create
+      case op of
+        GTL.And -> return $ resCast $ SMT.and' [l,r]
+        GTL.Or -> return $ resCast $ SMT.or' [l,r]
+        GTL.Until NoTime -> do
+          let arr = untils!(lhs,rhs)
+          when create (assert $ (select arr (SMT.constant i)) .==. or' [r,and' [l,select arr (SMT.constant (i+1))]])
+          return $ resCast $ select arr (SMT.constant i)
+        GTL.UntilOp NoTime -> do
+          let arr = until_ops!(lhs,rhs)
+          when create (assert $ (select arr (SMT.constant i)) .==. and' [r,or' [l,select arr (SMT.constant (i+1))]])
+          return $ resCast $ select arr (SMT.constant i)
+    GTL.UnBoolExpr op (Fix e) -> do
+      e' <- generateFormulaVar f arrs e i create
+      case op of
+        GTL.Not -> return $ resCast $ SMT.not' e'
+        GTL.Always -> do
+          let arr = until_ops!(GTL.constant False,e)
+          when create (assert $ (select arr (SMT.constant i)) .==. and' [e',select arr (SMT.constant (i+1))])
+          return $ resCast $ select arr (SMT.constant i)
+    where
+      resCast x = case gcast x of
+        Nothing -> error "Internal type error in Language.GTL.Target.SMT.generateFormulaVars"
+        Just y -> y
+
+solve :: GTLSpec String -> 
+         SMTExpr (Array Integer Bool) ->
+         SMTExpr (Array Integer Bool) ->
+         SMTExpr Bool ->
+         TemporalArrays (String,String) ->
+         TypedExpr ((String,String),[Integer]) ->
+         SMTExpr Bool -> SMTExpr Bool ->
+         Integer ->
+         SMT r -> SMT r
+solve spec l inloop loop_exists tarrs ver last_m end_m 0 f = do
+  makeInit 0 spec
+  makeConn 0 0
+  -- Base case for LoopConstraints:
+  assert $ not' (select l 0)
+  assert $ not' (select inloop 0)
+  
+  -- Base case for LastStateFormula
+  mvar <- generateFormulaVar (\(m,v) u idx h -> varName (T.pack $ m ++ "_"++v) u h idx) tarrs ver 0 True
+  assert $ (not' loop_exists) .=>. (not' last_m)
+  assert mvar
+  
+  stack $ do
+    -- k-variant case for LoopConstraints
+    --assert $ not' loop_exists
+    assert $ eqst 0 (-1)
+    -- k-variant case for LastStateFormula
+    assert $ end_m .==. mvar
+    mvar' <- generateFormulaVar (\(m,v) u idx h -> varName (T.pack $ m ++ "_"++v) u h idx) tarrs ver 1 False
+    assert $ last_m .==. mvar'
+  f
+solve spec l inloop loop_exists tarrs ver last_m end_m i f = do
+  makeAllTrans spec (i-1) i 
+  makeConn i i
+
+  -- k-invariant case for LoopConstraints:
+  assert $ (select l (SMT.constant i)) .=>. (eqst (SMT.constant (i-1)) (-1))
+  assert $ (select inloop (SMT.constant i)) .==. (or' [select inloop (SMT.constant $ i-1)
+                                                      ,select l (SMT.constant i)])
+  assert $ (select inloop (SMT.constant $ i - 1)) .=>. (not' (select l (SMT.constant i)))
+  
+  -- k-invariant case for LastStateFormula
+  mvar <- generateFormulaVar (\(m,v) u idx h -> varName (T.pack $ m ++ "_"++v) u h idx) tarrs ver i True
+  assert $ (select l (SMT.constant i)) .=>. (last_m .==. mvar)
+  
+  stack $ do
+    -- k-variant case for LoopConstraints
+    assert $ loop_exists .==. (select inloop (SMT.constant i))
+    assert $ eqst (SMT.constant i) (-1)
+    -- k-variant case for LastStateFormula
+    assert $ end_m .==. mvar
+    mvar' <- generateFormulaVar (\(m,v) u idx h -> varName (T.pack $ m ++ "_"++v) u h idx) tarrs ver (i+1) False
+    assert $ mvar' .==. last_m
+    f
+
+
 
 data EnumVal = EnumVal [String] Integer String deriving Typeable
 
@@ -68,6 +235,9 @@ makeConn i j = assert $ App (Fun $ T.pack "__conn") (SMT.constant i,SMT.constant
 
 makeUnEq :: Integer -> Integer -> SMT ()
 makeUnEq i j = assert $ not' $ App (Fun $ T.pack "__eq") (SMT.constant i,SMT.constant j)
+
+eqst :: SMTExpr Integer -> SMTExpr Integer -> SMTExpr Bool
+eqst i j = App (Fun $ T.pack "__eq") (i,j)
 
 declareVars :: Map [String] Integer -> GTLSpec String -> SMT ()
 declareVars enums spec

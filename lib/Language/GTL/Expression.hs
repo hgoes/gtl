@@ -32,7 +32,7 @@ module Language.GTL.Expression
         typeCheck,
         compareExpr,
         compareExprDebug,
-        distributeNot,
+        distributeNot,pushNot,
         makeTypedExpr,
         getConstant,
         mapGTLVars,
