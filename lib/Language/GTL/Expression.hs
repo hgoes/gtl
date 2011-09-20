@@ -562,7 +562,9 @@ distributeNot expr
     UnBoolExpr op p -> case op of
       Not -> pushNot (unfix p)
       Next NoTime -> Typed GTLBool $ UnBoolExpr (Next NoTime) (Fix $ distributeNot $ unfix p)
-      Always -> Typed GTLBool $ BinBoolExpr (Until NoTime) (Fix (Typed GTLBool (Value (GTLBoolVal True)))) (Fix $ distributeNot $ unfix p)
+      Always -> Typed GTLBool $ UnBoolExpr (Finally NoTime) (Fix $ distributeNot $ unfix p)
+      Finally NoTime -> Typed GTLBool $ UnBoolExpr Always (Fix $ distributeNot $ unfix p)
+      Finally spec -> Typed GTLBool $ UnBoolExpr (Next spec) (Fix $ distributeNot $ unfix p)
     IndexExpr e i -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     Automaton buchi -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
     ClockRef x -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
