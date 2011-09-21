@@ -18,9 +18,13 @@ import Data.Maybe (catMaybes)
 import Data.Array (Array)
 import Control.Monad.Trans
 
-verifyModel :: GTLSpec String -> IO ()
-verifyModel spec = do
-  res <- withZ3 $ do
+verifyModel :: Maybe String -> GTLSpec String -> IO ()
+verifyModel solver spec = do
+  let solve = case solver of
+        Nothing -> withZ3
+        Just x -> let bin:args = Prelude.words x
+                  in withSMTSolver bin args
+  res <- solve $ do
     let enummp = enumMap spec
     if Map.null enummp
       then return ()

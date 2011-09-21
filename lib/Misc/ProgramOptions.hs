@@ -39,6 +39,7 @@ data Options = Options
                , ccFlags :: [String] -- ^ Flags to pass to the C-compiler
                , ldFlags :: [String] -- ^ Flags to pass to the linker
                , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
+               , smtBinary :: Maybe FilePath
                }
                deriving Show
 
@@ -53,6 +54,7 @@ defaultOptions = Options
   , ccFlags = []
   , ldFlags = []
   , scadeRoot = Nothing
+  , smtBinary = Nothing
   }
 
 modes :: [(String,TranslationMode)]
@@ -95,6 +97,7 @@ header = unlines $ [
     , " * CFLAGS - Additional flags to be passed to compiler"
     , " * LDFLAGS - Additional flags to be passed to linker"
     , " * SCADE_ROOT - Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
+    , " * SMT_BINARY - Path to the SMT solver binary"
     , " All environment variables may be passed in the form <Variable>=<Value> as option."
   ]
 
@@ -109,10 +112,12 @@ getOptions = do
   gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
   cflags <- catch (fmap splitOptions $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
   ldflags <- catch (fmap splitOptions $ getEnv "LDFLAGS") (\e -> const (return []) (e::SomeException))
+  smtbin <- catch (fmap Just $ getEnv "SMT_BINARY") (\e -> const (return Nothing) (e::SomeException))
   scadeRoot <- guessScadeRoot
   let start_opts = defaultOptions { ccBinary = gcc
                                   , ccFlags = cflags
                                   , ldFlags = ldflags
+                                  , smtBinary = smtbin
                                   , scadeRoot = scadeRoot
                                   }
   case getOpt (ReturnInOrder parseFreeOptions) options args of
@@ -131,6 +136,7 @@ parseFreeOptions o =
     "CFLAGS" -> \opts -> opts { ccFlags = ccFlags opts ++ (splitOptions $ value) }
     "LDFLAGS" -> \opts -> opts { ldFlags = ldFlags opts ++ (splitOptions $ value) }
     "SCADE_ROOT" -> \opts -> opts { scadeRoot = Just value }
+    "SMT_BINARY" -> \opts -> opts { smtBinary = Just value }
     otherwise -> if null value
       then (\opts -> if null $ gtlFile opts then opts { gtlFile = optName } else error "Only one file allowed")
       else error $ "Unknown option " ++ optName
