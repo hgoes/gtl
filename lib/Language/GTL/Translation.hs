@@ -172,12 +172,15 @@ expandExpr expr
     Var _ _ _ -> [Set.singleton expr]
     Value (GTLBoolVal False) -> []
     Value (GTLBoolVal True) -> [Set.empty]
+    Value _ -> error "No non-boolean expression allowed in state formulas (should not get here"
     BinBoolExpr op l r -> case op of
       GTL.And -> [ Set.union lm rm | lm <- expandExpr l, rm <- expandExpr r ]
       GTL.Or -> expandExpr l ++ expandExpr r
       GTL.Implies -> expandExpr (Fix $ Typed gtlBool (BinBoolExpr GTL.Or (Fix $ Typed gtlBool (UnBoolExpr GTL.Not l)) r))
       GTL.Until _ -> error "Can't use until in state formulas yet"
+      GTL.UntilOp _ -> error "Can't use untilop in state formulas yet"
     BinRelExpr _ _ _ -> [Set.singleton expr]
+    BinIntExpr _ _ _ -> error "Can't use binary int expr in state formulas yet"
     UnBoolExpr op p -> case op of
       GTL.Not -> let expandNot [] = [Set.empty]
                      expandNot (x:xs) = let res = expandNot xs
@@ -185,5 +188,11 @@ expandExpr expr
                  in expandNot (expandExpr p)
       GTL.Next _ -> error "Can't use next in state formulas yet"
       GTL.Always -> error "Can't use always in state formulas yet"
+      GTL.Finally _ -> error "Can't use finally in state formulas yet"
+      GTL.After _ -> error "Can't use after in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
     Automaton _ -> error "Can't use automata in state formulas yet"
+    ClockReset _ _ -> error "Can't use clock reset in state formulas yet"
+    ClockRef _ -> error "Can't use clock ref in state formulas yet"
+    BuiltIn _ _ -> error "Can't use builtin in state formulas yet"
+  | otherwise = error "Passed non-boolean expression as state formular"

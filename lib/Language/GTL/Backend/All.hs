@@ -7,6 +7,8 @@ import Language.GTL.Expression
 import Language.GTL.Backend
 import Language.GTL.Backend.Scade
 import Language.GTL.Backend.None
+import Language.GTL.Types
+import Data.Map
 
 import Misc.ProgramOptions as Opts
 
@@ -15,7 +17,7 @@ import Misc.ProgramOptions as Opts
 data AllBackend = AllBackend
                   { allTypecheck :: ModelInterface -> Either String ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: Integer -> TypedExpr String -> Opts.Options -> String -> IO (Maybe Bool)
+                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 -- | Try to initialize a given backend with a name and arguments.

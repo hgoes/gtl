@@ -14,6 +14,7 @@ import Data.List (unfoldr)
 import System.Directory (findExecutable)
 import System.FilePath
 import Data.Graph.Inductive.Query.Monad (mapSnd)
+import Data.Set as Set (Set(..), empty, insert)
 
 -- | Provides the operation mode for the GTL executable
 data TranslationMode
@@ -39,6 +40,8 @@ data Options = Options
                , ldFlags :: [String] -- ^ Flags to pass to the linker
                , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
                , verbosity :: Int -- ^ Verbosity level
+               , dryRun :: Bool
+               , debug :: Set String
                }
                deriving Show
 
@@ -54,6 +57,8 @@ defaultOptions = Options
   , ldFlags = []
   , scadeRoot = Nothing
   , verbosity = 0
+  , dryRun = False
+  , debug = Set.empty
   }
 
 modes :: [(String,TranslationMode)]
@@ -87,6 +92,8 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
           ,Option ['V'] ["verbosity"] (OptArg (\str opt -> opt { verbosity = maybe 1 read str }) "verbosity level") "How much additional information is printed? (default 1)"
+          ,Option ['n'] ["dry-run"] (NoArg (\opt -> opt { dryRun = True })) "Perform a dry run only generating files and not executing anything."
+          ,Option ['d'] ["debug"] (ReqArg (\str opt -> opt { debug = Set.insert str $ debug opt }) "option") "Give debugging options (e.g. -ddump-buchi)"
           ]
 
 header :: String

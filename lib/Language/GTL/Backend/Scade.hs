@@ -16,8 +16,9 @@ import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map)
 import Control.Monad.Identity
-import Data.List as List (intercalate, null)
-import Data.Maybe (maybeToList)
+import Data.List as List (intercalate, null, mapAccumL)
+import Data.Maybe (maybeToList, isJust)
+import Data.Set as Set (member)
 
 import System.FilePath
 import System.Process as Proc
@@ -71,37 +72,47 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls tps opFile) cy expr opts gtlName
+  backendVerify Scade (ScadeData node decls tps opFile) cy expr locals opts gtlName
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba (Just cy) expr
-          scade = fmap (dfaToScade name inp outp) dfa
+          buchi = gtl2ba (Just cy) expr
+          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA buchi
+          scade = fmap (dfaToScade name inp outp locals) dfa
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
+        dump opts gtlName name buchi
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
             writeFile testNodeFile (show $ prettyScade [scade'])
             writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
-            case scadeRoot opts of
-              Just p -> do
-                reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-                case reportFile' of
-                  Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
-                  Just reportFile -> do
-                    report' <- readReport reportFile
-                    case report' of
-                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
-                      Just report -> do
-                        when (not (verified report))
-                          (generateScenario scenarioFile report)
-                        return $ Just $ verified report
-              Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+            if not (dryRun opts) then
+              case scadeRoot opts of
+                Just p -> do
+                  reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+                  case reportFile' of
+                    Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+                    Just reportFile -> do
+                      report' <- readReport reportFile
+                      case report' of
+                        Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                        Just report -> do
+                          when (not (verified report))
+                            (generateScenario scenarioFile report)
+                          return $ Just $ verified report
+                Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+              else return Nothing
+
+-- | Deals with dumping debug informations.
+dump opts gtlName name buchi =
+  if "dump-buchi" `Set.member` (debug opts) then
+    writeFile ((outputPath opts) </> (gtlName ++ name ++ "-buchi" ++ ".txt")) (show buchi)
+  else return ()
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs
@@ -406,10 +417,11 @@ buildTest opname ins outs = UserOpDecl
 dfaToScade :: String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
+                -> Map String GTLType -- ^ Local variables of the mode
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
-dfaToScade name ins outs dfa
+dfaToScade name ins outs locals dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -425,17 +437,17 @@ dfaToScade name ins outs dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = []
+                              , dataLocals = declarationsToScade $ Map.toList locals
                               , dataEquations = [StateEquation
-                                                 (StateMachine Nothing (dfaToStates dfa))
+                                                 (StateMachine Nothing (dfaToStates locals dfa))
                                                  [] True
                                                 ]
                               }
     }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-dfaToStates :: DFA [TypedExpr String] Integer -> [Sc.State]
-dfaToStates dfa = failState :
+dfaToStates :: Map String GTLType -> DFA [TypedExpr String] Integer -> [Sc.State]
+dfaToStates locals dfa = failState :
                   [ Sc.State
                    { stateInitial = s == dfaInit dfa
                    , stateFinal = False
@@ -444,10 +456,10 @@ dfaToStates dfa = failState :
                                          , dataLocals = []
                                          , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
                                          }
-                   , stateUnless = [ stateToTransition cond trg
+                   , stateUnless = [ stateToTransition locals cond trg
                                    | (cond, trg) <- Map.toList trans, not (List.null cond) ] ++
                                    -- put unconditional transition at the end if available
-                                   (maybeToList $ fmap (stateToTransition []) $ Map.lookup [] trans) ++
+                                   (maybeToList $ fmap (stateToTransition locals []) $ Map.lookup [] trans) ++
                                    [failTransition]
                    , stateUntil = []
                    , stateSynchro = Nothing
@@ -475,46 +487,120 @@ failState = Sc.State
   }
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
-stateToTransition cond trg
-  = Transition
-    (relsToExpr cond)
-    Nothing
-    (TargetFork Restart ("st"++show trg))
+stateToTransition :: Map String GTLType -> [TypedExpr String] -> Integer -> Sc.Transition
+stateToTransition locals cond trg =
+  let (e, a) = relsToExpr locals cond
+  in Transition
+      e
+      (fmap Sc.ActionDef a)
+      (TargetFork Restart ("st"++show trg))
 
-exprToScade :: TypedExpr String -> Sc.Expr
-exprToScade (Fix expr) = case getValue expr of
-  Var name lvl _ -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
-  Value val -> valueToScade (getType expr) val
-  BinIntExpr op l r -> Sc.BinaryExpr (case op of
-                                         OpPlus -> BinPlus
-                                         OpMinus -> BinMinus
-                                         OpMult -> BinTimes
-                                         OpDiv -> BinDiv
-                                     ) (exprToScade l) (exprToScade r)
-  BinBoolExpr op l r -> Sc.BinaryExpr (case op of
-                                        GTL.And -> Sc.BinAnd
-                                        GTL.Or -> Sc.BinOr
-                                      ) (exprToScade l) (exprToScade r)
-  BinRelExpr rel l r -> BinaryExpr (case rel of
-                                      BinLT -> BinLesser
-                                      BinLTEq -> BinLessEq
-                                      BinGT -> BinGreater
-                                      BinGTEq -> BinGreaterEq
-                                      BinEq -> BinEquals
-                                      BinNEq -> BinDifferent
-                                   ) (exprToScade l) (exprToScade r)
-  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade p)
-  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade r) (Sc.ConstIntExpr i)
+-- | There is a special case for state output constraints using
+-- equality if it involves a local variable on the lhs.
+-- This corresponds to an assignment which has to be executed.
+-- TODO: is this the correct behaviour and the only case.
+exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
+exprToScade locals (Fix expr) = case getValue expr of
+  Var name lvl _ -> (foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl], Nothing)
+  Value val -> (valueToScade locals (getType expr) val, Nothing)
+  BinIntExpr op l r ->
+    let (lExpr, lAssign) = exprToScade locals l
+        (rExpr, rAssign) = exprToScade locals r
+    in (Sc.BinaryExpr (case op of
+                         OpPlus -> BinPlus
+                         OpMinus -> BinMinus
+                         OpMult -> BinTimes
+                         OpDiv -> BinDiv
+                     ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  BinBoolExpr op l r ->
+    let (lExpr, lAssign) = exprToScade locals l
+        (rExpr, rAssign) = exprToScade locals r
+    in (Sc.BinaryExpr (case op of
+                        GTL.And -> Sc.BinAnd
+                        GTL.Or -> Sc.BinOr
+                      ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  BinRelExpr BinEq l r -> mkEqExprBinEquals locals l r
+  BinRelExpr rel l r ->
+    let (lExpr, lAssign) = exprToScade locals l
+        (rExpr, rAssign) = exprToScade locals r
+    in (BinaryExpr (case rel of
+                      BinLT -> BinLesser
+                      BinLTEq -> BinLessEq
+                      BinGT -> BinGreater
+                      BinGTEq -> BinGreaterEq
+                      BinNEq -> BinDifferent
+                   ) lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+  UnBoolExpr GTL.Not p -> first (Sc.UnaryExpr Sc.UnNot) (exprToScade locals p)
+  GTL.IndexExpr r i -> first (flip Sc.IndexExpr $ (Sc.ConstIntExpr i)) (exprToScade locals r)
 
-valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
-valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
-valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
-valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
-valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
-valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap exprToScade xs)
-valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap exprToScade xs)
+-- | If on the lhs of an equality expression a state output variable is found
+-- this expression is transformed into an assignment on the transition.
+mkEqExprBinEquals :: Map String GTLType -> TypedExpr String -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
+mkEqExprBinEquals locals l r =
+  case getValue (unfix l) of
+    (Var name lvl StateOut) ->
+      if name `Map.member` locals then
+        (Sc.ConstBoolExpr True, Just $ Sc.DataDef [] [] [SimpleEquation [Named name] (exprToScadeNoAssigns locals r)])
+      else mkNonAssign
+    _ -> mkNonAssign
+  where
+    mkNonAssign =
+      let (lExpr, lAssign) = exprToScade locals l
+          (rExpr, rAssign) = exprToScade locals r
+      in (BinaryExpr BinEquals lExpr rExpr
+        , mergeAssigns lAssign rAssign)
+-- | Merge two data definitions for one transition.
+mergeAssigns :: Maybe Sc.DataDef -> Maybe Sc.DataDef -> Maybe Sc.DataDef
+mergeAssigns = maybeComb (\d1 d2 -> DataDef (dataSignals d1 ++ dataSignals d2) (dataLocals d1 ++ dataLocals d2) (dataEquations d1 ++ dataEquations d2))
+  where
+    maybeComb f (Just x) (Just y) = Just $ f x y
+    maybeComb _ Nothing y = y
+    maybeComb _ x Nothing = x
 
-relsToExpr :: [TypedExpr String] -> Sc.Expr
-relsToExpr [] = Sc.ConstBoolExpr True
-relsToExpr xs = foldl1 (Sc.BinaryExpr Sc.BinAnd) (fmap exprToScade xs)
+exprToScadeNoAssigns locals e =
+  let (e', a) = exprToScade locals e
+  in if isJust a then error "assignment not allowed here" else e'
+
+valueToScade :: Map String GTLType -> GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
+valueToScade locals _ (GTLIntVal v) = Sc.ConstIntExpr v
+valueToScade locals _ (GTLBoolVal v) = Sc.ConstBoolExpr v
+valueToScade locals _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
+valueToScade locals _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
+valueToScade locals _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- no assignments should be generated inside index expression
+valueToScade locals _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- or tuple expressions
+
+declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
+declarationsToScade = concat . map declarationsToScade'
+  where
+    declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade t) Nothing Nothing]
+
+    -- Tuples are declared as follows:
+    -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
+    -- If tuples are nested, this scheme is extended for every layer:
+    -- x : ((a0, a1), a2) becomes x_0_0 : a0; x_0_1 : a1; x_1 : a2;
+    makeTupleDecls n indcs ts  = concat $ snd $ mapAccumL (makeTupleDecl n indcs) 0 ts
+      where
+        makeTupleDecl :: String -> [Int] -> Int -> GTLType -> (Int, [Sc.VarDecl])
+        makeTupleDecl n indcs indx (Fix (GTLTuple ts)) = (indx + 1, makeTupleDecls n (indx : indcs) ts)
+        makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade t) Nothing Nothing])
+        expandName = foldl (\n i -> n ++ "_" ++ show i ) ""
+
+gtlTypeToScade :: GTLType -> Sc.TypeExpr
+gtlTypeToScade (Fix GTLInt) = Sc.TypeInt
+-- gtlTypeToScade GTLByte = ?
+gtlTypeToScade (Fix GTLBool) = Sc.TypeBool
+gtlTypeToScade (Fix GTLFloat) = Sc.TypeReal
+-- gtlTypeToScade (GTLEnum decls) = Sc.TypeEnum decls -- We can't use this one here as we may want to refer to a already declared enum. That information is lost.
+-- So we're missing something like GTLTypeVar String just like Sc.TypePath.
+gtlTypeToScade (Fix (GTLArray size t)) = Sc.TypePower (gtlTypeToScade t) (Sc.ConstIntExpr size)
+--gtlTypeToScade (GTLTuple ts) = map gtlTypeToScade ts
+
+apPairs f g = \(x1,y1) (x2,y2) -> (f x1 x2, g y1 y2)
+
+relsToExpr :: Map String GTLType -> [TypedExpr String] -> (Sc.Expr, Maybe Sc.DataDef)
+relsToExpr _ [] = (Sc.ConstBoolExpr True, Nothing)
+relsToExpr locals xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap (exprToScade locals) xs)
