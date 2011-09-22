@@ -58,7 +58,9 @@ instance GTLBackend Scade where
     return (rins,routs)
   cInterface Scade (ScadeData name decls tps opFile)
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-      in CInterface { cIFaceIncludes = [name++".h"]
+      in CInterface { cIFaceIncludes = [(fmap (\c -> case c of
+                                                  '.' -> '_'
+                                                  _ -> c) name)++".h"]
                     , cIFaceStateType = ["outC_"++name]
                     , cIFaceInputType = if Prelude.null inp
                                         then []
@@ -296,6 +298,7 @@ scadeTranslateValueC :: GTLConstant -> String
 scadeTranslateValueC d = case unfix d of
   GTLIntVal v -> show v
   GTLBoolVal v -> if v then "1" else "0"
+  GTLEnumVal v -> v
   _ -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
