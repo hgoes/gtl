@@ -66,6 +66,13 @@ instance (Show a,Show st,Ord st) => Show (GBA a st) where
                                  [ "  "++show cond++" ->"++show (Set.toList fins)++" "++show (Set.toList trg) | (cond,trg,fins) <- Set.toList trans ]
                                | (st,trans) <- Map.toList (gbaTransitions gba) ])
 
+class BAState st where
+  -- | Generates a new state which isn't in use, yet.
+  unusedBAState :: BA a st -> st
+
+instance BAState Integer where
+  unusedBAState ba = (fst $ Map.findMax $ baTransitions ba) + 1
+
 -- | Maps over the transition conditions of a B&#xFC;chi automaton.
 baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
 baMapAlphabet f ba = ba { baTransitions = fmap (Set.map (\(c,trg) -> (f c,trg))) (baTransitions ba) }

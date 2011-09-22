@@ -38,6 +38,7 @@ data Options = Options
                , ccFlags :: [String] -- ^ Flags to pass to the C-compiler
                , ldFlags :: [String] -- ^ Flags to pass to the linker
                , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
+               , verbosity :: Int -- ^ Verbosity level
                }
                deriving Show
 
@@ -52,6 +53,7 @@ defaultOptions = Options
   , ccFlags = []
   , ldFlags = []
   , scadeRoot = Nothing
+  , verbosity = 0
   }
 
 modes :: [(String,TranslationMode)]
@@ -84,6 +86,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['o'] ["output-directory"] (ReqArg (\path opts -> opts { outputPath = path }) "path") "Path into which the output should be generated"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
           ,Option ['v'] ["version"] (NoArg (\opt -> opt { showVersion = True })) "Show version information"
+          ,Option ['V'] ["verbosity"] (OptArg (\str opt -> opt { verbosity = maybe 1 read str }) "verbosity level") "How much additional information is printed? (default 1)"
           ]
 
 header :: String

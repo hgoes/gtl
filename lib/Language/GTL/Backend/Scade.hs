@@ -13,11 +13,11 @@ import Language.GTL.Types
 import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
-import Language.GTL.Buchi
+import Language.GTL.DFA
 import Data.Map as Map hiding (map)
-import Data.Set as Set hiding (map)
 import Control.Monad.Identity
-import Data.List (intercalate)
+import Data.List as List (intercalate, null)
+import Data.Maybe (maybeToList)
 
 import System.FilePath
 import System.Process as Proc
@@ -68,24 +68,33 @@ instance GTLBackend Scade where
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
-          scade = buchiToScade name inp outp (gtl2ba (Just cy) expr)
+          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA $ gtl2ba (Just cy) expr
+          scade = fmap (dfaToScade name inp outp) dfa
+          --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
-        writeFile testNodeFile (show $ prettyScade [scade])
-        writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
-        case scadeRoot opts of
-          Just p -> do
-            report' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-            case report' of
-              Nothing -> return Nothing
-              Just report -> do
-                when (not (verified report))
-                  (generateScenario scenarioFile report)
-                return $ Just $ verified report
-          Nothing -> return Nothing
+        case scade of
+          Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
+          Just scade' -> do
+            writeFile testNodeFile (show $ prettyScade [scade'])
+            writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
+            case scadeRoot opts of
+              Just p -> do
+                reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
+                case reportFile' of
+                  Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+                  Just reportFile -> do
+                    report' <- readReport reportFile
+                    case report' of
+                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                      Just report -> do
+                        when (not (verified report))
+                          (generateScenario scenarioFile report)
+                        return $ Just $ verified report
+              Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs
@@ -125,30 +134,39 @@ data Report = Report {
 } deriving Show
 
 -- | Runs the Scade design verifier and reads back its report.
-verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe Report)
+verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe FilePath)
 verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
   let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
       reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
       verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
+      outputStream = if (verbosity opts) > 0 then Inherit else CreatePipe
   in do
     (_, _, _, p) <- Proc.createProcess $
                     Proc.CreateProcess {
                       cmdspec = Proc.RawCommand dv verifOpts
                       , cwd = Nothing, env = Nothing
-                      , std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe
+                      , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
                       , close_fds = False
                     }
     exitCode <- Proc.waitForProcess p
     case exitCode of
       ExitFailure _ -> return Nothing
-      ExitSuccess -> readReport reportFile
+      ExitSuccess -> return $ Just reportFile
 
 -- | Read the XML output of the design verifier.
 -- The structure is something like:
 --  <prover ...>
 --    <property name="test_result" status="/s/" node="/n/" ...>
 --      <tick ...>
---        <input name="/i/"><value type="/t/">v</value>
+--        <input name="/i/">
+--          <value type="/t/">v</value>
+--        </input>
+--        <input name="/i/">
+--          <composite>
+--            <value type="/t/">v1</value>
+--            <value type="/t/">v2</value>
+--          </composite>
+--        </input>
 --  ...
 -- Where s is "Falsifiable" or "Valid" (Report.verified == True iff s == "Valid"),
 -- n is the name of the tested node (will be in Report.node).
@@ -196,21 +214,30 @@ readReport reportFile = do
             readCycleActions =
               getChildren >>>
               isTag "input" >>> makeSetCommand &&&>
-              getChildren >>>
-              isTag "value" >>> getChildren >>> valueSetCommand
+              getChildren >>> valueSetCommand
             -- TCL command generation
             makeSetCommand =
               getAttrValue "name" >>>
-              changeUserState (\n r -> r {errorTrace = (("SSM::Set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
+              changeUserState (\n r -> r {errorTrace = (("SSM::set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
+            valueSetCommand :: IOStateArrow Report XmlTree String
             valueSetCommand =
-              getText >>>
-              changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
-            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::Cycle" : (traceHead r)) : (traceTail r)})
+              (compositeValue `orElse` singleValue) >>> saveValue
+            compositeValue =
+              isTag "composite" >>>
+              deep (
+                singleValue
+              ) >.
+              (intercalate ",") >>> arr addParens
+            singleValue =
+              isTag "value" >>> getChildren >>> getText
+            saveValue = changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace
             traceTail = tail . errorTrace
             commandHead = head . traceHead
             commandTail = tail . traceHead
+            addParens s = "(" ++ s ++ ")"
     -- After parsing the ticks and the commands in there are in reverse order -> correct that.
     reverseTrace :: Report -> Report
     reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
@@ -367,13 +394,14 @@ buildTest opname ins outs = UserOpDecl
                             }
   }
 
--- | Convert a buchi automaton to SCADE.
-buchiToScade :: String -- ^ Name of the resulting SCADE node
+-- | Convert a DFA to Scade.
+dfaToScade :: String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
-                -> BA [TypedExpr String] Integer -- ^ The buchi automaton
+                -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
-buchiToScade name ins outs buchi
+
+dfaToScade name ins outs dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -391,30 +419,32 @@ buchiToScade name ins outs buchi
     , userOpContent = DataDef { dataSignals = []
                               , dataLocals = []
                               , dataEquations = [StateEquation
-                                                 (StateMachine Nothing (buchiToStates buchi))
+                                                 (StateMachine Nothing (dfaToStates dfa))
                                                  [] True
                                                 ]
                               }
     }
 
--- | The starting state for a contract automaton.
-startState :: BA [TypedExpr String] Integer -> Sc.State
-startState buchi = Sc.State
-  { stateInitial = True
-  , stateFinal = False
-  , stateName = "init"
-  , stateData = DataDef { dataSignals = []
-                        , dataLocals = []
-                        , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                        }
-  , stateUnless = [ stateToTransition cond trg
-                  | i <- Set.toList (baInits buchi),
-                    (cond,trg) <- Set.toList ((baTransitions buchi)!i)
-                  ]++
-                  [failTransition]
-  , stateUntil = []
-  , stateSynchro = Nothing
-  }
+-- | Translates a buchi automaton into a list of SCADE automaton states.
+dfaToStates :: DFA [TypedExpr String] Integer -> [Sc.State]
+dfaToStates dfa = failState :
+                  [ Sc.State
+                   { stateInitial = s == dfaInit dfa
+                   , stateFinal = False
+                   , stateName = "st" ++ (show s)
+                   , stateData = DataDef { dataSignals = []
+                                         , dataLocals = []
+                                         , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
+                                         }
+                   , stateUnless = [ stateToTransition cond trg
+                                   | (cond, trg) <- Map.toList trans, not (List.null cond) ] ++
+                                   -- put unconditional transition at the end if available
+                                   (maybeToList $ fmap (stateToTransition []) $ Map.lookup [] trans) ++
+                                   [failTransition]
+                   , stateUntil = []
+                   , stateSynchro = Nothing
+                   }
+                 | (s, trans) <- Map.toList (unTotal $ dfaTransitions dfa) ]
 
 -- | Constructs a transition into the `failState'.
 failTransition :: Sc.Transition
@@ -436,26 +466,6 @@ failState = Sc.State
   , stateSynchro = Nothing
   }
 
--- | Translates a buchi automaton into a list of SCADE automaton states.
-buchiToStates :: BA [TypedExpr String] Integer -> [Sc.State]
-buchiToStates buchi = startState buchi :
-                      failState :
-                      [ Sc.State
-                       { stateInitial = False
-                       , stateFinal = False
-                       , stateName = "st"++show num
-                       , stateData = DataDef { dataSignals = []
-                                             , dataLocals = []
-                                             , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                                             }
-                       , stateUnless = [ stateToTransition cond trg
-                                       | (cond,trg) <- Set.toList trans ] ++
-                                       [failTransition]
-                       , stateUntil = []
-                       , stateSynchro = Nothing
-                       }
-                     | (num,trans) <- Map.toList (baTransitions buchi) ]
-
 -- | Given a state this function creates a transition into the state.
 stateToTransition :: [TypedExpr String] -> Integer -> Sc.Transition
 stateToTransition cond trg
@@ -474,6 +484,10 @@ exprToScade expr = case getValue expr of
                                          OpMult -> BinTimes
                                          OpDiv -> BinDiv
                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
+  BinBoolExpr op l r -> Sc.BinaryExpr (case op of
+                                        GTL.And -> Sc.BinAnd
+                                        GTL.Or -> Sc.BinOr
+                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
   BinRelExpr rel l r -> BinaryExpr (case rel of
                                       BinLT -> BinLesser
                                       BinLTEq -> BinLessEq
@@ -483,6 +497,7 @@ exprToScade expr = case getValue expr of
                                       BinNEq -> BinDifferent
                                    ) (exprToScade (unfix l)) (exprToScade (unfix r))
   UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
+  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade $ unfix r) (Sc.ConstIntExpr i)
 
 valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
 valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
