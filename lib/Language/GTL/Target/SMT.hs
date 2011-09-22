@@ -22,8 +22,7 @@ verifyModel :: Maybe String -> GTLSpec String -> IO ()
 verifyModel solver spec = do
   let solve = case solver of
         Nothing -> withZ3
-        Just x -> let bin:args = Prelude.words x
-                  in withSMTSolver bin args
+        Just x -> withSMTSolver x
   res <- solve $ do
     let enummp = enumMap spec
     if Map.null enummp
