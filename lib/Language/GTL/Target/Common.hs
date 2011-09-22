@@ -218,6 +218,7 @@ flattenVar (Fix (GTLArray sz tp)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVa
 flattenVar (Fix (GTLArray sz tp)) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
 flattenVar (Fix (GTLTuple tps)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
 flattenVar (Fix (GTLTuple tps)) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
+flattenVar (Fix (GTLNamed _ tp)) idx = flattenVar tp idx
 flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
 
 flattenConstant :: GTLConstant -> [GTLConstant]
@@ -229,6 +230,7 @@ flattenConstant c = case unfix c of
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
 allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
 allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
+allPossibleIdx (Fix (GTLNamed _ tp)) = allPossibleIdx tp
 allPossibleIdx tp = [(tp,[])]
 
 flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b

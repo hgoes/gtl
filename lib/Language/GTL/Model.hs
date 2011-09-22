@@ -94,7 +94,7 @@ gtlParseModel opts aliases mdl = do
                             ce <- makeTypedExpr (\q n _ -> Left "Init expression may not contain variables"::Either String (String,VarUsage)) allType enums c
                             case Map.lookup var allType of
                               Nothing -> Left $ "Unknown variable: "++show var++" in model "++modelName mdl
-                              Just tp -> if tp == getType (unfix ce)
+                              Just tp -> if getType (unfix ce) `isSubtypeOf` tp
                                          then (case getConstant ce of
                                                   Just p -> return $ (var,Just p)
                                                   Nothing -> Left $ "Init expression must be a constant"
@@ -186,8 +186,8 @@ gtlParseSpec opts decls = do
                              Just x -> return x
                            ftp <- resolveIndices fvar fi
                            ttp <- resolveIndices tvar ti
-                           if ftp==ttp then return (GTLConnPt f fv fi,GTLConnPt t tv ti)
-                             else Left $ "Type mismatch between "++f++"."++fv++show fi++" and "++t++"."++tv++show ti++"."
+                           if ftp `isSubtypeOf` ttp then return (GTLConnPt f fv fi,GTLConnPt t tv ti)
+                             else Left $ "Type mismatch between "++f++"."++fv++show fi++"("++show ftp++") and "++t++"."++tv++show ti++"("++show ttp++")."
               |  Connect (ConnectDecl f fv fi t tv ti) <- decls ]
     return $ GTLSpec { gtlSpecModels = mdl_mp
                      , gtlSpecInstances = inst_mp

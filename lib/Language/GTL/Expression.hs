@@ -400,7 +400,7 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
       return $ Typed gtlBool (UnBoolExpr op pp)
     typeCheck' mu mutp mus varmp enums (IndexExpr p idx) = do
       pp <- mu p
-      case unfix $ mutp pp of
+      case unfix $ baseType $ mutp pp of
         GTLArray sz tp -> if idx < sz
                           then return $ Typed tp (IndexExpr pp idx)
                           else Left $ "Index "++show idx++" out of bounds "++show sz

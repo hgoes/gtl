@@ -60,7 +60,7 @@ type PowSetSt st = Set st
 --  automaton as it is. This follows the standard construction.
 mergeInits :: (Eq a, Ord a, Eq st, Ord st, BAState st) => BA a st -> BA a st
 mergeInits ba =
-  let initTrans = foldl (\ts s -> Set.union ts $ fromJust $ (Map.lookup s $ baTransitions ba)) Set.empty $ baInits ba
+  let initTrans = foldl (\ts s -> ts ++ (fromJust $ (Map.lookup s $ baTransitions ba))) [] $ baInits ba
       initState = unusedBAState ba
   in ba {
     baTransitions = Map.insert initState initTrans $ baTransitions ba,
@@ -75,7 +75,7 @@ determinizeBA ba
   | otherwise =
       let ba' = mergeInits ba
           initS = Set.singleton $ Set.findMin $ baInits ba
-          (trans, states) = determinize' (MakeTotal $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
+          (trans, states) = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
       in Just $ DFA {
           dfaTransitions = MakeTotal trans,
           dfaInit = initS

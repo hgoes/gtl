@@ -294,7 +294,8 @@ scadeTypeToGTL _ _ Sc.TypeReal = Just gtlFloat
 scadeTypeToGTL _ _ Sc.TypeChar = Just gtlByte
 scadeTypeToGTL g l (Sc.TypePath (Path path)) = do
   tp <- scadeLookupType g l path
-  scadeTypeToGTL g Map.empty tp
+  rtp <- scadeTypeToGTL g Map.empty tp
+  return $ Fix $ GTLNamed (last path) rtp
 scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (gtlEnum enums)
 scadeTypeToGTL g l (Sc.TypePower tp expr) = do
   rtp <- scadeTypeToGTL g l tp

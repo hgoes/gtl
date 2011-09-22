@@ -12,6 +12,7 @@ module Language.GTL.Types
         ToGTL(..),
         resolveIndices,
         isInstanceOf,
+        isSubtypeOf,
         showGTLValue) where
 
 import Text.Read hiding (get)
@@ -136,6 +137,13 @@ instance Functor GTLValue where
 instance Eq2 GTLType' where
   eq2 = (==)
 
+-- | Check if a type is a subtype of another type
+--   `isSubtypeOf t1 t2` returns true iff t1 can be used where t2 is required
+isSubtypeOf :: GTLType -> GTLType -> Bool
+isSubtypeOf (Fix (GTLNamed n1 _)) (Fix (GTLNamed n2 _)) = n1==n2
+isSubtypeOf tp (Fix (GTLNamed n tp2)) = isSubtypeOf tp tp2
+isSubtypeOf tp1 tp2 = tp1 == tp2
+
 -- | Given a list of indices, resolve the resulting type.
 --   For example, if the type is a tuple of (int,float,int) and the indices are
 --   [1], the result would be float.
@@ -148,6 +156,7 @@ resolveIndices (Fix (GTLArray sz tp)) (x:xs) = if x < sz
 resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
                                              then resolveIndices (tps `genericIndex` x) xs
                                              else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
+resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
 resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
 
 -- | Given a type, a function to extract type information from sub-values and a
