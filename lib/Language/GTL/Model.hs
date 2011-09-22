@@ -11,6 +11,7 @@ import Data.Map as Map
 import Data.Set as Set
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
+import Misc.ProgramOptions
 
 -- | A parsed and typechecked GTL model.
 data GTLModel a = GTLModel
@@ -54,8 +55,8 @@ getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstanc
       Just tp -> tp
 
 -- | Parse a GTL model from a unchecked model declaration.
-gtlParseModel :: Map String UnResolvedType -> ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
-gtlParseModel aliases mdl = do
+gtlParseModel :: Options -> Map String UnResolvedType -> ModelDecl -> IO (Either String (String,GTLModel String,Set [String]))
+gtlParseModel opts aliases mdl = do
   let rtps = do
         rinps <- mapM (resolveType aliases) (modelInputs mdl)
         routps <- mapM (resolveType aliases) (modelOutputs mdl)
@@ -64,7 +65,7 @@ gtlParseModel aliases mdl = do
   case rtps of
     Left err -> return $ Left err
     Right (inps,outps,locs) -> do
-      mback <- initAllBackend (modelType mdl) (modelArgs mdl)
+      mback <- initAllBackend (modelType mdl) opts (modelArgs mdl)
       case mback of
         Nothing -> return $ Left $ "Couldn't initialize backend "++(modelType mdl)
         Just back -> return $ do
@@ -120,12 +121,12 @@ getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
     getEnums' _ = Set.empty
 
 -- | Parse a GTL specification from an unchecked list of declarations.
-gtlParseSpec :: [Declaration] -> IO (Either String (GTLSpec String))
-gtlParseSpec decls = do
+gtlParseSpec :: Options -> [Declaration] -> IO (Either String (GTLSpec String))
+gtlParseSpec opts decls = do
   let aliases = foldl (\mp decl -> case decl of
                           TypeAlias name tp -> Map.insert name tp mp
                           _ -> mp) Map.empty decls
-  mdls <- fmap sequence $ sequence [ gtlParseModel aliases m
+  mdls <- fmap sequence $ sequence [ gtlParseModel opts aliases m
                                    | Model m <- decls
                                    ]
   return $ do

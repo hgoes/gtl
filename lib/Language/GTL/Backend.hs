@@ -21,7 +21,7 @@ class GTLBackend b where
   -- | The name of the backend. Used to determine which backend to load.
   backendName :: b -> String
   -- | Initialize a backend with a list of parameters
-  initBackend :: b -> [String] -> IO (GTLBackendModel b)
+  initBackend :: b -> Opts.Options -> [String] -> IO (GTLBackendModel b)
   -- | Perform type checking on the synchronized model
   typeCheckInterface :: b -- ^ The backend
                         -> GTLBackendModel b -- ^ The backend data

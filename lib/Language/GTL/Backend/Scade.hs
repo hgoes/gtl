@@ -33,11 +33,18 @@ import Misc.ProgramOptions
 -- | The SCADE backend
 data Scade = Scade deriving (Show)
 
+x2s :: Options -> FilePath -> IO String
+x2s opts fp = case (scadeRoot opts) of
+  Nothing -> return ""
+  Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s613.exe") [fp] ""
+
 instance GTLBackend Scade where
   data GTLBackendModel Scade = ScadeData String [Sc.Declaration] ScadeTypeMapping FilePath
   backendName Scade = "scade"
-  initBackend Scade [file,name] = do
-    str <- readFile file
+  initBackend Scade opts [file,name] = do
+    str <- case takeExtension file of
+      ".scade" -> readFile file
+      ".xscade" -> x2s opts file
     let decls = scade $ alexScanTokens str
     return $ ScadeData name decls (scadeTypes decls) file
   typeCheckInterface Scade (ScadeData name decls tps opFile) (ins,outs) = do

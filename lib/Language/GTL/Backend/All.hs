@@ -20,10 +20,10 @@ data AllBackend = AllBackend
 
 -- | Try to initialize a given backend with a name and arguments.
 --   If it works, it'll return Just with the 'AllBackend' representation.
-tryInit :: GTLBackend b => b -> String -> [String] -> IO (Maybe AllBackend)
-tryInit be name args
+tryInit :: GTLBackend b => b -> String -> Opts.Options -> [String] -> IO (Maybe AllBackend)
+tryInit be name opts args
   | backendName be == name = do
-    dat <- initBackend be args
+    dat <- initBackend be opts args
     return $ Just $ AllBackend
       { allTypecheck = typeCheckInterface be dat
       , allCInterface = cInterface be dat
@@ -33,16 +33,17 @@ tryInit be name args
 
 -- | Returns the first result that is not 'Nothing' from a list of functions
 --   by applying the arguments to them.
-firstM :: Monad m => [x -> y -> m (Maybe a)] -> x -> y -> m (Maybe a)
-firstM (x:xs) p q = do
-  res <- x p q
+firstM :: Monad m => [x -> y -> z -> m (Maybe a)] -> x -> y -> z -> m (Maybe a)
+firstM (x:xs) p q r = do
+  res <- x p q r
   case res of
-    Nothing -> firstM xs p q
+    Nothing -> firstM xs p q r
     Just rr -> return (Just rr)
-firstM [] _ _ = return Nothing
+firstM [] _ _ _ = return Nothing
 
 -- | Try to initialize the correct backend for a given backend name and arguments.
 initAllBackend :: String -- ^ The name of the backend
+                  -> Opts.Options -- ^ Options for the whole program
                   -> [String] -- ^ The arguments with which to initialize the backend
                   -> IO (Maybe AllBackend)
 initAllBackend = firstM [tryInit Scade,tryInit None]
