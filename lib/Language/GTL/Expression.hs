@@ -60,12 +60,9 @@ import Data.Traversable
 import Prelude hiding (foldl,foldl1,concat,elem,mapM_,mapM)
 import Control.Monad.Error ()
 import Control.Exception
+import Data.Fix
 import Debug.Trace
  
--- | A fixpoint data structure.
---   Allows the construction of infinite data types from finite constructors.
-data Fix f = Fix { unfix :: f (Fix f) }
-
 data VarUsage = Input
               | Output
               | StateIn
@@ -90,7 +87,7 @@ data Term v r = Var v Integer VarUsage -- ^ A variable with a name and a history
 type GTLConstant = Fix GTLValue
 
 -- | An expression is a recursive term
-type Expr v = Term v (Fix (Term v))
+type Expr v = Fix (Term v)
 
 -- | Used to supply type information to expressions
 data Typed a r = Typed { getType :: GTLType
@@ -98,10 +95,7 @@ data Typed a r = Typed { getType :: GTLType
                        } deriving (Eq,Ord)
 
 -- | A typed expression is a recursive term with type informations
-type TypedExpr v = Typed (Term v) (Fix (Typed (Term v)))
-
-instance Show (Fix GTLValue) where
-  showsPrec p x = showGTLValue show p (unfix x)
+type TypedExpr v = Fix (Typed (Term v))
 
 instance Functor (Term v) where
   fmap f (Var x lvl u) = Var x lvl u
@@ -133,7 +127,7 @@ instance Binary VarUsage where
       2 -> StateIn
       3 -> StateOut
 
-instance (Binary r,Binary v,Ord r,Ord v) => Binary (Term v r) where
+instance (Binary r,Binary v,Ord v) => Binary (Term v r) where
   put (Var v l u) = put (0::Word8) >> put v >> put l >> put u
   put (Value val) = put (1::Word8) >> put val
   put (BinBoolExpr op l r) = put (2::Word8) >> put op >> put l >> put r
@@ -204,93 +198,81 @@ isState _ = False
 
 -- | Construct a variable of a given type
 var :: GTLType -> v -> Integer -> VarUsage -> TypedExpr v
-var t name lvl u = Typed t (Var name lvl u)
+var t name lvl u = Fix $ Typed t (Var name lvl u)
 
 -- | Create a GTL value from a haskell constant
 constant :: ToGTL a => a -> TypedExpr v
-constant x = Typed (gtlTypeOf x) (Value (toGTL x))
+constant x = Fix $ Typed (gtlTypeOf x) (Value (toGTL x))
 
 -- | Negate a given expression
 gnot :: TypedExpr v -> TypedExpr v
 gnot expr
-  | getType expr == GTLBool = Typed GTLBool (UnBoolExpr Not (Fix expr))
+  | getType (unfix expr) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr Not expr)
 
 -- | Create the logical conjunction of two expressions
 gand :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gand x y
-  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr And (Fix x) (Fix y))
+  | getType (unfix x) == gtlBool && getType (unfix y) == gtlBool = Fix $ Typed gtlBool (BinBoolExpr And x y)
 
 -- | Create the logical disjunction of two expressions
 gor :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gor x y
-  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr Or (Fix x) (Fix y))
+  | getType (unfix x) == gtlBool && getType (unfix y) == gtlBool = Fix $ Typed gtlBool (BinBoolExpr Or x y)
 
 -- | Create an equality relation between two expressions
 geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 geq x y
-  | getType x == getType y = Typed GTLBool (BinRelExpr BinEq (Fix x) (Fix y))
+  | getType (unfix x) == getType (unfix y) = Fix $ Typed gtlBool (BinRelExpr BinEq x y)
 
 -- | Create an unequality relation between two expressions
 gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gneq x y
-  | getType x == getType y = Typed GTLBool (BinRelExpr BinNEq (Fix x) (Fix y))
+  | getType (unfix x) == getType (unfix y) = Fix $ Typed gtlBool (BinRelExpr BinNEq x y)
 
 galways :: TypedExpr v -> TypedExpr v
 galways x
-  | getType x == GTLBool = Typed GTLBool (UnBoolExpr Always (Fix x))
+  | getType (unfix x) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr Always x)
 
 gfinally :: TypedExpr v -> TypedExpr v
 gfinally x
-  | getType x == GTLBool = Typed GTLBool (UnBoolExpr (Finally NoTime) (Fix x))
+  | getType (unfix x) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr (Finally NoTime) x)
 
 gimplies :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gimplies x y
-  | getType x == GTLBool && getType y == GTLBool = Typed GTLBool (BinBoolExpr Implies (Fix x) (Fix y))
+  | getType (unfix x) == gtlBool && getType (unfix y) == gtlBool = Fix $ Typed gtlBool (BinBoolExpr Implies x y)
 
 -- | Create a enumeration value for a given enumeration type
 enumConst :: [String] -> String -> TypedExpr v
-enumConst tp v = Typed (GTLEnum tp) (Value (GTLEnumVal v))
+enumConst tp v = Fix $ Typed (gtlEnum tp) (Value (GTLEnumVal v))
 
-instance Binary (a r) => Binary (Typed a r) where
-  put x = put (getType x) >> put (getValue x)
-  get = do
+instance Binary2 a => Binary2 (Typed a) where
+  put2 x = put (getType x) >> put2 (getValue x)
+  get2 = do
     tp <- get
-    val <- get
+    val <- get2
     return (Typed tp val)
+    
+instance Eq v => Eq2 (Term v) where
+  eq2 = (==)
+  
+instance Ord v => Ord2 (Term v) where
+  compare2 = compare
 
-instance (Binary v,Ord v) => Binary (Fix (Typed (Term v))) where
-  put = put . unfix
-  get = fmap Fix get
+instance (Binary v,Ord v) => Binary2 (Term v) where
+  get2 = get
+  put2 = put
 
-instance (Show v,Show r) => Show (Term v r) where
-  show = showTerm show
+instance (Show v) => Show2 (Term v) where
+  show2 = showTerm show
 
-instance Show v => Show (Fix (Term v)) where
-  show = showTerm show . unfix
+instance Show2 a => Show2 (Typed a) where
+  show2 x = show2 (getValue x)
 
-instance Show (a r) => Show (Typed a r) where
-  show x = show (getValue x)
+instance Eq v => Eq2 (Typed (Term v)) where
+  eq2 = (==)
 
-instance Show v => Show (Fix (Typed (Term v))) where
-  show = showTerm show . getValue . unfix
-
-instance Eq v => Eq (Fix (Typed (Term v))) where
-  e1 == e2 = (getValue $ unfix e1) == (getValue $ unfix e2)
-
-instance Ord v => Ord (Fix (Typed (Term v))) where
-  compare e1 e2 = compare (getValue $ unfix e1) (getValue $ unfix e2)
-
-instance Eq v => Eq (Fix (Term v)) where
-  e1 == e2 = (unfix e1) == (unfix e2)
-
-instance Ord v => Ord (Fix (Term v)) where
-  compare e1 e2 = compare (unfix e1) (unfix e2)
-
-instance Eq (Fix GTLValue) where
-  e1 == e2 = (unfix e1) == (unfix e2)
-
-instance Ord (Fix GTLValue) where
-  compare e1 e2 = compare (unfix e1) (unfix e2)
+instance Ord v => Ord2 (Typed (Term v)) where
+  compare2 = compare
 
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
@@ -333,7 +315,7 @@ enforceType :: String -- ^ A string representation of the type checked entity
                -> GTLType -- ^ The actual type of the entity
                -> GTLType -- ^ The expected type
                -> Either String ()
-enforceType expr ac tp = if ac == tp
+enforceType expr ac tp = if baseType ac == baseType tp
                          then Right ()
                          else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
@@ -348,9 +330,9 @@ makeTypedExpr f varmp enums expr = parseTerm f Map.empty Nothing expr >>= typeCh
 -- | Convert an expression into a constant, if it is one.
 --   If not, return 'Nothing'.
 getConstant :: TypedExpr v -> Maybe GTLConstant
-getConstant e = case getValue e of
+getConstant e = case getValue (unfix e) of
   Value p -> do
-    np <- mapM (getConstant.unfix) p
+    np <- mapM getConstant p
     return $ Fix np
   _ -> Nothing
 
@@ -359,7 +341,9 @@ typeCheck :: (Ord v,Show v) => Map v GTLType -- ^ A type mapping for all variabl
              -> Set [String] -- ^ A set of all allowed enum types
              -> Expr v -- ^ The untyped expression
              -> Either String (TypedExpr v)
-typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) >>= return.Fix) (getType . unfix) (show . untyped . unfix) varmp enums
+typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix) (show . untyped) varmp enums (unfix e) of
+  Left err -> Left err
+  Right res -> Right $ Fix res
   where
     typeCheck' :: (Ord v,Show v,Ord r2)
                   => (r1 -> Either String r2)
@@ -370,13 +354,13 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
       Nothing -> Left $ "Unknown variable "++show x
       Just tp -> return $ Typed tp (Var x lvl u)
     typeCheck' mu mutp mus varmp enums (Value val) = case val of
-      GTLIntVal i -> return $ Typed GTLInt (Value $ GTLIntVal i)
-      GTLByteVal i -> return $ Typed GTLByte (Value $ GTLByteVal i)
-      GTLBoolVal i -> return $ Typed GTLBool (Value $ GTLBoolVal i)
-      GTLFloatVal i -> return $ Typed GTLFloat (Value $ GTLFloatVal i)
+      GTLIntVal i -> return $ Typed gtlInt (Value $ GTLIntVal i)
+      GTLByteVal i -> return $ Typed gtlByte (Value $ GTLByteVal i)
+      GTLBoolVal i -> return $ Typed gtlBool (Value $ GTLBoolVal i)
+      GTLFloatVal i -> return $ Typed gtlFloat (Value $ GTLFloatVal i)
       GTLEnumVal x -> case find (elem x) enums of
         Nothing -> Left $ "Unknown enum value "++show x
-        Just e -> return $ Typed (GTLEnum e) (Value $ GTLEnumVal x)
+        Just e -> return $ Typed (gtlEnum e) (Value $ GTLEnumVal x)
       GTLArrayVal vals -> do
         res <- mapM mu vals
         case res of
@@ -384,16 +368,16 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
           (x:xs) -> mapM_ (\tp -> if (mutp tp)==(mutp x)
                                   then return ()
                                   else Left "Not all array elements have the same type") xs
-        return $ Typed (GTLArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
+        return $ Typed (gtlArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
       GTLTupleVal vals -> do
         tps <- mapM mu vals
-        return $ Typed (GTLTuple (fmap mutp tps)) (Value $ GTLTupleVal tps)
+        return $ Typed (gtlTuple (fmap mutp tps)) (Value $ GTLTupleVal tps)
     typeCheck' mu mutp mus varmp enums (BinBoolExpr op l r) = do
       ll <- mu l
       rr <- mu r
-      enforceType (mus ll) (mutp ll) GTLBool
-      enforceType (mus rr) (mutp rr) GTLBool
-      return $ Typed GTLBool (BinBoolExpr op ll rr)
+      enforceType (mus ll) (mutp ll) gtlBool
+      enforceType (mus rr) (mutp rr) gtlBool
+      return $ Typed gtlBool (BinBoolExpr op ll rr)
     typeCheck' mu mutp mus varmp enums (BinRelExpr rel l r) = do
       ll <- mu l
       rr <- mu r
@@ -401,22 +385,22 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
         then (do
                  enforceType (mus rr) (mutp rr) (mutp ll))
         else (do
-                 enforceType (mus ll) (mutp ll) GTLInt
-                 enforceType (mus rr) (mutp rr) GTLInt)
-      return $ Typed GTLBool (BinRelExpr rel ll rr)
+                 enforceType (mus ll) (mutp ll) gtlInt
+                 enforceType (mus rr) (mutp rr) gtlInt)
+      return $ Typed gtlBool (BinRelExpr rel ll rr)
     typeCheck' mu mutp mus varmp enums (BinIntExpr op l r) = do
       ll <- mu l
       rr <- mu r
-      enforceType (mus ll) (mutp ll) GTLInt
-      enforceType (mus rr) (mutp rr) GTLInt
-      return $ Typed GTLInt (BinIntExpr op ll rr)
+      enforceType (mus ll) (mutp ll) gtlInt
+      enforceType (mus rr) (mutp rr) gtlInt
+      return $ Typed gtlInt (BinIntExpr op ll rr)
     typeCheck' mu mutp mus varmp enums (UnBoolExpr op p) = do
       pp <- mu p
-      enforceType (mus pp) (mutp pp) GTLBool
-      return $ Typed GTLBool (UnBoolExpr op pp)
+      enforceType (mus pp) (mutp pp) gtlBool
+      return $ Typed gtlBool (UnBoolExpr op pp)
     typeCheck' mu mutp mus varmp enums (IndexExpr p idx) = do
       pp <- mu p
-      case mutp pp of
+      case unfix $ mutp pp of
         GTLArray sz tp -> if idx < sz
                           then return $ Typed tp (IndexExpr pp idx)
                           else Left $ "Index "++show idx++" out of bounds "++show sz
@@ -425,29 +409,28 @@ typeCheck varmp enums = typeCheck' (\expr -> typeCheck varmp enums (unfix expr) 
                         else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
         _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
     typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
-      ntrans <- mapM (\trans -> do
-                         trans' <- mapM (\(cond,trg) -> do
-                                            ncond <- mapM mu cond
-                                            return (ncond,trg)
-                                        ) (Set.toList trans)
-                         return $ Set.fromList trans') (baTransitions buchi)
-      return $ Typed GTLBool (Automaton $ buchi { baTransitions = ntrans })
+      ntrans <- mapM (\trans -> mapM (\(cond,trg) -> do
+                                         ncond <- mapM mu cond
+                                         return (ncond,trg)
+                                     ) trans
+                     ) (baTransitions buchi)
+      return $ Typed gtlBool (Automaton $ buchi { baTransitions = ntrans })
     typeCheck' mu mutp mus varmp enums (BuiltIn name args) = do
       tps <- mapM mu args
       case name of
         "equal" -> do
           case tps of
-            [] -> return $ Typed GTLBool (BuiltIn name [])
+            [] -> return $ Typed gtlBool (BuiltIn name [])
             x:xs -> do
               mapM_ (\tp -> if (mutp tp)==(mutp x)
                             then return ()
                             else Left "Not all \"equal\" arguments have the same type") xs
-              return $ Typed GTLBool (BuiltIn name tps)
+              return $ Typed gtlBool (BuiltIn name tps)
         _ -> Left $ "Unknown built-in "++show name
 
 -- | Discard type information for an expression
 untyped :: TypedExpr v -> Expr v
-untyped expr = fmap (Fix . untyped . unfix) (getValue expr)
+untyped expr = Fix $ fmap untyped (getValue (unfix expr))
 
 -- | Convert a generalized expression into a regular one.
 parseTerm :: Ord v => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
@@ -455,7 +438,9 @@ parseTerm :: Ord v => (Maybe String -> String -> Maybe ContextInfo -> Either Str
              -> Maybe ContextInfo -- ^ Information about variable context (input or output)
              -> GExpr -- ^ The generalized expression
              -> Either String (Expr v)
-parseTerm f ex inf = parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr >>= return.Fix) f ex inf
+parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e of
+  Left err -> Left err
+  Right res -> Right $ Fix res
   where
     parseTerm' :: Ord r => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> Either String r)
                   -> (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage))
@@ -525,12 +510,12 @@ parseTerm f ex inf = parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr >>=
                                         ) nexts
                          return $ Map.insert (stateName st) (stateInitial st,stateFinal st,rexpr,rnexts) mp
                      ) Map.empty sts
-      return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> Set.fromList [ (case cond of
-                                                                                          Nothing -> tcond
-                                                                                          Just t -> t:tcond,trg)
-                                                                                    | (cond,trg) <- nxts, 
-                                                                                      let (_,_,tcond,_) = stmp!trg
-                                                                                    ]) stmp
+      return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> [ (case cond of
+                                                                             Nothing -> tcond
+                                                                             Just t -> t:tcond,trg)
+                                                                       | (cond,trg) <- nxts, 
+                                                                         let (_,_,tcond,_) = stmp!trg
+                                                                       ]) stmp
                               , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
                               , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
                               }
@@ -548,32 +533,32 @@ parseTerm f ex inf = parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr >>=
 -- | Distribute a negation as deep as possible into an expression until it only ever occurs in front of variables.
 distributeNot :: TypedExpr v -> TypedExpr v
 distributeNot expr
-  | getType expr == GTLBool = case getValue expr of
-    Var x lvl u -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
-    Value (GTLBoolVal x) -> Typed GTLBool $ Value (GTLBoolVal (not x))
-    BinBoolExpr op l r -> Typed GTLBool $ case op of
-      And -> BinBoolExpr Or (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
-      Or -> BinBoolExpr And (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
-      Implies -> BinBoolExpr And (Fix $ pushNot $ unfix l) (Fix $ distributeNot $ unfix r)
-      Until ts -> BinBoolExpr (UntilOp ts) (Fix $ distributeNot $ unfix l) (Fix $ distributeNot $ unfix r)
-    BinRelExpr rel l r -> Typed GTLBool $ BinRelExpr (relNot rel) l r
+  | getType (unfix expr) == gtlBool = case getValue (unfix expr) of
+    Var x lvl u -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
+    Value (GTLBoolVal x) -> Fix $ Typed gtlBool $ Value (GTLBoolVal (not x))
+    BinBoolExpr op l r -> Fix $ Typed gtlBool $ case op of
+      And -> BinBoolExpr Or (distributeNot l) (distributeNot r)
+      Or -> BinBoolExpr And (distributeNot l) (distributeNot r)
+      Implies -> BinBoolExpr And (pushNot l) (distributeNot r)
+      Until ts -> BinBoolExpr (UntilOp ts) (distributeNot l) (distributeNot r)
+    BinRelExpr rel l r -> Fix $ Typed gtlBool $ BinRelExpr (relNot rel) l r
     UnBoolExpr op p -> case op of
-      Not -> pushNot (unfix p)
-      Next NoTime -> Typed GTLBool $ UnBoolExpr (Next NoTime) (Fix $ distributeNot $ unfix p)
-      Always -> Typed GTLBool $ BinBoolExpr (Until NoTime) (Fix (Typed GTLBool (Value (GTLBoolVal True)))) (Fix $ distributeNot $ unfix p)
-    IndexExpr e i -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
-    Automaton buchi -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
-    ClockRef x -> Typed GTLBool $ UnBoolExpr Not (Fix expr)
+      Not -> pushNot p
+      Next NoTime -> Fix $ Typed gtlBool $ UnBoolExpr (Next NoTime) (distributeNot p)
+      Always -> Fix $ Typed gtlBool $ BinBoolExpr (Until NoTime) (Fix (Typed gtlBool (Value (GTLBoolVal True)))) (distributeNot p)
+    IndexExpr e i -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
+    Automaton buchi -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
+    ClockRef x -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     ClockReset _ _ -> error "Can't negate a clock reset"
 
 -- | If negations occur in the given expression, push them as deep into the expression as possible.
 pushNot :: TypedExpr v -> TypedExpr v
 pushNot expr
-  | getType expr == GTLBool = case getValue expr of
-    BinBoolExpr op l r -> Typed GTLBool $ BinBoolExpr op (Fix $ pushNot $ unfix l) (Fix $ pushNot $ unfix r)
-    UnBoolExpr Not p -> distributeNot $ unfix p
-    UnBoolExpr op p -> Typed GTLBool $ UnBoolExpr op (Fix $ pushNot $ unfix p)
-    IndexExpr e i -> Typed (getType expr) (IndexExpr (Fix $ pushNot $ unfix e) i)
+  | getType (unfix expr) == gtlBool = case getValue (unfix expr) of
+    BinBoolExpr op l r -> Fix $ Typed gtlBool $ BinBoolExpr op (pushNot l) (pushNot r)
+    UnBoolExpr Not p -> distributeNot p
+    UnBoolExpr op p -> Fix $ Typed gtlBool $ UnBoolExpr op (pushNot p)
+    IndexExpr e i -> Fix $ Typed (getType $ unfix expr) (IndexExpr (pushNot e) i)
     _ -> expr
 
 -- | Extracts the maximum level of history for each variable in the expression.
@@ -583,7 +568,7 @@ maximumHistory exprs = foldl (\mp (n,_,_,lvl,_) -> Map.insertWith max n lvl mp) 
 
 -- | Extracts all variables with their level of history from an expression.
 getVars :: TypedExpr v -> [(v,VarUsage,[Integer],Integer,GTLType)]
-getVars x = getTermVars (getVars . unfix) x
+getVars x = getTermVars getVars (unfix x)
 
 -- | Extract all variables used in the given term.
 getTermVars :: (r -> [(v,VarUsage,[Integer],Integer,GTLType)]) -> Typed (Term v) r -> [(v,VarUsage,[Integer],Integer,GTLType)]
@@ -597,7 +582,7 @@ getTermVars mu expr = case getValue expr of
   IndexExpr e i -> fmap (\(v,u,idx,lvl,tp) -> (v,u,i:idx,lvl,tp)) (mu e)
   Automaton buchi -> concat [ concat $ fmap mu cond
                             | trans <- Map.elems (baTransitions buchi), 
-                              (cond,_) <- Set.toList trans
+                              (cond,_) <- trans
                             ]
   BuiltIn _ args -> concat $ fmap mu args
 
@@ -609,7 +594,7 @@ getValueVars _ _ = []
 
 -- | Change the type of the variables in an expression.
 mapGTLVars :: (Ord v,Ord w) => (v -> w) -> TypedExpr v -> TypedExpr w
-mapGTLVars f expr = Typed (getType expr) (mapTermVars f (Fix . mapGTLVars f . unfix) (getValue expr))
+mapGTLVars f (Fix expr) = Fix $ Typed (getType expr) (mapTermVars f (mapGTLVars f) (getValue expr))
 
 
 -- | Change the type of the variables used in a term
@@ -622,7 +607,7 @@ mapTermVars f mu (BinIntExpr op l r) = BinIntExpr op (mu l) (mu r)
 mapTermVars f mu (UnBoolExpr op p) = UnBoolExpr op (mu p)
 mapTermVars f mu (IndexExpr e i) = IndexExpr (mu e) i
 mapTermVars f mu (Automaton buchi)
-  = Automaton $ buchi { baTransitions = fmap (Set.map (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
+  = Automaton $ buchi { baTransitions = fmap (fmap (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
 
 -- | Change the type of the variables used in a value
 mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2
@@ -805,36 +790,36 @@ data ExprOrdering = EEQ -- ^ Both expressions define the same value space
                   deriving (Show,Eq,Ord)
 
 getClocks :: TypedExpr v -> [Integer]
-getClocks e = case getValue e of
+getClocks (Fix e) = case getValue e of
   ClockReset c _ -> [c]
   ClockRef c -> [c]
-  BinBoolExpr _ (Fix lhs) (Fix rhs) -> (getClocks lhs) ++ (getClocks rhs)
-  UnBoolExpr _ (Fix r) -> getClocks r
-  Automaton aut -> automatonClocks (fmap unfix) aut
-  BuiltIn _ r -> concat $ fmap (getClocks.unfix) r
+  BinBoolExpr _ lhs rhs -> (getClocks lhs) ++ (getClocks rhs)
+  UnBoolExpr _ r -> getClocks r
+  Automaton aut -> automatonClocks id aut
+  BuiltIn _ r -> concat $ fmap getClocks r
   _ -> []
 
 automatonClocks :: (a -> [TypedExpr v]) -> BA a st -> [Integer]
 automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
                                | trans <- Map.elems (baTransitions aut), 
-                                 (cond,_) <- Set.toList trans
+                                 (cond,_) <- trans
                                ]
 
 -- | Convert a typed expression to a linear combination of variables.
 toLinearExpr :: Ord v => TypedExpr v -> Map (Map (v,Integer,VarUsage) Integer) GTLConstant
-toLinearExpr e = case getValue e of
+toLinearExpr e = case getValue (unfix e) of
   Var v h u -> Map.singleton (Map.singleton (v,h,u) 1) one
   Value v -> let Just c = getConstant e
              in Map.singleton Map.empty c
   BinIntExpr op lhs rhs
-    -> let p1 = toLinearExpr (unfix lhs)
-           p2 = toLinearExpr (unfix rhs)
+    -> let p1 = toLinearExpr lhs
+           p2 = toLinearExpr rhs
        in case op of
          OpPlus -> Map.unionWith (constantOp (+)) p1 p2
          OpMinus -> Map.unionWith (constantOp (-)) p1 p2
          OpMult -> Map.fromList [ (Map.unionWith (+) t1 t2,constantOp (*) c1 c2) | (t1,c1) <- Map.toList p1, (t2,c2) <- Map.toList p2 ]
   where
-    one = Fix $ case getType e of
+    one = Fix $ case unfix $ getType (unfix e) of
       GTLInt -> GTLIntVal 1
       GTLByte -> GTLByteVal 1
       GTLFloat -> GTLFloatVal 1
@@ -855,35 +840,35 @@ compareExprDebug e1 e2 = let res = compareExpr e1 e2
 -- | Compare the value spaces of two expressions
 compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
 compareExpr e1 e2
-  = assert (getType e1 == getType e2) $
-    case getType e1 of
+  = assert (getType (unfix e1) == getType (unfix e2)) $
+    case unfix $ getType (unfix e1) of
       GTLInt -> lincomp
       GTLByte -> lincomp
       GTLFloat -> lincomp
-      GTLBool -> case getValue e2 of
-        UnBoolExpr Not (Fix e2') -> case compareExpr e1 e2' of
+      GTLBool -> case getValue (unfix e2) of
+        UnBoolExpr Not e2' -> case compareExpr e1 e2' of
           EEQ -> ENEQ
           _ -> EUNK
-        _ -> case getValue e1 of
-          Var v1 h1 u1 -> case getValue e2 of
+        _ -> case getValue (unfix e1) of
+          Var v1 h1 u1 -> case getValue (unfix e2) of
             Var v2 h2 u2 -> if v1==v2 && h1==h2 && u1 == u2
                             then EEQ
                             else EUNK
             _ -> EUNK
-          Value c1 -> case getValue e2 of
+          Value c1 -> case getValue (unfix e2) of
             Value c2 -> if c1 == c2
                         then EEQ
                         else ENEQ
             _ -> EUNK
-          IndexExpr (Fix ee1) i1 -> case getValue e2 of
-            IndexExpr (Fix ee2) i2 -> case compareExpr ee1 ee2 of
+          IndexExpr ee1 i1 -> case getValue (unfix e2) of
+            IndexExpr ee2 i2 -> case compareExpr ee1 ee2 of
               EEQ -> if i1==i2
                      then EEQ
                      else EUNK
               _ -> EUNK
             _ -> EUNK
-          BinRelExpr op1 (Fix l1) (Fix r1) -> case getValue e2 of
-            BinRelExpr op2 (Fix l2) (Fix r2) -> case op1 of
+          BinRelExpr op1 l1 r1 -> case getValue (unfix e2) of
+            BinRelExpr op2 l2 r2 -> case op1 of
               BinEq -> case op2 of
                 BinEq -> case compareExpr l1 l2 of
                   EEQ -> compareExpr r1 r2
@@ -905,7 +890,7 @@ compareExpr e1 e2
                 BinNEq -> case compareExpr l1 l2 of
                   EEQ -> case compareExpr r1 r2 of
                     EEQ -> EEQ
-                    ENEQ -> if getType l1 == GTLBool
+                    ENEQ -> if getType (unfix l1) == gtlBool
                             then ENEQ
                             else EUNK
                     _ -> EUNK
@@ -919,29 +904,29 @@ compareExpr e1 e2
                 _ -> EUNK
               _ -> EUNK
             _ -> EUNK
-          UnBoolExpr Not (Fix p) -> case getValue e2 of
-            UnBoolExpr Not (Fix p') -> case compareExpr p p' of
+          UnBoolExpr Not p -> case getValue (unfix e2) of
+            UnBoolExpr Not p' -> case compareExpr p p' of
               ELT -> EGT
               EGT -> ELT
               r -> r
             _ -> case compareExpr p e2 of
               EEQ -> ENEQ
               _ -> EUNK
-          ClockReset x y -> case getValue e2 of
+          ClockReset x y -> case getValue (unfix e2) of
             ClockReset x' y' -> if x==x'
                                 then (if y==y' then EEQ else ENEQ)
                                 else EUNK
             _ -> EUNK
-          ClockRef x -> case getValue e2 of
+          ClockRef x -> case getValue (unfix e2) of
             ClockRef y -> if x==y then EEQ else EUNK
             _ -> EUNK
-      _ -> case getValue e1 of
-        Value c1 -> case getValue e2 of
+      _ -> case getValue (unfix e1) of
+        Value c1 -> case getValue (unfix e2) of
           Value c2 -> if c1 == c2
                       then EEQ
                       else ENEQ
           _ -> EUNK
-        _ -> if getValue e1 == getValue e2
+        _ -> if getValue (unfix e1) == getValue (unfix e2)
              then EEQ
              else EUNK
     where

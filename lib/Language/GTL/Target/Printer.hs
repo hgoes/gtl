@@ -37,7 +37,7 @@ simplePrettyPrintBuchi buchi = concat [ [ (if Set.member st (baInits buchi) then
                                           (if Set.member st (baFinals buchi) then "final " else "")++
                                           "state "++show st++" {" ] ++
                                         [ "  "++show cond ++ " -> "++show trg
-                                        | (cond,trg) <- Set.toList trans ]++
+                                        | (cond,trg) <- trans ]++
                                         ["}"]
                                       | (st,trans) <- Map.toList (baTransitions buchi)
                                       ]

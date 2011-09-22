@@ -42,6 +42,7 @@ Library
     Misc.ProgramOptions
     Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
+    Data.Fix
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal

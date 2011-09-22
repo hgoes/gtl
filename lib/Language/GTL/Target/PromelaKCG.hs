@@ -76,7 +76,7 @@ neverClaim trace f mdls
                                              Just p -> [p])++[Pr.StmtGoto ("st"++show trg)] ]
                        | st <- Set.toList (baInits allAut),
                          let ts = (baTransitions allAut)!st,
-                         (cond,trg) <- Set.toList ts
+                         (cond,trg) <- ts
                        ]
         sts = [ Pr.StmtLabel ("st"++show st) $ (\x -> if Set.member st (baFinals allAut)
                                                       then Pr.StmtLabel ("accept"++show st) x
@@ -84,7 +84,7 @@ neverClaim trace f mdls
                 Pr.prIf [ [ Pr.prAtomic $ (case cond of
                                               Nothing -> []
                                               Just p -> [p]) ++ [Pr.StmtGoto ("st"++show trg)] ]
-                        | (cond,trg) <- Set.toList ts ]
+                        | (cond,trg) <- ts ]
               | (st,ts) <- Map.toList (baTransitions allAut)]
     in Pr.prNever $ init:sts
 

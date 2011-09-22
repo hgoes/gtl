@@ -270,8 +270,8 @@ generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
 scadeTranslateTypeC :: GTLType -> String
-scadeTranslateTypeC GTLInt = "kcg_int"
-scadeTranslateTypeC GTLBool = "kcg_bool"
+scadeTranslateTypeC (Fix GTLInt) = "kcg_int"
+scadeTranslateTypeC (Fix GTLBool) = "kcg_bool"
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: GTLConstant -> String
@@ -281,19 +281,19 @@ scadeTranslateValueC d = case unfix d of
   _ -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
-scadeTypeToGTL _ _ Sc.TypeInt = Just GTLInt
-scadeTypeToGTL _ _ Sc.TypeBool = Just GTLBool
-scadeTypeToGTL _ _ Sc.TypeReal = Just GTLFloat
-scadeTypeToGTL _ _ Sc.TypeChar = Just GTLByte
+scadeTypeToGTL _ _ Sc.TypeInt = Just gtlInt
+scadeTypeToGTL _ _ Sc.TypeBool = Just gtlBool
+scadeTypeToGTL _ _ Sc.TypeReal = Just gtlFloat
+scadeTypeToGTL _ _ Sc.TypeChar = Just gtlByte
 scadeTypeToGTL g l (Sc.TypePath (Path path)) = do
   tp <- scadeLookupType g l path
   scadeTypeToGTL g Map.empty tp
-scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (GTLEnum enums)
+scadeTypeToGTL g l (Sc.TypeEnum enums) = Just (gtlEnum enums)
 scadeTypeToGTL g l (Sc.TypePower tp expr) = do
   rtp <- scadeTypeToGTL g l tp
   case expr of
     ConstIntExpr 1 -> return rtp
-    ConstIntExpr n -> return (GTLArray n rtp)
+    ConstIntExpr n -> return (gtlArray n rtp)
 scadeTypeToGTL _ _ _ = Nothing
 
 data ScadeTypeInfo = ScadePackage ScadeTypeMapping
@@ -475,7 +475,7 @@ stateToTransition cond trg
     (TargetFork Restart ("st"++show trg))
 
 exprToScade :: TypedExpr String -> Sc.Expr
-exprToScade expr = case getValue expr of
+exprToScade (Fix expr) = case getValue expr of
   Var name lvl _ -> foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl]
   Value val -> valueToScade (getType expr) val
   BinIntExpr op l r -> Sc.BinaryExpr (case op of
@@ -483,11 +483,11 @@ exprToScade expr = case getValue expr of
                                          OpMinus -> BinMinus
                                          OpMult -> BinTimes
                                          OpDiv -> BinDiv
-                                     ) (exprToScade (unfix l)) (exprToScade (unfix r))
+                                     ) (exprToScade l) (exprToScade r)
   BinBoolExpr op l r -> Sc.BinaryExpr (case op of
                                         GTL.And -> Sc.BinAnd
                                         GTL.Or -> Sc.BinOr
-                                      ) (exprToScade (unfix l)) (exprToScade (unfix r))
+                                      ) (exprToScade l) (exprToScade r)
   BinRelExpr rel l r -> BinaryExpr (case rel of
                                       BinLT -> BinLesser
                                       BinLTEq -> BinLessEq
@@ -495,17 +495,17 @@ exprToScade expr = case getValue expr of
                                       BinGTEq -> BinGreaterEq
                                       BinEq -> BinEquals
                                       BinNEq -> BinDifferent
-                                   ) (exprToScade (unfix l)) (exprToScade (unfix r))
-  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade (unfix p))
-  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade $ unfix r) (Sc.ConstIntExpr i)
+                                   ) (exprToScade l) (exprToScade r)
+  UnBoolExpr GTL.Not p -> Sc.UnaryExpr Sc.UnNot (exprToScade p)
+  GTL.IndexExpr r i -> Sc.IndexExpr (exprToScade r) (Sc.ConstIntExpr i)
 
 valueToScade :: GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
 valueToScade _ (GTLIntVal v) = Sc.ConstIntExpr v
 valueToScade _ (GTLBoolVal v) = Sc.ConstBoolExpr v
 valueToScade _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
 valueToScade _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
-valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
-valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScade.unfix) xs)
+valueToScade _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap exprToScade xs)
+valueToScade _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap exprToScade xs)
 
 relsToExpr :: [TypedExpr String] -> Sc.Expr
 relsToExpr [] = Sc.ConstBoolExpr True
