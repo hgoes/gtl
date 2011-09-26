@@ -553,19 +553,26 @@ ltl2ba f = let (f',auts) = extractAutomata f
 
 -- | Construct the product automaton for two B&#xFC;chi automata.
 baProduct :: (Ord a,Ord st,Ord st',AtomContainer a b) => BA a st -> BA a st' -> BA a (st,st',Bool)
-baProduct b1 b2 = BA { baTransitions = trans'
-                     , baInits = Set.fromList inits'
-                     , baFinals = fins'
-                     }
+baProduct b1 b2 
+  | Map.keysSet (baTransitions b1) == baFinals b1 = BA { baTransitions = trans'
+                                                       , baInits = Set.fromList inits'
+                                                       , baFinals = fins'
+                                                       }
+  | otherwise = BA { baTransitions = trans
+                   , baInits = Set.fromList inits'
+                   , baFinals = fins
+                   }
   where
     inits' = [ (i1,i2,False)
              | i1 <- Set.toList (baInits b1),
                i2 <- Set.toList (baInits b2)
              ]
 
-    trans' = traceStates inits' Map.empty
+    trans = traceStates inits' Map.empty
+    trans' = traceStates' inits' Map.empty
 
-    fins' = Set.filter (\(st1,st2,i) -> i && Set.member st2 (baFinals b2)) $ Map.keysSet trans'
+    fins = Set.filter (\(st1,st2,i) -> i && Set.member st2 (baFinals b2)) $ Map.keysSet trans
+    fins' = Set.filter (\(st1,st2,_) -> Set.member st2 (baFinals b2)) $ Map.keysSet trans'
 
     traceStates [] mp = mp
     traceStates (x@(s1,s2,i):xs) mp
@@ -582,7 +589,20 @@ baProduct b1 b2 = BA { baTransitions = trans'
                                  Nothing -> []
                                  Just x -> [x]
                                ]
-                    in traceStates ((fmap snd trgs)++xs) (Map.insert (s1,s2,i) trgs mp)
+                    in traceStates ((fmap snd trgs)++xs) (Map.insert x trgs mp)
+    traceStates' [] mp = mp
+    traceStates' ((s1,s2,_):xs) mp
+      | Map.member (s1,s2,False) mp = traceStates' xs mp
+      | otherwise = let t1 = (baTransitions b1)!s1
+                        t2 = (baTransitions b2)!s2
+                        trgs = [(c,(nst1,nst2,False))
+                               | (c1,nst1) <- t1
+                               , (c2,nst2) <- t2
+                               , c <- case mergeAtoms c1 c2 of
+                                 Nothing -> []
+                                 Just x -> [x]
+                               ]
+                    in traceStates' ((fmap snd trgs)++xs) (Map.insert (s1,s2,False) trgs mp)
 
 extractAutomata :: LTL a -> (Maybe (LTL a),[BA [a] Integer])
 extractAutomata (LTLAutomaton buchi) = (Nothing,[buchi])
