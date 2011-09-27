@@ -504,7 +504,10 @@ stateToTransition locals cond trg =
 -- TODO: is this the correct behaviour and the only case.
 exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 exprToScade locals (Fix expr) = case getValue expr of
-  Var name lvl _ -> (foldl (\e _ -> UnaryExpr UnPre e) (IdExpr $ Path [name]) [1..lvl], Nothing)
+  Var name lvl u -> (foldl (\e _ -> UnaryExpr UnPre e) (case u of
+                                                           StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
+                                                           _ -> IdExpr (Path [name])
+                                                       ) [1..lvl], Nothing)
   Value val -> (valueToScade locals (getType expr) val, Nothing)
   BinIntExpr op l r ->
     let (lExpr, lAssign) = exprToScade locals l
@@ -579,7 +582,7 @@ declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
 declarationsToScade = concat . map declarationsToScade'
   where
     declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
-    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade t) Nothing Nothing]
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade t) Nothing (Just $ ConstIntExpr 0)]
 
     -- Tuples are declared as follows:
     -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
