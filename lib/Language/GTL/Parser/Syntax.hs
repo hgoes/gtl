@@ -10,6 +10,7 @@ data Declaration = Model ModelDecl -- ^ Declares a model.
                  | Connect ConnectDecl -- ^ Declares a connection between two models.
                  | Verify VerifyDecl -- ^ Declares a property that needs to be verified.
                  | Instance InstanceDecl
+                 | TypeAlias String UnResolvedType
                  deriving Show
 
 -- | Declares a synchronous model.
@@ -19,9 +20,9 @@ data ModelDecl = ModelDecl
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
-                 , modelInputs :: Map String GTLType -- ^ Declared inputs of the model with their corresponding type
-                 , modelOutputs :: Map String GTLType -- ^ Declared outputs of a model
-                 , modelLocals :: Map String GTLType
+                 , modelInputs :: Map String UnResolvedType -- ^ Declared inputs of the model with their corresponding type
+                 , modelOutputs :: Map String UnResolvedType -- ^ Declared outputs of a model
+                 , modelLocals :: Map String UnResolvedType
                  , modelCycleTime :: Integer -- ^ Cycle time given in us
                  } deriving Show
 

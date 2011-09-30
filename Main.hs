@@ -29,10 +29,6 @@ import Language.GTL.Target.SMT as SMT
 
 import Misc.ProgramOptions
 
-x2s :: Options -> FilePath -> IO String
-x2s opts fp = case (scadeRoot opts) of
-  Nothing -> return ""
-  Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s.exe") [fp] ""
 
 versionString :: String
 versionString = "This is the GALS Translation Language of version "++version++".\nBuilt on "++date++"."
@@ -81,7 +77,7 @@ main = do
   (createDirectoryIfMissing True $ outputPath opts)
     `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file
-  mgtl <- gtlParseSpec $ GTL.gtl $ GTL.lexGTL gtl_str
+  mgtl <- gtlParseSpec opts $ GTL.gtl $ GTL.lexGTL gtl_str
   rgtl <- case mgtl of
     Left err -> error err
     Right x -> return x

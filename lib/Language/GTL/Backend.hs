@@ -21,7 +21,7 @@ class GTLBackend b where
   -- | The name of the backend. Used to determine which backend to load.
   backendName :: b -> String
   -- | Initialize a backend with a list of parameters
-  initBackend :: b -> [String] -> IO (GTLBackendModel b)
+  initBackend :: b -> Opts.Options -> [String] -> IO (GTLBackendModel b)
   -- | Perform type checking on the synchronized model
   typeCheckInterface :: b -- ^ The backend
                         -> GTLBackendModel b -- ^ The backend data
@@ -33,9 +33,10 @@ class GTLBackend b where
                 -> CInterface
   -- | Perform a backend-specific model checking algorithm.
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
-  backendVerify :: b -> GTLBackendModel b 
+  backendVerify :: b -> GTLBackendModel b
                    -> Integer -- ^ Cycle time
                    -> TypedExpr String -- ^ Contract
+                   -> Map String GTLType -- ^ Local variables of the model
                    -> Opts.Options -- ^ Options
                    -> String -- ^ Name of the GTL file without extension
                    -> IO (Maybe Bool)

@@ -33,7 +33,7 @@ translateGTL traces gtlcode
       Just tr -> readBDDTraces tr
     let claims = [neverClaim (case rtr of
                                  [] -> []
-                                 x:_ -> x) (gtlSpecVerify gtlcode) (gtlSpecModels gtlcode)]
+                                 x:_ -> x) gtlcode]
     return $ show $ prettyPromela $ (generatePromelaCode gtlcode (maximumHistory (gtlSpecVerify gtlcode)))++claims
 
 -- | Convert a GTL name into a C-name.
@@ -59,24 +59,25 @@ inputVars mdl iface = zipWith (\i _ -> "input_"++mdl++show i) [0..] (cIFaceInput
 -- | Convert a trace and a verify expression into a promela never claim.
 --   If you don't want to include a trace, give an empty one `[]'.
 neverClaim :: Trace -- ^ The trace
-              -> TypedExpr (String,String) -- ^ The verify expression
-              -> Map String (GTLModel String) -- ^ All models
+              -> GTLSpec String
               -> Pr.Module
-neverClaim trace f mdls
-  = let cname q v l = let iface = allCInterface $ gtlModelBackend (mdls!q)
+neverClaim trace spec
+  = let cname q v l = let Just inst = Map.lookup q (gtlSpecInstances spec)
+                          Just mdl = Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec)
+                          iface = allCInterface (gtlModelBackend mdl)
                       in varName iface q v l
         traceAut = traceToBuchi trace
         allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname) exprs of
                                    [] -> Nothing
                                    cs -> Just $ Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cs
-                               ) $ renameStates $ baProduct (gtl2ba Nothing (gnot f)) traceAut
+                               ) $ renameStates $ baProduct (gtl2ba Nothing (gnot $ gtlSpecVerify spec)) traceAut
         
         init = Pr.prIf [ [ Pr.prAtomic $ (case cond of
                                              Nothing -> []
                                              Just p -> [p])++[Pr.StmtGoto ("st"++show trg)] ]
                        | st <- Set.toList (baInits allAut),
                          let ts = (baTransitions allAut)!st,
-                         (cond,trg) <- Set.toList ts
+                         (cond,trg) <- ts
                        ]
         sts = [ Pr.StmtLabel ("st"++show st) $ (\x -> if Set.member st (baFinals allAut)
                                                       then Pr.StmtLabel ("accept"++show st) x
@@ -84,7 +85,7 @@ neverClaim trace f mdls
                 Pr.prIf [ [ Pr.prAtomic $ (case cond of
                                               Nothing -> []
                                               Just p -> [p]) ++ [Pr.StmtGoto ("st"++show trg)] ]
-                        | (cond,trg) <- Set.toList ts ]
+                        | (cond,trg) <- ts ]
               | (st,ts) <- Map.toList (baTransitions allAut)]
     in Pr.prNever $ init:sts
 
@@ -127,7 +128,7 @@ generatePromelaCode spec history
                  | ((q,n),lvl) <- Map.toList history
                  , let mdl = (gtlSpecModels spec)!q
                        dtp = case Map.lookup n (gtlModelInput mdl) of
-                         Nothing -> (gtlModelOutput mdl)!n
+                         Nothing -> let Just t = Map.lookup n (gtlModelOutput mdl) in t
                          Just t -> t
                        tp = cIFaceTranslateType (allCInterface $ gtlModelBackend mdl) dtp
                  , clvl <- [1..lvl]

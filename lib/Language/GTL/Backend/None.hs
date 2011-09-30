@@ -11,7 +11,7 @@ data None = None
 instance GTLBackend None where
   data GTLBackendModel None = NoneData
   backendName _ = "none"
-  initBackend _ args = return NoneData
+  initBackend _ _ args = return NoneData
   typeCheckInterface _ _ x = Right x
   cInterface _ _ = CInterface
     { cIFaceIncludes = []
@@ -24,4 +24,4 @@ instance GTLBackend None where
     , cIFaceTranslateType = \_ -> ""
     , cIFaceTranslateValue = \_ -> ""
     }
-  backendVerify _ _ _ _ _ _ = return Nothing
+  backendVerify _ _ _ _ _ _ _ = return Nothing

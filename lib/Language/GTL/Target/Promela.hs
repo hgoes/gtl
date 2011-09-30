@@ -50,7 +50,7 @@ traceToAtoms model trace = fmap transitionToAtoms trace
     transitionToAtoms (mdl,st,t) =
       let stateMachine = tprocAutomaton $ (tmodelProcs model)!mdl
           trans = (baTransitions stateMachine)!st
-          (ats,_) = (Set.toList trans) `genericIndex` t
+          (ats,_) = trans `genericIndex` t
       in tcOriginal ats
 
 translateTarget :: Bool -> TargetModel -> [Pr.Module]
@@ -78,13 +78,13 @@ translateTarget use_ltl tm = var_decls ++ procs ++ init ++ verify
                           , proctypeSteps = fmap Pr.toStep $ 
                                             [ prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time ist n trg cond ]
                                                    | ist <- Set.toList $ baInits buchi,
-                                                     ((cond,trg),n) <- zip (Set.toList $ (baTransitions buchi)!ist) [0..]
+                                                     ((cond,trg),n) <- zip ((baTransitions buchi)!ist) [0..]
                                                    ]
                                             ] ++
-                                            [ Pr.StmtLabel ("st"++show st) $ if Set.null trans
+                                            [ Pr.StmtLabel ("st"++show st) $ if Prelude.null trans
                                                                              then Pr.StmtExpr $ ExprAny $ Pr.ConstExpr $ ConstBool False
                                                                              else prIf [ [ translateTransition allP (Set.toList clocks) pname cycle_time st n trg cond ]
-                                                                                       | ((cond,trg),n) <- zip (Set.toList trans) [0..]
+                                                                                       | ((cond,trg),n) <- zip trans [0..]
                                                                                        ]
                                             | (st,trans) <- Map.toList (baTransitions buchi)
                                             ]
@@ -143,18 +143,18 @@ translateTransition (y:ys) clks pname cy st n trg cond
       cond0 = BinExpr Pr.BinEquals (RefExpr (VarRef ("_count_"++pname) Nothing Nothing)) (ConstExpr (ConstInt 0))
 
 translateVerify :: TypedExpr TargetVar -> LTLExpr
-translateVerify e = case getValue e of
+translateVerify e = case getValue $ unfix e of
   BinBoolExpr op lhs rhs -> LTLBin (case op of
                                        And -> LTLAnd
                                        Or -> LTLOr
                                        Implies -> LTLImplication
                                        Until NoTime -> LTLUntil
-                                       UntilOp NoTime -> LTLUntilOp) (translateVerify (unfix lhs)) (translateVerify (unfix rhs))
+                                       UntilOp NoTime -> LTLUntilOp) (translateVerify lhs) (translateVerify rhs)
   UnBoolExpr op ne -> LTLUn (case op of
                                 Not -> LTLNot
                                 Always -> LTLAlways
                                 Next NoTime -> LTLNext
-                                Finally NoTime -> LTLEventually) (translateVerify (unfix ne))
+                                Finally NoTime -> LTLEventually) (translateVerify ne)
   _ -> let (Just re,[]) = translateTExpr e
        in LTLNormalExpr re
 
@@ -162,7 +162,7 @@ translateVerifyAutomaton :: BA [TypedExpr TargetVar] Integer -> Pr.Module
 translateVerifyAutomaton buchi = prNever $
                               [prIf [ buildTrans mcond resets trg
                                     | ist <- Set.toList $ baInits buchi,
-                                      (cond,trg) <- Set.toList $ (baTransitions buchi)!ist,
+                                      (cond,trg) <- (baTransitions buchi)!ist,
                                       let (mcond,resets) = translateTExprs cond
                                     ] 
                               ] ++
@@ -171,7 +171,7 @@ translateVerifyAutomaton buchi = prNever $
                                  else id) $ 
                                 Pr.StmtLabel ("st"++show st) $
                                 prIf [ buildTrans mcond resets trg
-                                     | (cond,trg) <- Set.toList trans,
+                                     | (cond,trg) <- trans,
                                        let (mcond,resets) = translateTExprs cond
                                      ]
                               | (st,trans) <- Map.toList $ baTransitions buchi ]
@@ -196,55 +196,55 @@ translateConstant :: GTLType -> GTLValue r -> Pr.AnyExpression
 translateConstant _ (GTLIntVal x) = Pr.ConstExpr $ Pr.ConstInt x
 translateConstant _ (GTLByteVal x) = Pr.ConstExpr $ Pr.ConstInt (fromIntegral x)
 translateConstant _ (GTLBoolVal x) = Pr.ConstExpr $ Pr.ConstBool x
-translateConstant (GTLEnum xs) (GTLEnumVal x)
+translateConstant (Fix (GTLEnum xs)) (GTLEnumVal x)
   = let Just i = elemIndex x xs
     in Pr.ConstExpr $ Pr.ConstInt $ fromIntegral i
 
 translateTExpr :: TypedExpr TargetVar -> (Maybe Pr.AnyExpression,[(Integer,Integer)])
-translateTExpr e = case getValue e of
+translateTExpr e = case getValue $ unfix e of
   Var (mdl,var,i) lvl _ -> (Just $ Pr.RefExpr (varName mdl var i lvl),[])
-  Value val -> (Just $ translateConstant (getType e) val,[])
-  BinBoolExpr op (Fix lhs) (Fix rhs) -> let (l,cl) = translateTExpr lhs
-                                            (r,cr) = translateTExpr rhs
-                                        in (case op of
-                                               And -> case l of
-                                                 Nothing -> case r of
-                                                   Nothing -> Nothing
-                                                   Just rr -> Just rr
-                                                 Just rl -> case r of
-                                                   Nothing -> Just rl
-                                                   Just rr -> Just $ Pr.BinExpr Pr.BinAnd rl rr
-                                               Or -> case l of
-                                                 Nothing -> Nothing
-                                                 Just rl -> case r of
-                                                   Nothing -> Nothing
-                                                   Just rr -> Just $ Pr.BinExpr Pr.BinOr rl rr
-                                               Implies -> case l of
-                                                 Nothing -> r
-                                                 Just rl -> case r of
-                                                   Nothing -> Nothing
-                                                   Just rr -> Just $ Pr.BinExpr Pr.BinOr (Pr.UnExpr Pr.UnLNot rl) rr,cl++cr)
-  BinRelExpr op (Fix lhs) (Fix rhs) -> let (Just l,[]) = translateTExpr lhs
-                                           (Just r,[]) = translateTExpr rhs
-                                       in (Just $ Pr.BinExpr (case op of
-                                                                 GTL.BinLT -> Pr.BinLT
-                                                                 GTL.BinLTEq -> Pr.BinLTE
-                                                                 GTL.BinGT -> Pr.BinGT
-                                                                 GTL.BinGTEq -> Pr.BinGTE
-                                                                 GTL.BinEq -> Pr.BinEquals
-                                                                 GTL.BinNEq -> Pr.BinNotEquals) l r,[])
-  BinIntExpr op (Fix lhs) (Fix rhs) -> let (Just l,[]) = translateTExpr lhs
-                                           (Just r,[]) = translateTExpr rhs
-                                       in (Just $ Pr.BinExpr (case op of
-                                                                 OpPlus -> Pr.BinPlus
-                                                                 OpMinus -> Pr.BinMinus
-                                                                 OpMult -> Pr.BinMult
-                                                                 OpDiv -> Pr.BinDiv) l r,[])
-  UnBoolExpr op (Fix ne) -> let (e,c) = translateTExpr ne
-                            in case e of
-                              Nothing -> (Nothing,c)
-                              Just re -> (Just $ Pr.UnExpr (case op of
-                                                               Not -> Pr.UnLNot) re,c)
+  Value val -> (Just $ translateConstant (getType $ unfix e) val,[])
+  BinBoolExpr op lhs rhs -> let (l,cl) = translateTExpr lhs
+                                (r,cr) = translateTExpr rhs
+                            in (case op of
+                                   And -> case l of
+                                     Nothing -> case r of
+                                       Nothing -> Nothing
+                                       Just rr -> Just rr
+                                     Just rl -> case r of
+                                       Nothing -> Just rl
+                                       Just rr -> Just $ Pr.BinExpr Pr.BinAnd rl rr
+                                   Or -> case l of
+                                     Nothing -> Nothing
+                                     Just rl -> case r of
+                                       Nothing -> Nothing
+                                       Just rr -> Just $ Pr.BinExpr Pr.BinOr rl rr
+                                   Implies -> case l of
+                                     Nothing -> r
+                                     Just rl -> case r of
+                                       Nothing -> Nothing
+                                       Just rr -> Just $ Pr.BinExpr Pr.BinOr (Pr.UnExpr Pr.UnLNot rl) rr,cl++cr)
+  BinRelExpr op lhs rhs -> let (Just l,[]) = translateTExpr lhs
+                               (Just r,[]) = translateTExpr rhs
+                           in (Just $ Pr.BinExpr (case op of
+                                                     GTL.BinLT -> Pr.BinLT
+                                                     GTL.BinLTEq -> Pr.BinLTE
+                                                     GTL.BinGT -> Pr.BinGT
+                                                     GTL.BinGTEq -> Pr.BinGTE
+                                                     GTL.BinEq -> Pr.BinEquals
+                                                     GTL.BinNEq -> Pr.BinNotEquals) l r,[])
+  BinIntExpr op lhs rhs -> let (Just l,[]) = translateTExpr lhs
+                               (Just r,[]) = translateTExpr rhs
+                           in (Just $ Pr.BinExpr (case op of
+                                                     OpPlus -> Pr.BinPlus
+                                                     OpMinus -> Pr.BinMinus
+                                                     OpMult -> Pr.BinMult
+                                                     OpDiv -> Pr.BinDiv) l r,[])
+  UnBoolExpr op ne -> let (e,c) = translateTExpr ne
+                      in case e of
+                        Nothing -> (Nothing,c)
+                        Just re -> (Just $ Pr.UnExpr (case op of
+                                                         Not -> Pr.UnLNot) re,c)
   ClockReset clk val -> (Nothing,[(clk,val)])
   ClockRef clk -> (Just $ Pr.BinExpr Pr.BinGTE (Pr.RefExpr $ Pr.VarRef ("timer"++show clk) Nothing Nothing) (Pr.ConstExpr (Pr.ConstInt 0)),[])
   
@@ -339,10 +339,10 @@ translateTRestr tvars restr
 buildTGenerator :: GTLType -> [(Bool,Pr.AnyExpression)] -> [(Bool,Pr.AnyExpression)] -> (Pr.AnyExpression -> Maybe Pr.AnyExpression) -> [(TargetVar,Integer)] -> [Pr.Statement]
 buildTGenerator tp upper lower check to
   = let rupper e = case upper of
-          [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (case tp of
-                                                                      GTLEnum xs -> (genericLength xs)-1
-                                                                      GTLInt -> fromIntegral (maxBound::Int32)
-                                                                      GTLBool -> 1
+          [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (case baseType tp of
+                                                                      Fix (GTLEnum xs) -> (genericLength xs)-1
+                                                                      Fix GTLInt -> fromIntegral (maxBound::Int32)
+                                                                      Fix GTLBool -> 1
                                                                   ))
           _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $
                fmap (\(inc,expr) -> Pr.BinExpr Pr.BinLT e (if inc
@@ -356,10 +356,10 @@ buildTGenerator tp upper lower check to
       [] -> []
       ((inst,var,idx),lvl):fs
         -> let trg = Pr.RefExpr (varName inst var idx 0)
-           in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case tp of
-                                                                 GTLEnum _ -> 0
-                                                                 GTLInt -> fromIntegral (minBound::Int32)
-                                                                 GTLBool -> 0
+           in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case baseType tp of
+                                                                 Fix (GTLEnum _) -> 0
+                                                                 Fix GTLInt -> fromIntegral (minBound::Int32)
+                                                                 Fix GTLBool -> 0
                                                              )
                                  )
                (\x -> case assign inst var idx lvl x of
@@ -381,9 +381,10 @@ translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = translateTarget False (buildTargetModel spec)
 
 convertType :: GTLType -> Pr.Typename
-convertType GTLInt = Pr.TypeInt
-convertType GTLBool = Pr.TypeBool
-convertType (GTLEnum _) = Pr.TypeInt
+convertType (Fix GTLInt) = Pr.TypeInt
+convertType (Fix GTLBool) = Pr.TypeBool
+convertType (Fix (GTLEnum _)) = Pr.TypeInt
+convertType (Fix (GTLNamed _ tp)) = convertType tp
 convertType tp = error $ "Promela target can't use type "++show tp++" yet."
 
 varName :: String -> String -> [Integer] -> Integer -> Pr.VarRef

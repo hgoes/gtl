@@ -6,6 +6,7 @@ module Language.GTL.Parser (gtl) where
 import Language.GTL.Parser.Token
 import Language.GTL.Parser.Syntax
 import Language.GTL.Types
+import Data.Fix
 
 import qualified Data.Map as Map
 }
@@ -46,6 +47,7 @@ import qualified Data.Map as Map
   "state"           { Key KeyState }
   "transition"      { Key KeyTransition }
   "true"            { Key KeyTrue }
+  "type"            { Key KeyType }
   "until"           { Key KeyUntil }
   "verify"          { Key KeyVerify }
   "("               { Bracket Parentheses False }
@@ -103,6 +105,7 @@ declaration : model_decl    { Model $1 }
             | connect_decl  { Connect $1 }
             | verify_decl   { Verify $1 }
             | instance_decl { Instance $1 }
+            | alias_decl    { $1 }
 
 model_decl : "model" "[" id "]" id model_args model_contract { $7 (ModelDecl
                                                                { modelName = $5
@@ -123,6 +126,8 @@ instance_decl : "instance" id id instance_contract { $4 (InstanceDecl
                                                          , instanceContract = []
                                                          , instanceInits =  []
                                                          }) }
+
+alias_decl : "type" id "=" type ";" { TypeAlias $2 $4 }
 
 model_args : "(" model_args1 ")" { $2 }
            |                     { [] }
@@ -261,13 +266,14 @@ state_content : "transition" id ";"              { Right ($2,Nothing) }
               | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
               | expr ";"                         { Left $1 }
 
-type : "int"                    { GTLInt }
-     | "bool"                   { GTLBool }
-     | "byte"                   { GTLByte }
-     | "float"                  { GTLFloat }
-     | "enum" "{" enum_list "}" { GTLEnum $3 }
-     | "(" type_list ")"        { GTLTuple $2 }
-     | type "^" int             { GTLArray $3 $1 }
+type : "int"                    { Fix $ UnResolvedType' $ Right GTLInt }
+     | "bool"                   { Fix $ UnResolvedType' $ Right GTLBool }
+     | "byte"                   { Fix $ UnResolvedType' $ Right GTLByte }
+     | "float"                  { Fix $ UnResolvedType' $ Right GTLFloat }
+     | "enum" "{" enum_list "}" { Fix $ UnResolvedType' $ Right $ GTLEnum $3 }
+     | "(" type_list ")"        { Fix $ UnResolvedType' $ Right $ GTLTuple $2 }
+     | type "^" int             { Fix $ UnResolvedType' $ Right $ GTLArray $3 $1 }
+     | id                       { Fix $ UnResolvedType' $ Left $1 }
 
 enum_list : id enum_lists { $1:$2 }
           |               { [] }

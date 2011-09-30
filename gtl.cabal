@@ -31,6 +31,7 @@ Library
     Language.GTL.Buchi
     Language.GTL.Types
     Language.GTL.Restriction
+    Language.GTL.DFA
     --Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
@@ -43,6 +44,7 @@ Library
     Misc.ProgramOptions
     Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
+    Data.Fix
 
 Executable gtl
   Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal
