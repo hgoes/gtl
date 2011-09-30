@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes,DeriveDataTypeable #-}
+{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification #-}
 module Language.GTL.Target.SMT where
 
 import Data.Typeable
@@ -10,301 +10,523 @@ import Language.GTL.Translation
 import Language.SMTLib2
 import Language.SMTLib2.Solver
 import Language.SMTLib2.Internals as SMT
-import Data.Text as T
+import Data.Text as T hiding (intersperse,length,concat,unlines,zip)
 import Data.Map as Map
 import Data.Set as Set
 import Data.AttoLisp as L
 import Data.Maybe (catMaybes)
 import Data.Array (Array)
 import Control.Monad.Trans
+import Data.Traversable
+import Prelude hiding (mapM,sequence)
+import Data.List (genericIndex,intersperse)
+
+data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
+
+castUSMT :: Typeable a => USMTExpr -> Maybe (SMTExpr a)
+castUSMT (USMTExpr x) = gcast x
+
+castUSMT' :: Typeable a => USMTExpr -> SMTExpr a
+castUSMT' e = case castUSMT e of
+  Nothing -> error "Internal type-error in SMT target"
+  Just e' -> e'
+
+useUSMT :: (forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => SMTExpr a -> b) -> USMTExpr -> b
+useUSMT f (USMTExpr x) = f x
+
+data GlobalState = GlobalState
+                   { instanceStates :: Map String InstanceState
+                   }
+
+data InstanceState = InstanceState
+                     { instanceVars :: Map String (UnrolledVar,GTLType)
+                     , instancePC :: SMTExpr Integer
+                     }
+
+data UnrolledVar = BasicVar USMTExpr
+                 | IndexedVar [UnrolledVar]
+
+data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
+                                   , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
+                                   , auxGEnc :: Map (TypedExpr v) (SMTExpr Bool)
+                                   }
+
+newUnrolledVar :: Map [String] Integer -> GTLType -> String -> SMT UnrolledVar
+newUnrolledVar enums (Fix tp) base = case tp of
+  GTLArray sz tp -> do
+    arr <- mapM (\i -> newUnrolledVar enums tp (base++"_"++show i)) [0..(sz-1)]
+    return $ IndexedVar arr
+  GTLTuple tps -> do
+    arr <- mapM (\(tp,i) -> newUnrolledVar enums tp (base++"_"++show i)) (zip tps [0..])
+    return $ IndexedVar arr
+  _ -> getUndefined enums (Fix tp) $ \u -> do
+    v <- SMT.varNamed $ T.pack base
+    return $ BasicVar $ USMTExpr $ assertEq u v
+
+existsUnrolledVar :: Map [String] Integer -> GTLType -> (UnrolledVar -> SMTExpr Bool) -> SMTExpr Bool
+existsUnrolledVar enums (Fix tp) f = case tp of
+  GTLArray sz tp -> genExists sz []
+    where
+      genExists 0 ys = f (IndexedVar $ Prelude.reverse ys)
+      genExists n ys = existsUnrolledVar enums tp (\v -> genExists (n-1) (v:ys))
+  GTLTuple tps -> genExists tps []
+    where
+      genExists [] ys = f (IndexedVar $ Prelude.reverse ys)
+      genExists (tp:tps) ys = existsUnrolledVar enums tp (\v -> genExists tps (v:ys))
+  _ -> getUndefined enums (Fix tp) $ \u ->
+    exists $ \v -> f (BasicVar $ USMTExpr $ assertEq u v)
+
+eqUnrolled :: UnrolledVar -> UnrolledVar -> SMTExpr Bool
+eqUnrolled (BasicVar x) (BasicVar y) = useUSMT (\ex -> ex .==. (castUSMT' y)) x
+eqUnrolled (IndexedVar x) (IndexedVar y) = and' (Prelude.zipWith eqUnrolled x y)
+
+debugState :: GlobalState -> String
+debugState st = Prelude.unlines [ Prelude.unlines (iname:[ "|-"++vname++": "++debugVar var  | (vname,(var,tp)) <- Map.toList (instanceVars inst) ])
+                                | (iname,inst) <- Map.toList (instanceStates st) ]
+
+debugVar :: UnrolledVar -> String
+debugVar (BasicVar v) = useUSMT (\v' -> show v') v
+debugVar (IndexedVar vs) = "[" ++ Prelude.concat (intersperse "," $ fmap debugVar vs) ++ "]"
+
+debugTemporalVars :: TemporalVars (String,String) -> String
+debugTemporalVars tmp
+  = Prelude.unlines $ [ "["++show expr++"] = "++show var | (expr,var) <- Map.toList (formulaEnc tmp) ]
+    ++ [ "<F "++show expr++"> = "++show var | (expr,var) <- Map.toList (auxFEnc tmp) ]
+    ++ [ "<G "++show expr++"> = "++show var | (expr,var) <- Map.toList (auxGEnc tmp) ]
+
+newState :: Map [String] Integer -> GTLSpec String -> String -> SMT GlobalState
+newState enums spec n = do
+  mp <- mapM (\(iname,inst) -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                               in do
+                                 is <- newInstanceState enums iname mdl n
+                                 return (iname,is)
+             ) (Map.toAscList $ gtlSpecInstances spec)
+  return $ GlobalState { instanceStates = Map.fromAscList mp }
+
+newInstanceState :: Map [String] Integer -> String -> GTLModel String -> String -> SMT InstanceState
+newInstanceState enums iname mdl n = do
+  mp <- mapM (\(name,tp) -> do
+                 var <- newUnrolledVar enums tp ("v"++n++"_"++iname++"_"++name)
+                 return (name,(var,tp))) $
+        Map.toAscList $ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]
+  pc <- SMT.varNamed $ T.pack $ "pc"++n++"_"++iname
+  return $ InstanceState (Map.fromAscList mp) pc
+
+eqInst :: InstanceState -> InstanceState -> SMTExpr Bool
+eqInst st1 st2 = and' ((instancePC st1 .==. instancePC st2):
+                       (Map.elems $ Map.intersectionWith (\(v1,_) (v2,_) -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
+
+eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
+eqSt st1 st2 = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates st1) (instanceStates st2)
+
+existsState :: Map [String] Integer -> GTLSpec String -> (GlobalState -> SMTExpr Bool) -> SMTExpr Bool
+existsState enums spec f = genExists (Map.toDescList $ gtlSpecInstances spec) []
+  where
+    genExists [] ys = f (GlobalState { instanceStates = Map.fromAscList ys })
+    genExists ((i,inst):xs) ys = existsInstanceState enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) $ \is -> genExists xs ((i,is):ys)
+
+existsInstanceState :: Map [String] Integer -> GTLModel String -> (InstanceState -> SMTExpr Bool) -> SMTExpr Bool
+existsInstanceState enums mdl f = genExists (Map.toDescList $ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]) []
+  where
+    genExists [] ys = exists $ \pc -> f (InstanceState (Map.fromAscList ys) pc)
+    genExists ((vn,vt):xs) ys = existsUnrolledVar enums vt $ \v -> genExists xs ((vn,(v,vt)):ys)
+
+indexUnrolled :: UnrolledVar -> [Integer] -> UnrolledVar
+indexUnrolled v [] = v
+indexUnrolled (IndexedVar vs) (i:is) = indexUnrolled (vs `genericIndex` i) is
+
+getVar :: String -> String -> [Integer] -> GlobalState -> UnrolledVar
+getVar inst name idx st = indexUnrolled (fst $ (instanceVars $ (instanceStates st)!inst)!name) idx
+
+connections :: [(GTLConnectionPoint String,GTLConnectionPoint String)] -> GlobalState -> GlobalState -> SMTExpr Bool
+connections conns stf stt
+  = and' [ eqUnrolled (getVar f fv fi stf) (getVar t tv ti stt)
+         | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- conns
+         ]
+
+step :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> GlobalState -> SMTExpr Bool
+step bas stf stt 
+  = and' [ stepInstance ba ((instanceStates stf)!name) ((instanceStates stt)!name)
+         | (name,ba) <- Map.toList bas ]
+
+stepInstance :: BA [TypedExpr String] Integer -> InstanceState -> InstanceState -> SMTExpr Bool
+stepInstance ba stf stt
+  = and' [ (instancePC stf .==. SMT.constant st) .=>. 
+           or' [ and' ((instancePC stt .==. SMT.constant trg):
+                       [let BasicVar v = translateExpr (\v u i -> case u of
+                                                           Input -> fst $ (instanceVars stf)!v
+                                                           StateIn -> fst $ (instanceVars stf)!v
+                                                           Output -> fst $ (instanceVars stt)!v
+                                                           StateOut -> fst $ (instanceVars stt)!v) c
+                        in castUSMT' v
+                       | c <- cond ])
+               | (cond,trg) <- trans
+               ]
+         | (st,trans) <- Map.toList (baTransitions ba) ]
+
+translateExpr :: (v -> VarUsage -> Integer -> UnrolledVar) ->  TypedExpr v -> UnrolledVar
+translateExpr f (Fix expr)
+  = case GTL.getValue expr of
+    GTL.Var n i u -> f n u i
+    GTL.Value val -> case val of
+      GTLIntVal i -> BasicVar $ USMTExpr $ SMT.constant i
+      GTLByteVal w -> BasicVar $ USMTExpr $ SMT.constant w
+      GTLBoolVal b -> BasicVar $ USMTExpr $ SMT.constant b
+      GTLEnumVal v -> BasicVar $ USMTExpr $ SMT.constant (EnumVal undefined undefined v)
+    GTL.BinRelExpr rel l r
+      | isNumeric (getType $ unfix l) -> getUndefinedNumeric (getType $ unfix l)
+                                         $ \u -> BasicVar $ USMTExpr $ (case rel of
+                                                                           BinLT -> Lt
+                                                                           BinLTEq -> Le
+                                                                           BinGT -> Gt
+                                                                           BinGTEq -> Ge
+                                                                           BinEq -> Eq
+                                                                           BinNEq -> \x y -> SMT.Not (Eq x y))
+                                                 (let BasicVar lll = ll in assertEq u $ castUSMT' lll)
+                                                 (let BasicVar rrr = rr in assertEq u $ castUSMT' rrr)
+      | otherwise -> case rel of
+        BinEq -> BasicVar $ USMTExpr $ eqUnrolled ll rr
+        BinNEq -> BasicVar $ USMTExpr $ not' $ eqUnrolled ll rr
+      where
+        ll = translateExpr f l
+        rr = translateExpr f r
+    GTL.BinIntExpr op l r
+      | getType (unfix l) == gtlInt -> BasicVar $ USMTExpr $ (case op of
+                                                                 OpPlus -> \x y -> Plus [x,y]
+                                                                 OpMinus -> Minus
+                                                                 OpMult -> \x y -> Mult [x,y]
+                                                                 OpDiv -> Div)
+                                       (let BasicVar lll = ll in castUSMT' lll)
+                                       (let BasicVar rrr = rr in castUSMT' rrr)
+      where
+        ll = translateExpr f l
+        rr = translateExpr f r
+    GTL.IndexExpr expr' idx -> let IndexedVar vars = translateExpr f expr'
+                               in genericIndex vars idx
+    GTL.UnBoolExpr GTL.Not arg -> let BasicVar ll = translateExpr f arg
+                                  in BasicVar $ USMTExpr $ not' $ castUSMT' ll
+
+initInstance :: Map [String] Integer -> GTLModel String -> BA [TypedExpr String] Integer -> InstanceState -> SMTExpr Bool
+initInstance enums mdl ba inst
+  = and' $ (or' [ (instancePC inst) .==. SMT.constant f
+                | f <- Set.toList (baInits ba) ]):
+    [ eqUnrolled
+      (fst $ (instanceVars inst)!var)
+      (translateExpr (\v _ _ -> fst $ (instanceVars inst)!v) (constantToExpr (Map.keysSet enums) def))
+    | (var,Just def) <- Map.toList $ gtlModelDefaults mdl ]
+
+initState :: Map [String] Integer -> GTLSpec String -> Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
+initState enums spec bas st
+  = and' [ initInstance enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) (bas!name) ((instanceStates st)!name)
+         | (name,inst) <- Map.toList (gtlSpecInstances spec)
+         ]
+
+typedExprVarName :: TypedExpr (String,String) -> String
+typedExprVarName expr = case GTL.getValue (unfix expr) of
+  GTL.Var (iname,name) h u -> iname++"_"++name
+  GTL.BinRelExpr rel lhs rhs -> (case rel of
+                                    BinLT -> "LT"
+                                    BinLTEq -> "LTE"
+                                    BinGT -> "GT"
+                                    BinGTEq -> "GTE"
+                                    BinEq -> "EQ"
+                                    BinNEq -> "NEQ") ++ "_"++typedExprVarName lhs++"_"++typedExprVarName rhs
+  GTL.Value (GTLIntVal v) -> show v
+  GTL.Value (GTLBoolVal b) -> if b then "T" else "F"
+  GTL.UnBoolExpr op e' -> (case op of
+                              GTL.Not -> "NOT"
+                              Always -> "G"
+                              Next _ -> "NEXT"
+                              Finally _ -> "F")++"_"++typedExprVarName e'
+  GTL.BinBoolExpr op lhs rhs -> (case op of
+                                    GTL.And -> "AND"
+                                    GTL.Or -> "OR"
+                                    GTL.Implies -> "IMPL"
+                                    GTL.Until _ -> "U"
+                                    GTL.UntilOp _ -> "R")++"_"++typedExprVarName lhs++"_"++typedExprVarName rhs
+                                    
+
+newTemporalVars :: String -> TypedExpr (String,String) -> SMT (TemporalVars (String,String))
+newTemporalVars n expr = newTemporalVars' n expr (TemporalVars Map.empty Map.empty Map.empty)
+
+newTemporalVars' :: String -> TypedExpr (String,String) -> TemporalVars (String,String) -> SMT (TemporalVars (String,String))
+newTemporalVars' n expr p
+  | Map.member expr (formulaEnc p) = return p
+  | otherwise = case GTL.getValue (unfix expr) of
+    GTL.Var name h u -> do
+      v <- mkvar
+      return $ p { formulaEnc = Map.insert expr v (formulaEnc p) }
+    GTL.BinRelExpr _ _ _ -> do
+      v <- mkvar
+      return $ p { formulaEnc = Map.insert expr v (formulaEnc p) }
+    GTL.BinBoolExpr op lhs rhs -> do
+      p1 <- newTemporalVars' n lhs p
+      p2 <- newTemporalVars' n rhs p1
+      v <- mkvar
+      let p3 = p { formulaEnc = Map.insert expr v (formulaEnc p2) }
+      case op of
+        GTL.Until NoTime
+          | Map.member rhs (auxFEnc p3) -> return p3
+          | otherwise -> do
+            v2 <- SMT.varNamed $ T.pack $ "faux"++n++"_"++typedExprVarName rhs
+            return $ p3 { auxFEnc = Map.insert rhs v2 (auxFEnc p3) }
+        GTL.UntilOp NoTime
+          | Map.member rhs (auxGEnc p3) -> return p3
+          | otherwise -> do
+            v2 <- SMT.varNamed $ T.pack $ "gaux"++n++"_"++typedExprVarName rhs
+            return $ p3 { auxGEnc = Map.insert rhs v2 (auxGEnc p3) }
+        _ -> return p3
+    GTL.UnBoolExpr op arg -> do
+      p1 <- newTemporalVars' n arg p
+      case op of
+        GTL.Not -> return $ p1 { formulaEnc = Map.insert expr (not' ((formulaEnc p1)!arg)) (formulaEnc p1) }
+        GTL.Always -> do
+          v1 <- SMT.var
+          aux' <- if Map.member arg (auxGEnc p1)
+                  then return (auxGEnc p1)
+                  else (do
+                           v2 <- SMT.varNamed $ T.pack $ "gaux"++n++"_"++typedExprVarName arg
+                           return $ Map.insert arg v2 (auxGEnc p1))
+          return $ p1 { formulaEnc = Map.insert expr v1 (formulaEnc p1)
+                      , auxGEnc = aux' }
+        GTL.Finally NoTime -> do
+          v1 <- mkvar
+          aux' <- if Map.member arg (auxFEnc p1)
+                  then return (auxFEnc p1)
+                  else (do
+                           v2 <- SMT.varNamed $ T.pack $ "faux"++n++"_"++typedExprVarName arg
+                           return $ Map.insert arg v2 (auxFEnc p1))
+          return $ p1 { formulaEnc = Map.insert expr v1 (formulaEnc p1)
+                      , auxFEnc = aux' }
+    _ -> return p
+    where
+      mkvar = SMT.varNamed $ T.pack $ "fe"++n++"_"++typedExprVarName expr
+
+dependencies :: Ord v => (v -> VarUsage -> Integer -> UnrolledVar) -> TypedExpr v -> TemporalVars v -> TemporalVars v -> SMT (SMTExpr Bool)
+dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
+  GTL.Var v h u -> do
+    let BasicVar var = f v u h
+    assert $ self .==. castUSMT' var
+    return self
+  GTL.UnBoolExpr GTL.Not (Fix (Typed _ (GTL.Var v h u))) -> do
+    let BasicVar var = f v u h
+    assert $ self .==. not' (castUSMT' var)
+    return self
+  GTL.Value (GTLBoolVal x) -> return $ SMT.constant x
+  GTL.BinBoolExpr op lhs rhs -> do
+    l <- dependencies f lhs cur nxt
+    r <- dependencies f rhs cur nxt
+    case op of
+      GTL.And -> assert $ self .==. and' [l,r]
+      GTL.Or -> assert $ self .==. or' [l,r]
+      GTL.Until NoTime -> assert $ self .==. or' [r,and' [l,nself]]
+      GTL.UntilOp NoTime -> assert $ self .==. and' [r,or' [l,nself]]
+    return self
+  GTL.UnBoolExpr op e -> do
+    e' <- dependencies f e cur nxt
+    case op of
+      GTL.Always -> assert $ self .==. and' [e',nself]
+      GTL.Finally NoTime -> assert $ self .==. or' [e',nself]
+      _ -> return ()
+    return self
+  GTL.BinRelExpr _ _ _ -> do
+    let BasicVar v = translateExpr f expr
+    assert $ self .==. castUSMT' v
+    return self
+  _ -> return self
+  where
+    self = (formulaEnc cur)!expr
+    nself = (formulaEnc nxt)!expr
+
+
+bmc :: GTLSpec String -> SMT (Maybe [Map (String,String) GTLConstant])
+bmc spec = do
+  let enums = enumMap spec
+      bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                               formula = case gtlInstanceContract inst of
+                                 Nothing -> gtlModelContract mdl
+                                 Just con -> gand con (gtlModelContract mdl)
+                           in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
+      formula = GTL.distributeNot (gtlSpecVerify spec)
+  if Map.null enums
+    then return ()
+    else declareEnums enums
+  tmp_cur <- newTemporalVars "0" formula
+  tmp_e <- newTemporalVars "e" formula
+  tmp_l <- newTemporalVars "l" formula
+  loop_exists <- SMT.varNamed $ T.pack $ "loop_exists"
+  se <- newState enums spec "e"
+  bmc' enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se []
+
+data BMCState = BMCState { bmcVars :: GlobalState
+                         , bmcTemporals :: TemporalVars (String,String)
+                         , bmcL :: SMTExpr Bool
+                         , bmcInLoop :: SMTExpr Bool
+                         }
+
+getGTLValue :: GTLType -> UnrolledVar -> SMT GTLConstant
+getGTLValue _ (BasicVar v) = useUSMT (\rv -> do
+                                         r <- SMT.getValue rv
+                                         return $ Fix $ toGTL r) v
+
+getVarValues :: GlobalState -> SMT (Map (String,String) GTLConstant)
+getVarValues st = do
+  lst <- mapM (\(iname,inst) -> mapM (\(vname,(var,tp)) -> do
+                                         c <- getGTLValue tp var
+                                         return ((iname,vname),c)) (Map.toList $ instanceVars inst)) (Map.toList $ instanceStates st)
+  return $ Map.fromList (Prelude.concat lst)
+
+getPath :: [BMCState] -> SMT [Map (String,String) GTLConstant]
+getPath = mapM (getVarValues.bmcVars) . Prelude.reverse
+
+bmc' :: Map [String] Integer -> GTLSpec String
+        -> TypedExpr (String,String)
+        -> Map String (BA [TypedExpr String] Integer)
+        -> TemporalVars (String,String)
+        -> TemporalVars (String,String)
+        -> TemporalVars (String,String)
+        -> SMTExpr Bool 
+        -> GlobalState
+        -> [BMCState] -> SMT (Maybe [Map (String,String) GTLConstant])
+bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
+  init <- newState enums spec "0"
+  l <- SMT.varNamed $ T.pack "l0"
+  inloop <- SMT.varNamed $ T.pack "inloop0"
+  assert $ initState enums spec bas init
+  assert $ connections (gtlSpecConnections spec) init init
+  assert $ not' l
+  assert $ not' inloop
+  tmp_nxt <- newTemporalVars "1" f
+  genc <- dependencies (\(iname,var) u h -> getVar iname var [] init) f tmp_cur tmp_nxt
+  assert genc
+  mapM_ (\(expr,var) -> do
+            assert $ (not' loop_exists) .=>. (not' $ (formulaEnc tmp_l)!expr)
+            -- Base case for IncPLTL:
+            case GTL.getValue (unfix expr) of
+              GTL.UnBoolExpr (Finally NoTime) e -> do
+                let f_e = (auxFEnc tmp_e)!e
+                assert $ loop_exists .=>. (var .=>. f_e)
+                assert $ not' $ (auxFEnc tmp_cur)!e
+              GTL.UnBoolExpr Always e -> do
+                let g_e = (auxGEnc tmp_e)!e
+                assert $ loop_exists .=>. (g_e .=>. var)
+                assert $ not' $ (auxGEnc tmp_cur)!e
+              GTL.BinBoolExpr (Until NoTime) lhs rhs -> do
+                let f_e = (auxFEnc tmp_e)!rhs
+                assert $ loop_exists .=>. (var .=>. f_e)
+                assert $ not' $ (auxFEnc tmp_cur)!rhs
+              GTL.BinBoolExpr (UntilOp NoTime) lhs rhs -> do
+                let g_e = (auxGEnc tmp_e)!rhs
+                assert $ loop_exists .=>. (g_e .=>. var)
+                assert $ not' $ (auxGEnc tmp_cur)!rhs
+              _ -> return ()
+        ) (Map.toList $ formulaEnc tmp_e)
+  let hist = [BMCState init tmp_cur l inloop]
+  res <- stack $ do
+    -- k-variant case for LoopConstraints
+    assert $ eqSt se init
+    assert $ not' loop_exists
+    -- k-variant case for LastStateFormula
+    mapM_ (\(expr,var) -> do
+              assert $ var .==. ((formulaEnc tmp_cur)!expr)
+              assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
+          ) (Map.toList $ formulaEnc tmp_e)
+    -- k-variant case for IncPLTL
+    mapM_ (\(expr,var) -> assert $ var .==. ((auxFEnc tmp_cur)!expr)
+          ) (Map.toList $ auxFEnc tmp_e)
+    mapM_ (\(expr,var) -> assert $ var .==. ((auxGEnc tmp_cur)!expr)
+          ) (Map.toList $ auxGEnc tmp_e)
+    solvable <- checkSat
+    if solvable
+      then getPath hist >>= return.Just
+      else return Nothing
+  case res of
+    Nothing -> bmc' enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se hist
+    Just path -> return $ Just path
+bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) = do
+  let i = length history
+  cur_state <- newState enums spec (show i)
+  tmp_nxt <- newTemporalVars (show $ i+1) f
+  l <- SMT.varNamed $ T.pack $ "l"++show i
+  inloop <- SMT.varNamed $ T.pack $ "inloop"++show i
+  assert $ step bas (bmcVars last_state) cur_state
+  assert $ connections (gtlSpecConnections spec) cur_state cur_state
+  
+  -- k-invariant case for LoopConstraints:
+  assert $ l .=>. (eqSt cur_state se)
+  assert $ inloop .==. (or' [bmcInLoop last_state,l])
+  assert $ (bmcInLoop last_state) .=>. (not' l)
+  
+  -- k-invariant case for LastStateFormula
+  genc <- dependencies (\(iname,var) u h -> getVar iname var [] cur_state) f tmp_cur tmp_nxt
+  mapM_ (\(expr,var) -> assert $ l .=>. (var .==. ((formulaEnc tmp_cur)!expr))
+        ) (Map.toList $ formulaEnc tmp_l)
+  
+  -- k-invariant case for IncPLTL
+  mapM_ (\(expr,var) -> let Just fe = Map.lookup expr (formulaEnc tmp_cur)
+                        in assert $ var .==. and' [(auxFEnc $ bmcTemporals last_state)!expr
+                                                  ,and' [inloop,fe]]) (Map.toList $ auxFEnc tmp_cur)
+  mapM_ (\(expr,var) -> let Just ge = Map.lookup expr (formulaEnc tmp_cur)
+                        in assert $ var .==. and' [(auxGEnc $ bmcTemporals last_state)!expr
+                                                  ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
+  let history' = (BMCState cur_state tmp_cur l inloop):history
+  -- Simple Path restriction
+  mapM_ (\st -> assert $ not' $ eqSt (bmcVars last_state) (bmcVars st)) (Prelude.drop 1 history)
+  simple_path <- checkSat
+  if not simple_path
+    then return Nothing
+    else (do
+             res <- stack $ do
+               -- k-variant case for LoopConstraints
+               assert $ loop_exists .==. inloop
+               assert $ eqSt cur_state se
+               -- k-variant case for LastStateFormula
+               mapM_ (\(expr,var) -> do
+                         assert $ ((formulaEnc tmp_e)!expr) .==. var
+                         assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
+                     ) (Map.toList $ formulaEnc tmp_cur)
+               -- k-variant case for IncPLTL
+               mapM_ (\(expr,var) -> assert $ ((auxFEnc tmp_e)!expr) .==. var) (Map.toList $ auxFEnc tmp_cur)
+               mapM_ (\(expr,var) -> assert $ ((auxGEnc tmp_e)!expr) .==. var) (Map.toList $ auxGEnc tmp_cur)
+               r <- checkSat
+               if r then getPath history' >>= return.Just
+                 else return Nothing
+             case res of  
+               Just path -> return $ Just path
+               Nothing -> bmc' enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se history')
 
 verifyModel :: Maybe String -> GTLSpec String -> IO ()
 verifyModel solver spec = do
   let solve = case solver of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ do
-    let enummp = enumMap spec
-    if Map.null enummp
-      then return ()
-      else declareEnums enummp
-    l <- SMT.varNamed $ T.pack "__l"
-    inloop <- SMT.varNamed $ T.pack "__inloop"
-    loop_exists <- SMT.varNamed $ T.pack "__loop_exists"
-    declareVars enummp spec
-    buildTransitionFunctions T.pack enummp spec
-    buildConnectionFun enummp spec
-    buildEqFun spec
-    let name_gen = \(m,v) u idx h -> varName (T.pack $ m ++ "_"++v) u h idx
-        name_gen' = \((m,v),idx') u idx h -> name_gen (m,v) u (idx'++idx) h
-    let ver = GTL.flattenExpr (\x i -> (x,i)) [] $ GTL.distributeNot (gtlSpecVerify spec)
-    temp_arrs <- mkTemporalArrays name_gen ver
-    findLoop name_gen' enummp spec l inloop loop_exists temp_arrs ver 0
-  mapM_ print res
-
-findLoop gen_name enums spec l inloop loop_exists temp_arrays ver i = do
-  res <- solve gen_name enums spec l inloop loop_exists temp_arrays ver i 
-         (do
-             solvable <- checkSat
-             if solvable
-               then (do
-                        tr <- getTrace enums spec i
-                        return $ Just tr)
-               else return Nothing)
+  res <- solve $ bmc spec
   case res of
-    Just (Just tr) -> return tr
-    Just Nothing -> findLoop gen_name enums spec l inloop loop_exists temp_arrays ver (i+1)
-    Nothing -> return []
+    Nothing -> putStrLn "No errors found in model"
+    Just path -> mapM_ print path
 
-type NameGenerator v = v -> VarUsage -> [Integer] -> Integer -> Text
-
-type TimeOpMap v = Map (TypedExpr (v,[Integer])) (SMTExpr Bool)
-
-type TimeOpMap2 v = Map (TypedExpr (v,[Integer]),TypedExpr (v,[Integer])) (SMTExpr Bool)
-
-type GenVarState v = (TimeOpMap v,TimeOpMap2 v,TimeOpMap2 v)
-
-data TemporalArrays v = TemporalArrays { formulaEncoding :: Map (TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool),Bool)
-                                       , auxFEncoding :: Map (TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool))
-                                       , auxGEncoding :: Map (TypedExpr (v,[Integer])) (SMTExpr (Array Integer Bool))
-                                       }
-
-mkTemporalArrays :: Ord v => NameGenerator v -> TypedExpr (v,[Integer]) -> SMT (TemporalArrays v)
-mkTemporalArrays f expr = do
-  (arr,_) <- mkTemporalArrays' f (TemporalArrays Map.empty Map.empty Map.empty) 0 expr
-  return arr
-        
-mkTemporalArrays' :: Ord v => NameGenerator v
-                     -> TemporalArrays v
-                     -> Integer -> TypedExpr (v,[Integer]) 
-                     -> SMT (TemporalArrays v,Integer)
-mkTemporalArrays' f p n expr
-  | Map.member expr (formulaEncoding p) = return (p,n)
-  | otherwise = case GTL.getValue expr of
-    GTL.Var (name,idx) h u -> return (p { formulaEncoding = Map.insert expr (SMT.Var $ f name u idx h,False) (formulaEncoding p) 
-                                        },n)
-    GTL.BinRelExpr _ _ _ -> do
-      arr <- varNamed $ T.pack $ "__prop"++show n
-      return (p { formulaEncoding = Map.insert expr (arr,False) (formulaEncoding p)
-                },n+1)
-    GTL.BinBoolExpr op (Fix lhs) (Fix rhs) -> do
-      (p1,n1) <- mkTemporalArrays' f p n lhs
-      (p2,n2) <- mkTemporalArrays' f p1 n1 rhs
-      arr <- varNamed $ T.pack $ "__"++(case op of
-                                           GTL.And -> "and"
-                                           GTL.Or -> "or"
-                                           GTL.Until NoTime -> "until"
-                                           GTL.UntilOp NoTime -> "until_op")++show n2
-      let p2' = p2 { formulaEncoding = Map.insert expr (arr,False) (formulaEncoding p2)
-                   }
-      case op of
-        GTL.Until NoTime 
-          | Map.member rhs (auxFEncoding p2') -> return (p2',n2+1)
-          | otherwise -> do
-            arr' <- varNamed $ T.pack $ "__finals"++show n2
-            return (p2' { auxFEncoding = Map.insert rhs arr' (auxFEncoding p2') },n2+1)
-        GTL.UntilOp NoTime
-          | Map.member rhs (auxGEncoding p2') -> return (p2',n2+1)
-          | otherwise -> do
-            arr' <- varNamed $ T.pack $ "__finals"++show n2
-            return (p2' { auxGEncoding = Map.insert rhs arr' (auxGEncoding p2') },n2+1)
-        _ -> return (p2',n2+1)
-    GTL.UnBoolExpr GTL.Not (Fix (Typed _ (GTL.Var (name,idx) h u))) -> return (p { formulaEncoding = Map.insert expr (SMT.Var $ f name u idx h,True) (formulaEncoding p)
-                                                                                 },n)
-    GTL.UnBoolExpr op (Fix e) -> do
-      (p1,n1) <- mkTemporalArrays' f p n e
-      case op of
-        GTL.Always -> do
-          arr <- varNamed $ T.pack $ "__until_op"++show n1
-          aux' <- if Map.member e (auxGEncoding p1)
-                  then return $ auxGEncoding p1
-                  else (do
-                        arr' <- varNamed $ T.pack $ "__finals"++show n1
-                        return $ Map.insert e arr' (auxGEncoding p1))
-          return (p1 { formulaEncoding = Map.insert expr (arr,False) (formulaEncoding p1)
-                     , auxGEncoding = aux'
-                     },n1+1)
-        GTL.Finally NoTime -> do
-          arr <- varNamed $ T.pack $ "__until"++show n1
-          aux' <- if Map.member e (auxFEncoding p1)
-                  then return $ auxFEncoding p1
-                  else (do
-                        arr' <- varNamed $ T.pack $ "__finals"++show n1
-                        return $ Map.insert e arr' (auxFEncoding p1))
-          return (p1 { formulaEncoding = Map.insert expr (arr,False) (formulaEncoding p1)
-                     , auxFEncoding = aux'
-                     },n1+1)
-        _ -> return (p1,n1)
-    _ -> return (p,n)
-
-getTemporalVar :: Ord v => TemporalArrays v
-                  -> TypedExpr (v,[Integer])
-                  -> Integer
-                  -> SMTExpr Bool
-getTemporalVar mp expr i = case GTL.getValue expr of
-  GTL.Value (GTLBoolVal x) -> SMT.constant x
-  _ -> let Just (arr,neg) = Map.lookup expr (formulaEncoding mp)
-       in select arr (SMT.constant i)
-
-generateDependencies :: Ord v => NameGenerator (v,[Integer])
-                        -> Map [String] Integer
-                        -> TemporalArrays v
-                        -> TypedExpr (v,[Integer])
-                        -> Integer
-                        -> SMT (SMTExpr Bool)
-generateDependencies f enums mp expr i
-  = case GTL.getValue expr of
-    GTL.Value (GTLBoolVal x) -> return $ SMT.constant x
-    GTL.BinBoolExpr op (Fix lhs) (Fix rhs) -> do
-      l <- generateDependencies f enums mp lhs i
-      r <- generateDependencies f enums mp rhs i
-      case op of
-        GTL.And -> assert $ self .==. and' [l,r]
-        GTL.Or -> assert $ self .==. or' [l,r]
-        GTL.Until NoTime -> assert $ self .==. or' [r,and' [l,select arr (SMT.constant (i+1))]]
-        GTL.UntilOp NoTime -> assert $ self .==. and' [r,or' [l,select arr (SMT.constant (i+1))]]
-      return self
-    GTL.UnBoolExpr op (Fix e) -> do
-      e' <- generateDependencies f enums mp e i
-      case op of
-        GTL.Always -> assert $ self .==. and' [e',select arr (SMT.constant (i+1))]
-        GTL.Finally NoTime -> assert $ self .==. or' [e',select arr (SMT.constant (i+1))]
-        _ -> return ()
-      return self
-    GTL.BinRelExpr _ _ _ -> do
-      assert $ self .==. toSMTExpr f (SMT.constant i) (SMT.constant i) enums expr
-      return self
-    _ -> return self
+forallList :: SMTType a => Integer -> ([SMTExpr a] -> SMTExpr Bool) -> SMTExpr Bool
+forallList n f = forallList' n []
   where
-    Just (arr,neg) = Map.lookup expr (formulaEncoding mp)
-    self = if neg 
-           then not' $ select arr (SMT.constant i)
-           else select arr (SMT.constant i)
+    forallList' 0 xs = f xs
+    forallList' n xs = forAll $ \x -> forallList' (n-1) (x:xs)
 
-solve :: NameGenerator ((String,String),[Integer]) ->
-         Map [String] Integer ->
-         GTLSpec String -> 
-         SMTExpr (Array Integer Bool) ->
-         SMTExpr (Array Integer Bool) ->
-         SMTExpr Bool ->
-         TemporalArrays (String,String) ->
-         TypedExpr ((String,String),[Integer]) ->
-         Integer ->
-         SMT r -> SMT (Maybe r)
-solve gen_name enums spec l inloop loop_exists tarrs ver 0 f = do
-  makeInit 0 spec
-  makeConn 0 0
-  -- Base case for LoopConstraints:
-  assert $ not' (select l 0)
-  assert $ not' (select inloop 0)
-  
-  -- Base case for LastStateFormula
-  mvar <- generateDependencies gen_name enums tarrs ver 0
-  mapM_ (\(expr,(arr,neg)) -> do
-            assert $ (not' loop_exists) .=>. ((if neg then id
-                                               else not')
-                                              $ select arr (SMT.constant (-2)))
-            -- Base case for IncPLTL:
-            case GTL.getValue expr of
-              GTL.UnBoolExpr GTL.Not (Fix e) -> assert $ (not' loop_exists) .=>. ((if neg then not'
-                                                                                   else id)
-                                                                                  $ select arr (SMT.constant (-2)))
-              GTL.UnBoolExpr (Finally NoTime) (Fix e) -> let Just r = Map.lookup e (auxFEncoding tarrs)
-                                                         in do
-                                                           assert $ loop_exists .=>. ((select arr (SMT.constant (-1))) .=>. (select r (SMT.constant (-1))))
-                                                           assert $ not' (select r (SMT.constant 0))
-              GTL.UnBoolExpr Always (Fix e) -> let Just r = Map.lookup e (auxGEncoding tarrs)
-                                               in do
-                                                  assert $ loop_exists .=>. ((select r (SMT.constant (-1))) .=>. (select arr (SMT.constant (-1))))
-                                                  assert $ select r (SMT.constant 0)
-              GTL.BinBoolExpr (Until NoTime) (Fix lhs) (Fix rhs) -> let Just r = Map.lookup rhs (auxFEncoding tarrs)
-                                                                    in do
-                                                                       assert $ loop_exists .=>. ((select arr (SMT.constant (-1))) .=>. (select r (SMT.constant (-1))))
-                                                                       assert $ not' (select r (SMT.constant 0))
-              GTL.BinBoolExpr (UntilOp NoTime) (Fix lhs) (Fix rhs) -> let Just r = Map.lookup rhs (auxGEncoding tarrs)
-                                                                      in do
-                                                                         assert $ loop_exists .=>. ((select r (SMT.constant (-1))) .=>. (select arr (SMT.constant (-1))))
-                                                                         assert $ select r (SMT.constant 0)
-              _ -> return ()
-        ) (Map.toList $ formulaEncoding tarrs)
-  
-  assert mvar
-  
-  stack $ do
-    -- k-variant case for LoopConstraints
-    assert $ eqst 0 (-1)
-    assert $ not' loop_exists
-    -- k-variant case for LastStateFormula
-    mapM_ (\(expr,(arr,neg)) -> do
-              assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant 0))
-              assert $ (select arr (SMT.constant 1)) .==. (select arr (SMT.constant (-2)))
-          ) (Map.toList $ formulaEncoding tarrs)
-    -- k-variant case for IncPLTL
-    mapM_ (\arr -> assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant 0))) (Map.elems $ auxFEncoding tarrs)
-    mapM_ (\arr -> assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant 0))) (Map.elems $ auxGEncoding tarrs)
-    res <- f
-    return $ Just res
-solve gen_name enums spec l inloop loop_exists tarrs ver i f = do
-  makeAllTrans spec (i-1) i 
-  makeConn i i
-
-  -- k-invariant case for LoopConstraints:
-  assert $ (select l (SMT.constant i)) .=>. (eqst (SMT.constant (i-1)) (-1))
-  assert $ (select inloop (SMT.constant i)) .==. (or' [select inloop (SMT.constant $ i-1)
-                                                      ,select l (SMT.constant i)])
-  assert $ (select inloop (SMT.constant $ i - 1)) .=>. (not' (select l (SMT.constant i)))
-  
-  -- k-invariant case for LastStateFormula
-  mvar <- generateDependencies gen_name enums tarrs ver i
-  mapM_ (\(expr,(arr,neg)) -> do
-            assert $ (select l (SMT.constant i)) .=>. (select arr (SMT.constant (-2)) .==. (select arr (SMT.constant i)))) (Map.toList $ formulaEncoding tarrs)
-  
-  -- k-invariant case for IncPLTL
-  
-  mapM_ (\(expr,arr) -> let Just (fe,neg) = Map.lookup expr (formulaEncoding tarrs)
-                            fe' = select fe (SMT.constant i)
-                            fe'' = if neg then not' fe' else fe'
-                        in assert $ (select arr (SMT.constant i)) .==. or' [select arr (SMT.constant (i-1))
-                                                                           ,and' [select inloop (SMT.constant i)
-                                                                                 ,fe''
-                                                                                 ]]) (Map.toList $ auxFEncoding tarrs)
-  mapM_ (\(expr,arr) -> let Just (fe,neg) = Map.lookup expr (formulaEncoding tarrs)
-                            fe' = select fe (SMT.constant i)
-                            fe'' = if neg then not' fe' else fe'
-                        in assert $ (select arr (SMT.constant i)) .==. and' [select arr (SMT.constant (i-1))
-                                                                            ,or' [not' $ select inloop (SMT.constant i)
-                                                                                 ,fe''
-                                                                                 ]]) (Map.toList $ auxGEncoding tarrs)
-
-
-  -- Simple-Path constraints doesn't work yet
-  {-
-  mapM_ (\j -> assert $ or' [not' $ eqst (SMT.constant i) (SMT.constant j)
-                            ,not' $ select inloop (SMT.constant i) .==. select inloop (SMT.constant j)
-                            ,not' $ (getTemporalVar tarrs ver i) .==. (getTemporalVar tarrs ver j)
-                            ]
-        ) [0..(i-1)]-}
-  r <- checkSat
-  if r
-     then (stack $ do
-              -- k-variant case for LoopConstraints
-              assert $ loop_exists .==. (select inloop (SMT.constant i))
-              assert $ eqst (SMT.constant i) (-1)
-              -- k-variant case for LastStateFormula
-              mapM_ (\(expr,(arr,neg)) -> do
-                        assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant i))
-                        assert $ (select arr (SMT.constant (i+1))) .==. (select arr (SMT.constant (-2)))
-                    ) (Map.toList $ formulaEncoding tarrs)
-              -- k-variant case for IncPLTL
-              mapM_ (\arr -> assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant i))) (Map.elems $ auxFEncoding tarrs)
-              mapM_ (\arr -> assert $ (select arr (SMT.constant (-1))) .==. (select arr (SMT.constant i))) (Map.elems $ auxGEncoding tarrs)
-              res <- f
-              return $ Just res)
-    else return Nothing
-
-
+exactlyOne :: [SMTExpr Bool] -> SMTExpr Bool
+exactlyOne vs = exactlyOne' vs [] (\vars -> let (_,y,_) = Prelude.head vars
+                                            in and' (y:buildDefs vars))
+  where
+    buildDefs [(var,y,n)] = []
+    buildDefs ((var,y,n):rest@((_,y',n'):_)) = [ y .==. (ite var n' y')
+                                               , n .==. and' [not' var,n'] ]
+    
+    exactlyOne' [x] r f = f ((x,x,not' x):r)
+    exactlyOne' (x:xs) r f = exists $ \(y,n) -> exactlyOne' xs ((x,y,n):r) f
 
 data EnumVal = EnumVal [String] Integer String deriving Typeable
+
+instance ToGTL EnumVal where
+  toGTL (EnumVal _ _ name) = GTLEnumVal name
+  gtlTypeOf (EnumVal enums _ _) = Fix $ GTLEnum enums
 
 instance SMTType EnumVal where
   getSort (EnumVal _ nr _) = L.Symbol (T.pack $ "Enum"++show nr)
@@ -314,203 +536,25 @@ instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
   unmangle (L.Symbol v) = EnumVal undefined undefined (T.unpack v)
 
-makeInit :: Integer -> GTLSpec String -> SMT ()
-makeInit l spec 
-  = sequence_ [ assert $ App (Fun $ T.pack $ "__init_"++iname) (SMT.constant l)
-              | iname <- Map.keys (gtlSpecInstances spec) ]
-
-findDiameter :: GTLSpec String -> Integer -> SMT Integer
-findDiameter spec n = do
-  res <- checkSat
-  if res
-    then (do
-             makeAllTrans spec n (n+1)
-             makeConn (n+1) (n+1)
-             mapM_ (\i -> makeUnEq (n+1) i) [0..n]
-             findDiameter spec (n+1))
-    else return n
-
-makeAllTrans :: GTLSpec String -> Integer -> Integer -> SMT ()
-makeAllTrans spec i j = mapM_ (\iname -> makeTrans iname i j) (Map.keys $ gtlSpecInstances spec)
-
-makeTrans :: String -> Integer -> Integer -> SMT ()
-makeTrans name i j
-  = assert $ App (Fun $ T.pack $ "__trans_"++name) (SMT.constant i,SMT.constant j)
-
-makeConn :: Integer -> Integer -> SMT ()
-makeConn i j = assert $ App (Fun $ T.pack "__conn") (SMT.constant i,SMT.constant j)
-
-makeUnEq :: Integer -> Integer -> SMT ()
-makeUnEq i j = assert $ not' $ App (Fun $ T.pack "__eq") (SMT.constant i,SMT.constant j)
-
-eqst :: SMTExpr Integer -> SMTExpr Integer -> SMTExpr Bool
-eqst i j = App (Fun $ T.pack "__eq") (i,j)
-
-declareVars :: Map [String] Integer -> GTLSpec String -> SMT ()
-declareVars enums spec
-  = sequence_ $ Prelude.concat
-    [ [ declareFun (T.pack $ "__st_"++iname) [] (L.List [L.Symbol $ T.pack "Array"
-                                                        ,getSort (undefined::Integer)
-                                                        ,getSort (undefined::Integer)])]++
-      [ getUndefined enums tp' $ \u -> declareFun (varName (T.pack $ iname++"_"++var) Input 0 idx) [] (L.List [ L.Symbol (T.pack "Array")
-                                                                                                              , getSort (undefined::Integer)
-                                                                                                              , getSort u ])
-      | (var,tp) <- Map.toList (gtlModelInput mdl),
-        (tp',idx) <- allPossibleIdx tp
-      ] ++
-      [ getUndefined enums tp' $ \u -> declareFun (varName (T.pack $ iname++"_"++var) Output 0 idx) [] (L.List [ L.Symbol (T.pack "Array")
-                                                                                                               , getSort (undefined::Integer)
-                                                                                                               , getSort u ])
-      | (var,tp) <- Map.toList (gtlModelOutput mdl),
-        (tp',idx) <- allPossibleIdx tp
-      ] ++
-      [ getUndefined enums tp' $ \u -> declareFun (varName (T.pack $ iname++"_"++var) StateIn 0 idx) [] (L.List [ L.Symbol (T.pack "Array")
-                                                                                                                , getSort (undefined::Integer)
-                                                                                                                , getSort u ])
-      | (var,tp) <- Map.toList (gtlModelLocals mdl),
-        (tp',idx) <- allPossibleIdx tp
-      ]
-    | (iname,inst) <- Map.toList $ gtlSpecInstances spec,
-      let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-    ]
-
-buildConnectionFun :: Map [String] Integer -> GTLSpec String -> SMT ()
-buildConnectionFun enums spec
-  = defineFun (T.pack "__conn")
-    [ (vi,getSort (undefined::Integer)) 
-    , (vj,getSort (undefined::Integer)) ] (getSort (undefined::Bool))
-    (toLisp $ and' [ getUndefined enums tp' $ \u -> (assertEq u 
-                                                     (Select (SMT.Var (varName (T.pack $ i1++"_"++v1) Output 0 (idx'++idx1))) vi')) .==.
-                                                    (Select (SMT.Var (varName (T.pack $ i2++"_"++v2) Input 0 (idx'++idx2))) vj')
-                   | (GTLConnPt i1 v1 idx1,GTLConnPt i2 v2 idx2) <- gtlSpecConnections spec, 
-                     let tp = getInstanceVariableType spec False i1 v1,
-                     let Right rtp = resolveIndices tp idx1,
-                     (tp',idx') <- allPossibleIdx rtp
-                   ])
-    where
-      vi,vj :: Text
-      vi = T.pack "__i"
-      vj = T.pack "__j"
-      vi',vj' :: SMTExpr Integer
-      vi' = SMT.Var vi
-      vj' = SMT.Var vj
-
-    {-
-  = defineFun (T.pack "__conn")
-    [ getUndefined enums t $ \u -> (varName (T.pack $ i++"_"++v) usage 0 idx,getSort u) 
-    | (i,v,idx,usage,t) <- (allVars spec Input)++(allVars spec Output) ]
-    (getSort (undefined::Bool))
-    (toLisp $ and' [ getUndefined enums tp' $ \u -> (assertEq u (SMT.Var (varName (T.pack $ i1++"_"++v1) Output 0 (idx'++idx1)))) .==.
-                                                    (SMT.Var (varName (T.pack $ i2++"_"++v2) Input 0 (idx'++idx2)))
-          | (GTLConnPt i1 v1 idx1,GTLConnPt i2 v2 idx2) <- gtlSpecConnections spec, 
-            let tp = getInstanceVariableType spec False i1 v1,
-            let Right rtp = resolveIndices tp idx1,
-            (tp',idx') <- allPossibleIdx rtp
-            ])-}
-
-allVars :: GTLSpec String -> VarUsage -> [(String,String,[Integer],VarUsage,GTLType)]
-allVars spec usage 
-  = Prelude.concat
-    [ [ (iname,v,i,usage,t') 
-      | (v,t) <- Map.toList (case usage of
-                                Input -> gtlModelInput mdl
-                                Output -> gtlModelOutput mdl
-                                _ -> gtlModelLocals mdl
-                            ), 
-        (t',i) <- allPossibleIdx t
-      ]
-    | (iname,inst) <- Map.toList $ gtlSpecInstances spec,
-      let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-    ]
-
-getUndefined :: Map [String] Integer -> GTLType -> (forall a. (Typeable a,SMTType a) => a -> b) -> b
-getUndefined mp rep f = case rep of
+getUndefined :: Map [String] Integer -> GTLType -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -> b
+getUndefined mp rep f = case unfix rep of
   GTLInt -> f (undefined::Integer)
   GTLBool -> f (undefined::Bool)
   GTLEnum enums -> f (EnumVal enums (mp!enums) undefined)
   _ -> error $ "Please implement getUndefined for "++show rep++" you lazy fuck"
 
-getUndefinedNumeric :: GTLType -> (forall a. (Typeable a,SMTType a,Num a) => a -> b) -> b
+getUndefinedNumeric :: GTLType -> (forall a. (Typeable a,SMTType a,Num a,ToGTL a,SMTValue a) => a -> b) -> b
 getUndefinedNumeric rep f
-  | rep == GTLInt = f (undefined::Integer)
+  | rep == gtlInt = f (undefined::Integer)
 
 isNumeric :: GTLType -> Bool
-isNumeric GTLInt = True
-isNumeric GTLByte = True
-isNumeric GTLFloat = True
+isNumeric (Fix GTLInt) = True
+isNumeric (Fix GTLByte) = True
+isNumeric (Fix GTLFloat) = True
 isNumeric _ = False
 
 assertEq :: a -> b a -> b a
 assertEq _ = id
-
-buildEqFun :: GTLSpec v -> SMT ()
-buildEqFun spec
-  = defineFun (T.pack "__eq") 
-    ([ (T.pack "__i",getSort (undefined::Integer)) 
-     , (T.pack "__j",getSort (undefined::Integer)) ]) (getSort (undefined::Bool))
-    (toLisp $ and' [ App (Fun $ T.pack $ "__eq_"++iname) (SMT.Var (T.pack "__i")::SMTExpr Integer,SMT.Var (T.pack "__j")::SMTExpr Integer) 
-                   | iname <- Map.keys $ gtlSpecInstances spec ])
-    
-buildTransitionFunctions :: (Ord v,Show v) => (v -> Text) -> Map [String] Integer -> GTLSpec v -> SMT ()
-buildTransitionFunctions f enums spec
-  = mapM_ (\(name,inp,outp,loc,def,ba) -> buildTransitionFunction name f enums (fmap (\tp -> (0,tp)) inp) (fmap (\tp -> (0,tp)) outp) (fmap (\tp -> (0,tp)) loc) def ba)
-    [ (T.pack iname,gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl,gtlModelDefaults mdl,gtl2ba (Just (gtlModelCycleTime mdl)) formula)
-    | (iname,inst) <- Map.toList (gtlSpecInstances spec), 
-      let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst),
-      let formula = case gtlInstanceContract inst of
-            Nothing -> gtlModelContract mdl
-            Just con -> gand con (gtlModelContract mdl)
-    ]
-
-buildTransitionFunction :: Ord v => Text -> (v -> Text) -> 
-                           Map [String] Integer ->
-                           Map v (Integer,GTLType) ->
-                           Map v (Integer,GTLType) ->
-                           Map v (Integer,GTLType) ->
-                           Map v (Maybe GTLConstant) ->
-                           BA [TypedExpr v] Integer -> SMT ()
-buildTransitionFunction name f enums inp outp loc inits ba
-  = do
-    let f' n u idx h = varName (T.append (T.snoc name '_') (f n)) u h idx
-    defineFun ((T.pack "__trans_") `T.append` name) 
-      ([ (vi,getSort (undefined::Integer)) 
-       , (vj,getSort (undefined::Integer)) ]) (getSort (undefined::Bool))
-      (toLisp (and' [ (var_st .==. (SMT.constant st)) .=>. 
-                      (or' [ and' $ (fmap (toSMTExpr f' vi' vj' enums) cond) ++ [var_st' .==. (SMT.constant st')]
-                           | (cond,st') <- Set.toList trans
-                           ])
-                    | (st,trans) <- Map.toList (baTransitions ba)
-                    ]))
-    defineFun ((T.pack "__eq_") `T.append` name)
-      ([ (vi,getSort (undefined::Integer)) 
-       , (vj,getSort (undefined::Integer)) ]) (getSort (undefined::Bool))
-      (toLisp $ and' $ [ var_st .==. var_st' ]++
-       [ getUndefined enums tp' $ \u -> (assertEq u $ SMT.Select (SMT.Var $ f' var Input idx 0) vi') .==.
-                                        (SMT.Select (SMT.Var $ f' var Input idx 0) vj')
-       | (var,(h,tp)) <- (Map.toList inp) ++ (Map.toList outp), 
-         (tp',idx) <- allPossibleIdx tp ])
-    defineFun ((T.pack "__init_") `T.append` name)
-      ([ (vi,getSort (undefined::Integer)) ]) (getSort (undefined::Bool))
-      (toLisp $ and' $ 
-       [or' [ var_st .==. SMT.constant c
-            | c <- Set.toList $ baInits ba ]] ++
-       (catMaybes [ case Map.lookup var inits of
-                       Nothing -> Just $ toSMTExpr f' vi' vj' enums (geq (Typed tp $ GTL.Var var 0 Input) (constantToExpr (Map.keysSet enums) $ defaultValue tp))
-                       Just Nothing -> Nothing
-                       Just (Just val) -> Just $ toSMTExpr f' vi' vj' enums (geq (Typed tp $ GTL.Var var 0 Input) (constantToExpr (Map.keysSet enums) val))
-                  | (var,(h,tp)) <- (Map.toList inp) ++ (Map.toList outp) ])
-      )
-
-    where
-      var_st,var_st' :: SMTExpr Integer
-      var_st = SMT.Select (SMT.Var $ T.append (T.pack "__st_") name) vi'
-      var_st' = SMT.Select (SMT.Var $ T.append (T.pack "__st_") name) vj'
-      vi,vj :: Text
-      vi = T.pack "__i"
-      vj = T.pack "__j"
-      vi',vj' :: SMTExpr Integer
-      vi' = SMT.Var vi
-      vj' = SMT.Var vj
 
 enumMap :: Ord v => GTLSpec v -> Map [String] Integer
 enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]
@@ -523,129 +567,3 @@ declareEnums :: Map [String] Integer -> SMT ()
 declareEnums mp = declareDatatypes [] 
                   [ (T.pack $ "Enum"++show n,[ (T.pack val,[]) | val <- vals ])
                   | (vals,n) <- Map.toList mp ]
-
-varName :: Text -> VarUsage -> Integer -> [Integer] -> Text
-varName var u history idx = let base = case history of
-                                  0 -> var
-                                  lvl -> var `T.append` (T.pack $ "_"++show lvl)
-                                base' = case u of
-                                             Input -> base
-                                             Output -> base
-                                             StateIn -> base `T.append` (T.pack "_in")
-                                             StateOut -> base `T.append` (T.pack "_out")
-                          in if Prelude.null idx
-                             then base'
-                             else Prelude.foldl (\cur i -> cur `T.append` (T.pack $ "_"++show i)) (base' `T.snoc` '_') idx
-
-extractValue :: Map [String] Integer -> String -> String -> GTLType -> [Integer] -> Integer -> SMT GTLConstant
-extractValue enums iname var tp idx i = case tp of
-  GTLInt -> do
-    r <- SMT.getValue $ select (SMT.Var rname) (SMT.constant i)
-    return $ Fix $ GTLIntVal r
-  GTLBool -> do
-    r <- SMT.getValue $ select (SMT.Var rname) (SMT.constant i)
-    return $ Fix $ GTLBoolVal r
-  GTLEnum enums -> do
-    EnumVal _ _ x <- SMT.getValue $ select (SMT.Var rname) (SMT.constant i)
-    return $ Fix $ GTLEnumVal x
-  GTLArray sz tp' -> do
-    vs <- mapM (\x -> extractValue enums iname var tp' (x:idx) i) [0..(sz-1)]
-    return $ Fix $ GTLArrayVal vs
-  where
-    rname = varName (T.pack $ iname++"_"++var) Input 0 idx
-
-getTrace :: Map [String] Integer -> GTLSpec String -> Integer -> SMT [Map (String,String) GTLConstant]
-getTrace enums spec k = do
-  sequence [ do
-                lst <- sequence [ do 
-                                     v <- extractValue enums iname var tp [] i
-                                     return ((iname,var),v)
-                                | (iname,inst) <- Map.toList $ gtlSpecInstances spec
-                                , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                                , (var,tp) <- Map.toList (gtlModelInput mdl) ++ Map.toList (gtlModelOutput mdl)
-                                ]
-                return $ Map.fromList lst
-           | i <- [0..k] ]
-
-toSMTExpr :: (Typeable b,Ord v) => (v -> VarUsage -> [Integer] -> Integer -> Text) -> 
-             SMTExpr Integer -> SMTExpr Integer ->
-             Map [String] Integer -> TypedExpr v -> SMTExpr b
-toSMTExpr f vi vj enums expr = toSMTExpr' f vi vj enums (\e -> case gcast e of
-                                                            Nothing -> error "internal type error in toSMTExpr"
-                                                            Just r -> r) (flattenExpr (\v idx -> (v,idx)) [] expr)
-
-toSMTExpr' :: NameGenerator v -> 
-              SMTExpr Integer -> SMTExpr Integer ->
-              Map [String] Integer -> (forall t. Typeable t => SMTExpr t -> b) -> TypedExpr (v,[Integer]) -> b
-toSMTExpr' f vi vj enums g expr 
-  = case GTL.getValue expr of
-    GTL.Var (n,idx) i u -> let idx' = Prelude.reverse idx
-                               rtp = getType expr
-                           in getUndefined enums rtp
-                              (\un -> g $ assertEq un (SMT.Select (SMT.Var (f n u idx' i)) (case u of
-                                                                                               Input -> vi
-                                                                                               StateIn -> vi
-                                                                                               _ -> vj)))
-    GTL.Value val -> case val of
-      GTLIntVal i -> g (SMT.constant i)
-      GTLByteVal w -> g (SMT.constant w)
-      GTLBoolVal b -> g (SMT.constant b)
-      GTLEnumVal v -> g (SMT.constant (EnumVal undefined undefined v))
-    GTL.BinRelExpr rel (Fix l) (Fix r)
-      | isNumeric (getType l) -> getUndefinedNumeric (getType l) 
-                                 $ \u -> g ((case rel of
-                                                BinLT -> Lt
-                                                BinLTEq -> Le
-                                                BinGT -> Gt
-                                                BinGTEq -> Ge
-                                                BinEq -> Eq
-                                                BinNEq -> \x y -> SMT.Not (Eq x y)
-                                            ) 
-                                            (toSMTExpr' f vi vj enums
-                                             (\cl -> assertEq u (case gcast cl of
-                                                                    Nothing -> error "internal type error in toSMTExpr'"
-                                                                    Just res -> res)) l)
-                                            (toSMTExpr' f vi vj enums
-                                             (\cr -> assertEq u (case gcast cr of
-                                                                    Nothing -> error "internal type error in toSMTExpr'"
-                                                                    Just res -> res)) r)
-                                           )
-      | otherwise -> getUndefined enums (getType l)
-                     $ \u -> g ((case rel of
-                                    BinEq -> Eq
-                                    BinNEq -> \x y -> SMT.Not (Eq x y)
-                                ) 
-                                (toSMTExpr' f vi vj enums
-                                 (\cl -> assertEq u (case gcast cl of
-                                                        Nothing -> error "internal type error in toSMTExpr'"
-                                                        Just res -> res)) l)
-                                (toSMTExpr' f vi vj enums
-                                 (\cr -> assertEq u (case gcast cr of
-                                                        Nothing -> error "internal type error in toSMTExpr'"
-                                                        Just res -> res)) r)
-                               )
-    GTL.BinIntExpr op (Fix l) (Fix r) 
-      | getType l == GTLInt -> g ((case op of
-                                      OpPlus -> \x y -> Plus [x,y]
-                                      OpMinus -> Minus
-                                      OpMult -> \x y -> Mult [x,y]
-                                      OpDiv -> Div)
-                                  (toSMTExpr' f vi vj enums
-                                   (\cl -> case gcast cl of
-                                       Nothing -> error "internal type error in toSMTExpr'"
-                                       Just res -> res) l)
-                                  (toSMTExpr' f vi vj enums 
-                                   (\cr -> case gcast cr of
-                                       Nothing -> error "internal type error in toSMTExpr'"
-                                       Just res -> res) r))
-    GTL.UnBoolExpr GTL.Not (Fix arg) -> g (SMT.Not (toSMTExpr' f vi vj enums (\cl -> case gcast cl of
-                                                                                 Nothing -> error "internal type error in toSMTExpr'"
-                                                                                 Just res -> res) arg))
-    GTL.IndexExpr _ _ -> error "Index expressions shouldn't appear here in toSMTExpr'"
-    GTL.BinBoolExpr GTL.And (Fix l) (Fix r) -> g $ and' [toSMTExpr' f vi vj enums (\cl -> case gcast cl of
-                                                                                      Nothing -> error "internal type error in toSMTExpr'"
-                                                                                      Just res -> res) l
-                                                        ,toSMTExpr' f vi vj enums (\cr -> case gcast cr of
-                                                                                      Nothing -> error "internal type error in toSMTExpr'"
-                                                                                      Just res -> res) r]
-    --GTL.BinBoolExpr op _ _ -> error $ "Binary boolean expressions ("++show op++") shouldn't appear here in toSMTExpr'"

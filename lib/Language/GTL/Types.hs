@@ -161,10 +161,10 @@ resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
 resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
 
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
-allPossibleIdx (GTLArray sz tp) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
-                                         | (t,idx) <- allPossibleIdx tp ]
-allPossibleIdx (GTLTuple tps) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] 
-                                       | (i,tp) <- zip [0..] tps ]
+allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
+                                               | (t,idx) <- allPossibleIdx tp ]
+allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] 
+                                             | (i,tp) <- zip [0..] tps ]
 allPossibleIdx tp = [(tp,[])]
 
 -- | Given a type, a function to extract type information from sub-values and a
