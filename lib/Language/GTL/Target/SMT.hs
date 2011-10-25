@@ -14,22 +14,28 @@ import Data.Text as T hiding (intersperse,length,concat,unlines,zip)
 import Data.Map as Map
 import Data.Set as Set
 import Data.AttoLisp as L
-import Data.Maybe (catMaybes)
-import Data.Array (Array)
 import Control.Monad.Trans
 import Data.Traversable
 import Prelude hiding (mapM,sequence)
 import Data.List (genericIndex,intersperse)
+import Data.Word
 
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
+
+instance Show USMTExpr where
+  show (USMTExpr e) = show e
 
 castUSMT :: Typeable a => USMTExpr -> Maybe (SMTExpr a)
 castUSMT (USMTExpr x) = gcast x
 
 castUSMT' :: Typeable a => USMTExpr -> SMTExpr a
 castUSMT' e = case castUSMT e of
-  Nothing -> error "Internal type-error in SMT target"
+  Nothing -> let res = error $ "Internal type-error in SMT target: Expected "++(show $ typeOf $ getUndef res)++", but got "++(show (typeOfUSMT e))
+             in res
   Just e' -> e'
+
+typeOfUSMT :: USMTExpr -> TypeRep
+typeOfUSMT (USMTExpr e) = typeOf (getUndef e)
 
 useUSMT :: (forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => SMTExpr a -> b) -> USMTExpr -> b
 useUSMT f (USMTExpr x) = f x
@@ -40,11 +46,12 @@ data GlobalState = GlobalState
 
 data InstanceState = InstanceState
                      { instanceVars :: Map String (UnrolledVar,GTLType)
-                     , instancePC :: SMTExpr Integer
+                     , instancePC :: SMTExpr Word64
                      }
 
 data UnrolledVar = BasicVar USMTExpr
                  | IndexedVar [UnrolledVar]
+                 deriving Show
 
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
@@ -59,8 +66,9 @@ newUnrolledVar enums (Fix tp) base = case tp of
   GTLTuple tps -> do
     arr <- mapM (\(tp,i) -> newUnrolledVar enums tp (base++"_"++show i)) (zip tps [0..])
     return $ IndexedVar arr
+  GTLNamed _ tp' -> newUnrolledVar enums tp' base
   _ -> getUndefined enums (Fix tp) $ \u -> do
-    v <- SMT.varNamed $ T.pack base
+    v <- SMT.varNamed' u $ T.pack base
     return $ BasicVar $ USMTExpr $ assertEq u v
 
 existsUnrolledVar :: Map [String] Integer -> GTLType -> (UnrolledVar -> SMTExpr Bool) -> SMTExpr Bool
@@ -151,8 +159,8 @@ step bas stf stt
 
 stepInstance :: BA [TypedExpr String] Integer -> InstanceState -> InstanceState -> SMTExpr Bool
 stepInstance ba stf stt
-  = and' [ (instancePC stf .==. SMT.constant st) .=>. 
-           or' [ and' ((instancePC stt .==. SMT.constant trg):
+  = and' [ (instancePC stf .==. SMT.constant (fromIntegral st)) .=>. 
+           or' [ and' ((instancePC stt .==. SMT.constant (fromIntegral trg)):
                        [let BasicVar v = translateExpr (\v u i -> case u of
                                                            Input -> fst $ (instanceVars stf)!v
                                                            StateIn -> fst $ (instanceVars stf)!v
@@ -169,17 +177,19 @@ translateExpr f (Fix expr)
   = case GTL.getValue expr of
     GTL.Var n i u -> f n u i
     GTL.Value val -> case val of
-      GTLIntVal i -> BasicVar $ USMTExpr $ SMT.constant i
+      GTLIntVal i -> BasicVar $ USMTExpr $ SMT.constant (fromIntegral i :: Word64)
       GTLByteVal w -> BasicVar $ USMTExpr $ SMT.constant w
       GTLBoolVal b -> BasicVar $ USMTExpr $ SMT.constant b
       GTLEnumVal v -> BasicVar $ USMTExpr $ SMT.constant (EnumVal undefined undefined v)
+      GTLArrayVal vs -> IndexedVar $ fmap (translateExpr f) vs
+      GTLTupleVal vs -> IndexedVar $ fmap (translateExpr f) vs
     GTL.BinRelExpr rel l r
       | isNumeric (getType $ unfix l) -> getUndefinedNumeric (getType $ unfix l)
                                          $ \u -> BasicVar $ USMTExpr $ (case rel of
-                                                                           BinLT -> Lt
-                                                                           BinLTEq -> Le
-                                                                           BinGT -> Gt
-                                                                           BinGTEq -> Ge
+                                                                           BinLT -> BVULT
+                                                                           BinLTEq -> BVULE
+                                                                           BinGT -> BVUGT
+                                                                           BinGTEq -> BVUGE
                                                                            BinEq -> Eq
                                                                            BinNEq -> \x y -> SMT.Not (Eq x y))
                                                  (let BasicVar lll = ll in assertEq u $ castUSMT' lll)
@@ -192,11 +202,12 @@ translateExpr f (Fix expr)
         rr = translateExpr f r
     GTL.BinIntExpr op l r
       | getType (unfix l) == gtlInt -> BasicVar $ USMTExpr $ (case op of
-                                                                 OpPlus -> \x y -> Plus [x,y]
-                                                                 OpMinus -> Minus
-                                                                 OpMult -> \x y -> Mult [x,y]
-                                                                 OpDiv -> Div)
-                                       (let BasicVar lll = ll in castUSMT' lll)
+                                                                 OpPlus -> BVAdd
+                                                                 OpMinus -> BVSub
+                                                                 OpMult -> BVMul
+                                                                 --OpDiv -> Div
+                                                             )
+                                       (let BasicVar lll = ll in castUSMT' lll :: SMTExpr Word64)
                                        (let BasicVar rrr = rr in castUSMT' rrr)
       where
         ll = translateExpr f l
@@ -208,7 +219,7 @@ translateExpr f (Fix expr)
 
 initInstance :: Map [String] Integer -> GTLModel String -> BA [TypedExpr String] Integer -> InstanceState -> SMTExpr Bool
 initInstance enums mdl ba inst
-  = and' $ (or' [ (instancePC inst) .==. SMT.constant f
+  = and' $ (or' [ (instancePC inst) .==. SMT.constant (fromIntegral f)
                 | f <- Set.toList (baInits ba) ]):
     [ eqUnrolled
       (fst $ (instanceVars inst)!var)
@@ -233,6 +244,7 @@ typedExprVarName expr = case GTL.getValue (unfix expr) of
                                     BinNEq -> "NEQ") ++ "_"++typedExprVarName lhs++"_"++typedExprVarName rhs
   GTL.Value (GTLIntVal v) -> show v
   GTL.Value (GTLBoolVal b) -> if b then "T" else "F"
+  GTL.Value (GTLEnumVal v) -> "ENUM"++v
   GTL.UnBoolExpr op e' -> (case op of
                               GTL.Not -> "NOT"
                               Always -> "G"
@@ -244,6 +256,7 @@ typedExprVarName expr = case GTL.getValue (unfix expr) of
                                     GTL.Implies -> "IMPL"
                                     GTL.Until _ -> "U"
                                     GTL.UntilOp _ -> "R")++"_"++typedExprVarName lhs++"_"++typedExprVarName rhs
+  _ -> error $ "Please implement typedExprVarName for "++show expr
                                     
 
 newTemporalVars :: String -> TypedExpr (String,String) -> SMT (TemporalVars (String,String))
@@ -263,7 +276,7 @@ newTemporalVars' n expr p
       p1 <- newTemporalVars' n lhs p
       p2 <- newTemporalVars' n rhs p1
       v <- mkvar
-      let p3 = p { formulaEnc = Map.insert expr v (formulaEnc p2) }
+      let p3 = p2 { formulaEnc = Map.insert expr v (formulaEnc p2) }
       case op of
         GTL.Until NoTime
           | Map.member rhs (auxFEnc p3) -> return p3
@@ -368,6 +381,16 @@ getGTLValue :: GTLType -> UnrolledVar -> SMT GTLConstant
 getGTLValue _ (BasicVar v) = useUSMT (\rv -> do
                                          r <- SMT.getValue rv
                                          return $ Fix $ toGTL r) v
+getGTLValue (Fix (GTLArray _ tp)) (IndexedVar vs)
+  = do
+  rv <- mapM (getGTLValue tp) vs
+  return $ Fix $ GTLArrayVal rv
+getGTLValue (Fix (GTLTuple tps)) (IndexedVar vs)
+  = do
+  rv <- mapM (\(v,tp) -> getGTLValue tp v) (zip vs tps)
+  return $ Fix $ GTLTupleVal rv
+getGTLValue (Fix (GTLNamed _ tp)) v = getGTLValue tp v
+getGTLValue tp v = error $ "Can't match type "++show tp++" with "++show v
 
 getVarValues :: GlobalState -> SMT (Map (String,String) GTLConstant)
 getVarValues st = do
@@ -471,8 +494,16 @@ bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) 
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
   let history' = (BMCState cur_state tmp_cur l inloop):history
   -- Simple Path restriction
+  -- This doesn't work
   mapM_ (\st -> assert $ not' $ eqSt (bmcVars last_state) (bmcVars st)) (Prelude.drop 1 history)
   simple_path <- checkSat
+  -- This does neither
+  {-simple_path <- if i==1 then return True
+                 else stack $ do
+                   assert $ forAllList (fromIntegral i - 1) $
+                     \lis -> (exactlyOne lis) .=>. (existsState enums spec $
+                                                    \st -> and' [ li .==. (eqSt st (bmcVars si)) | (li,si) <- zip lis (Prelude.drop 1 history) ])
+                   checkSat-}
   if not simple_path
     then return Nothing
     else (do
@@ -505,22 +536,24 @@ verifyModel solver spec = do
     Nothing -> putStrLn "No errors found in model"
     Just path -> mapM_ print path
 
-forallList :: SMTType a => Integer -> ([SMTExpr a] -> SMTExpr Bool) -> SMTExpr Bool
-forallList n f = forallList' n []
-  where
-    forallList' 0 xs = f xs
-    forallList' n xs = forAll $ \x -> forallList' (n-1) (x:xs)
+{-
+let y3 = l3
+    n3 = not l3
+    y2 = if l2 then n3 else y3
+    n2 = not l2 and n3
+    y1 = if l1 then n2 else y2
+    n1 = not l1 and n2
+    y0 = if l0 then n1 else y1
+    n0 = not l0 and n1
+ in y0
+ -}
 
 exactlyOne :: [SMTExpr Bool] -> SMTExpr Bool
-exactlyOne vs = exactlyOne' vs [] (\vars -> let (_,y,_) = Prelude.head vars
-                                            in and' (y:buildDefs vars))
+exactlyOne [] = SMT.constant False
+exactlyOne (y:ys) = exactlyOne' y (not' y) ys
   where
-    buildDefs [(var,y,n)] = []
-    buildDefs ((var,y,n):rest@((_,y',n'):_)) = [ y .==. (ite var n' y')
-                                               , n .==. and' [not' var,n'] ]
-    
-    exactlyOne' [x] r f = f ((x,x,not' x):r)
-    exactlyOne' (x:xs) r f = exists $ \(y,n) -> exactlyOne' xs ((x,y,n):r) f
+    exactlyOne' y n [] = y
+    exactlyOne' y n (x:xs) = let' (ite x n y) (\y' -> let' (and' [not' x,n]) (\n' -> exactlyOne' y' n' xs))
 
 data EnumVal = EnumVal [String] Integer String deriving Typeable
 
@@ -536,16 +569,21 @@ instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
   unmangle (L.Symbol v) = EnumVal undefined undefined (T.unpack v)
 
+instance ToGTL Word64 where
+  toGTL x = GTLIntVal (fromIntegral x)
+  gtlTypeOf _ = gtlInt
+
 getUndefined :: Map [String] Integer -> GTLType -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -> b
 getUndefined mp rep f = case unfix rep of
-  GTLInt -> f (undefined::Integer)
+  GTLInt -> f (undefined::Word64)
   GTLBool -> f (undefined::Bool)
   GTLEnum enums -> f (EnumVal enums (mp!enums) undefined)
+  GTLNamed _ r -> getUndefined mp r f
   _ -> error $ "Please implement getUndefined for "++show rep++" you lazy fuck"
 
-getUndefinedNumeric :: GTLType -> (forall a. (Typeable a,SMTType a,Num a,ToGTL a,SMTValue a) => a -> b) -> b
+getUndefinedNumeric :: GTLType -> (forall a. (Typeable a,SMTType a,Num a,ToGTL a,SMTValue a,SMTBV a) => a -> b) -> b
 getUndefinedNumeric rep f
-  | rep == gtlInt = f (undefined::Integer)
+  | rep == gtlInt = f (undefined::Word64)
 
 isNumeric :: GTLType -> Bool
 isNumeric (Fix GTLInt) = True
