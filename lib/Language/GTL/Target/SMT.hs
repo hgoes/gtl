@@ -402,6 +402,9 @@ getVarValues st = do
 getPath :: [BMCState] -> SMT [Map (String,String) GTLConstant]
 getPath = mapM (getVarValues.bmcVars) . Prelude.reverse
 
+renderPath :: [Map (String,String) GTLConstant] -> String
+renderPath path = unlines $ concat [ ("Step "++show i):[ "| "++iname++"."++var++" = "++show c | ((iname,var),c) <- Map.toList mp ] | (i,mp) <- zip [0..] path ]
+
 bmc' :: Map [String] Integer -> GTLSpec String
         -> TypedExpr (String,String)
         -> Map String (BA [TypedExpr String] Integer)
@@ -534,7 +537,7 @@ verifyModel solver spec = do
   res <- solve $ bmc spec
   case res of
     Nothing -> putStrLn "No errors found in model"
-    Just path -> mapM_ print path
+    Just path -> putStrLn $ renderPath path
 
 {-
 let y3 = l3
