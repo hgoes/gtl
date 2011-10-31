@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification #-}
+{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification,TypeFamilies #-}
 module Language.GTL.Target.SMT where
 
 import Data.Typeable
@@ -45,7 +45,7 @@ data GlobalState = GlobalState
                    }
 
 data InstanceState = InstanceState
-                     { instanceVars :: Map String (UnrolledVar,GTLType)
+                     { instanceVars :: Map String (UnrolledVar,GTLType,VarUsage)
                      , instancePC :: SMTExpr Word64
                      }
 
@@ -89,7 +89,7 @@ eqUnrolled (BasicVar x) (BasicVar y) = useUSMT (\ex -> ex .==. (castUSMT' y)) x
 eqUnrolled (IndexedVar x) (IndexedVar y) = and' (Prelude.zipWith eqUnrolled x y)
 
 debugState :: GlobalState -> String
-debugState st = Prelude.unlines [ Prelude.unlines (iname:[ "|-"++vname++": "++debugVar var  | (vname,(var,tp)) <- Map.toList (instanceVars inst) ])
+debugState st = Prelude.unlines [ Prelude.unlines (iname:[ "|-"++vname++": "++debugVar var  | (vname,(var,tp,_)) <- Map.toList (instanceVars inst) ])
                                 | (iname,inst) <- Map.toList (instanceStates st) ]
 
 debugVar :: UnrolledVar -> String
@@ -113,16 +113,32 @@ newState enums spec n = do
 
 newInstanceState :: Map [String] Integer -> String -> GTLModel String -> String -> SMT InstanceState
 newInstanceState enums iname mdl n = do
-  mp <- mapM (\(name,tp) -> do
-                 var <- newUnrolledVar enums tp ("v"++n++"_"++iname++"_"++name)
-                 return (name,(var,tp))) $
-        Map.toAscList $ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]
+  mp_inp <- mapM (\(name,tp) -> do
+                     var <- newUnrolledVar enums tp ("v"++n++"_"++iname++"_"++name)
+                     return (name,(var,tp,Input))) $
+            Map.toAscList $ gtlModelInput mdl
+  mp_outp <- mapM (\(name,tp) -> do
+                      var <- newUnrolledVar enums tp ("v"++n++"_"++iname++"_"++name)
+                      return (name,(var,tp,Output))) $
+             Map.toAscList $ gtlModelOutput mdl
+  mp_loc <- mapM (\(name,tp) -> do
+                     var <- newUnrolledVar enums tp ("v"++n++"_"++iname++"_"++name)
+                     return (name,(var,tp,StateOut))) $
+            Map.toAscList $ gtlModelLocals mdl
   pc <- SMT.varNamed $ T.pack $ "pc"++n++"_"++iname
-  return $ InstanceState (Map.fromAscList mp) pc
+  return $ InstanceState (Map.unions [Map.fromAscList mp_inp,Map.fromAscList mp_outp,Map.fromAscList mp_loc]) pc
 
 eqInst :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInst st1 st2 = and' ((instancePC st1 .==. instancePC st2):
-                       (Map.elems $ Map.intersectionWith (\(v1,_) (v2,_) -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
+                       (Map.elems $ Map.intersectionWith (\(v1,_,_) (v2,_,_) -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
+
+eqInstOutp :: InstanceState -> InstanceState -> SMTExpr Bool
+eqInstOutp st1 st2 
+  = and' ((instancePC st1 .==. instancePC st2):
+          (Map.elems $ Map.intersectionWith (\(v1,_,u) (v2,_,_)
+                                             -> case u of
+                                               Input -> SMT.constant True
+                                               _ -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
 
 eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
 eqSt st1 st2 = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates st1) (instanceStates st2)
@@ -134,17 +150,21 @@ existsState enums spec f = genExists (Map.toDescList $ gtlSpecInstances spec) []
     genExists ((i,inst):xs) ys = existsInstanceState enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) $ \is -> genExists xs ((i,is):ys)
 
 existsInstanceState :: Map [String] Integer -> GTLModel String -> (InstanceState -> SMTExpr Bool) -> SMTExpr Bool
-existsInstanceState enums mdl f = genExists (Map.toDescList $ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]) []
+existsInstanceState enums mdl f = genExists (Map.toDescList $ Map.unions 
+                                             [fmap (\x -> (x,Input)) $ gtlModelInput mdl
+                                             ,fmap (\x -> (x,Output)) $ gtlModelOutput mdl
+                                             ,fmap (\x -> (x,StateOut)) $ gtlModelLocals mdl]) []
   where
     genExists [] ys = exists $ \pc -> f (InstanceState (Map.fromAscList ys) pc)
-    genExists ((vn,vt):xs) ys = existsUnrolledVar enums vt $ \v -> genExists xs ((vn,(v,vt)):ys)
+    genExists ((vn,(vt,vu)):xs) ys = existsUnrolledVar enums vt $ \v -> genExists xs ((vn,(v,vt,vu)):ys)
 
 indexUnrolled :: UnrolledVar -> [Integer] -> UnrolledVar
 indexUnrolled v [] = v
 indexUnrolled (IndexedVar vs) (i:is) = indexUnrolled (vs `genericIndex` i) is
 
 getVar :: String -> String -> [Integer] -> GlobalState -> UnrolledVar
-getVar inst name idx st = indexUnrolled (fst $ (instanceVars $ (instanceStates st)!inst)!name) idx
+getVar inst name idx st = let (v,vt,vu) = (instanceVars $ (instanceStates st)!inst)!name
+                          in indexUnrolled v idx
 
 connections :: [(GTLConnectionPoint String,GTLConnectionPoint String)] -> GlobalState -> GlobalState -> SMTExpr Bool
 connections conns stf stt
@@ -152,20 +172,41 @@ connections conns stf stt
          | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- conns
          ]
 
+class Scheduling s where
+  type SchedulingData s
+  createSchedulingData :: s -> Set String -> SMT (SchedulingData s)
+  schedule :: s -> SchedulingData s -> Map String (BA [TypedExpr String] Integer) -> GlobalState -> GlobalState -> SMTExpr Bool
+
+data SimpleScheduling = SimpleScheduling
+
+instance Scheduling SimpleScheduling where
+  type SchedulingData SimpleScheduling = ()
+  createSchedulingData _ _ = return ()
+  schedule _ _ mp stf stt = or' [ and' ((stepInstance ba ((instanceStates stf)!iname) ((instanceStates stt)!iname))
+                                        :[ eqInstOutp inst ((instanceStates stt)!iname')
+                                         | (iname',inst) <- Map.toList (instanceStates stf)
+                                         , iname /= iname'
+                                         ])
+                                | (iname,ba) <- Map.toList mp
+                                ]
+
 step :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> GlobalState -> SMTExpr Bool
 step bas stf stt 
   = and' [ stepInstance ba ((instanceStates stf)!name) ((instanceStates stt)!name)
          | (name,ba) <- Map.toList bas ]
+
+fst3 :: (a,b,c) -> a
+fst3 (x,_,_) = x
 
 stepInstance :: BA [TypedExpr String] Integer -> InstanceState -> InstanceState -> SMTExpr Bool
 stepInstance ba stf stt
   = and' [ (instancePC stf .==. SMT.constant (fromIntegral st)) .=>. 
            or' [ and' ((instancePC stt .==. SMT.constant (fromIntegral trg)):
                        [let BasicVar v = translateExpr (\v u i -> case u of
-                                                           Input -> fst $ (instanceVars stf)!v
-                                                           StateIn -> fst $ (instanceVars stf)!v
-                                                           Output -> fst $ (instanceVars stt)!v
-                                                           StateOut -> fst $ (instanceVars stt)!v) c
+                                                           Input -> fst3 $ (instanceVars stf)!v
+                                                           StateIn -> fst3 $ (instanceVars stf)!v
+                                                           Output -> fst3 $ (instanceVars stt)!v
+                                                           StateOut -> fst3 $ (instanceVars stt)!v) c
                         in castUSMT' v
                        | c <- cond ])
                | (cond,trg) <- trans
@@ -222,8 +263,8 @@ initInstance enums mdl ba inst
   = and' $ (or' [ (instancePC inst) .==. SMT.constant (fromIntegral f)
                 | f <- Set.toList (baInits ba) ]):
     [ eqUnrolled
-      (fst $ (instanceVars inst)!var)
-      (translateExpr (\v _ _ -> fst $ (instanceVars inst)!v) (constantToExpr (Map.keysSet enums) def))
+      (fst3 $ (instanceVars inst)!var)
+      (translateExpr (\v _ _ -> fst3 $ (instanceVars inst)!v) (constantToExpr (Map.keysSet enums) def))
     | (var,Just def) <- Map.toList $ gtlModelDefaults mdl ]
 
 initState :: Map [String] Integer -> GTLSpec String -> Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
@@ -352,8 +393,8 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     nself = (formulaEnc nxt)!expr
 
 
-bmc :: GTLSpec String -> SMT (Maybe [Map (String,String) GTLConstant])
-bmc spec = do
+bmc :: Scheduling s => s -> GTLSpec String -> SMT (Maybe [Map (String,String) GTLConstant])
+bmc sched spec = do
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                formula = case gtlInstanceContract inst of
@@ -369,7 +410,8 @@ bmc spec = do
   tmp_l <- newTemporalVars "l" formula
   loop_exists <- SMT.varNamed $ T.pack $ "loop_exists"
   se <- newState enums spec "e"
-  bmc' enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se []
+  sdata <- createSchedulingData sched (Map.keysSet $ gtlSpecInstances spec)
+  bmc' sched sdata enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se []
 
 data BMCState = BMCState { bmcVars :: GlobalState
                          , bmcTemporals :: TemporalVars (String,String)
@@ -394,7 +436,7 @@ getGTLValue tp v = error $ "Can't match type "++show tp++" with "++show v
 
 getVarValues :: GlobalState -> SMT (Map (String,String) GTLConstant)
 getVarValues st = do
-  lst <- mapM (\(iname,inst) -> mapM (\(vname,(var,tp)) -> do
+  lst <- mapM (\(iname,inst) -> mapM (\(vname,(var,tp,us)) -> do
                                          c <- getGTLValue tp var
                                          return ((iname,vname),c)) (Map.toList $ instanceVars inst)) (Map.toList $ instanceStates st)
   return $ Map.fromList (Prelude.concat lst)
@@ -405,7 +447,8 @@ getPath = mapM (getVarValues.bmcVars) . Prelude.reverse
 renderPath :: [Map (String,String) GTLConstant] -> String
 renderPath path = unlines $ concat [ ("Step "++show i):[ "| "++iname++"."++var++" = "++show c | ((iname,var),c) <- Map.toList mp ] | (i,mp) <- zip [0..] path ]
 
-bmc' :: Map [String] Integer -> GTLSpec String
+bmc' :: Scheduling s => s -> SchedulingData s
+        -> Map [String] Integer -> GTLSpec String
         -> TypedExpr (String,String)
         -> Map String (BA [TypedExpr String] Integer)
         -> TemporalVars (String,String)
@@ -414,7 +457,7 @@ bmc' :: Map [String] Integer -> GTLSpec String
         -> SMTExpr Bool 
         -> GlobalState
         -> [BMCState] -> SMT (Maybe [Map (String,String) GTLConstant])
-bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
+bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
   init <- newState enums spec "0"
   l <- SMT.varNamed $ T.pack "l0"
   inloop <- SMT.varNamed $ T.pack "inloop0"
@@ -467,15 +510,16 @@ bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
       then getPath hist >>= return.Just
       else return Nothing
   case res of
-    Nothing -> bmc' enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se hist
+    Nothing -> bmc' sched sdata enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se hist
     Just path -> return $ Just path
-bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) = do
+bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) = do
   let i = length history
   cur_state <- newState enums spec (show i)
   tmp_nxt <- newTemporalVars (show $ i+1) f
   l <- SMT.varNamed $ T.pack $ "l"++show i
   inloop <- SMT.varNamed $ T.pack $ "inloop"++show i
-  assert $ step bas (bmcVars last_state) cur_state
+  --assert $ step bas (bmcVars last_state) cur_state
+  assert $ schedule sched sdata bas (bmcVars last_state) cur_state
   assert $ connections (gtlSpecConnections spec) cur_state cur_state
   
   -- k-invariant case for LoopConstraints:
@@ -497,9 +541,20 @@ bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) 
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
   let history' = (BMCState cur_state tmp_cur l inloop):history
   -- Simple Path restriction
+  simple_path <- return True
   -- This doesn't work
-  mapM_ (\st -> assert $ not' $ eqSt (bmcVars last_state) (bmcVars st)) (Prelude.drop 1 history)
-  simple_path <- checkSat
+  {-mapM_ (\st -> assert $ or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
+                             ,not' $ (bmcInLoop last_state) .==. (bmcInLoop st)
+                             ,not' $ ((formulaEnc (bmcTemporals last_state))!f)
+                              .==. ((formulaEnc (bmcTemporals st))!f)
+                             ,and' [bmcInLoop last_state
+                                   ,bmcInLoop st
+                                   ,or' [not' $ ((formulaEnc (bmcTemporals last_state))!f) 
+                                         .==. ((formulaEnc (bmcTemporals st))!f)]
+                                   ]
+                             ]
+        ) (Prelude.drop 1 history)
+  simple_path <- checkSat-}
   -- This does neither
   {-simple_path <- if i==1 then return True
                  else stack $ do
@@ -527,14 +582,14 @@ bmc' enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(last_state:_) 
                  else return Nothing
              case res of  
                Just path -> return $ Just path
-               Nothing -> bmc' enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se history')
+               Nothing -> bmc' sched sdata enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se history')
 
 verifyModel :: Maybe String -> GTLSpec String -> IO ()
 verifyModel solver spec = do
   let solve = case solver of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc spec
+  res <- solve $ bmc SimpleScheduling spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
