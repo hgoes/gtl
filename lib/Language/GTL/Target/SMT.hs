@@ -402,9 +402,6 @@ bmc sched spec = do
                                  Just con -> gand con (gtlModelContract mdl)
                            in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
       formula = GTL.distributeNot (gtlSpecVerify spec)
-  if Map.null enums
-    then return ()
-    else declareEnums enums
   tmp_cur <- newTemporalVars "0" formula
   tmp_e <- newTemporalVars "e" formula
   tmp_l <- newTemporalVars "l" formula
@@ -658,8 +655,3 @@ enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,
                                                   let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                                 ])
                in Map.fromList (Prelude.zip (Set.toList enums) [0..])
-
-declareEnums :: Map [String] Integer -> SMT ()
-declareEnums mp = declareDatatypes [] 
-                  [ (T.pack $ "Enum"++show n,[ (T.pack val,[]) | val <- vals ])
-                  | (vals,n) <- Map.toList mp ]
