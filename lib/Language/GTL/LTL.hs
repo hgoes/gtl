@@ -28,6 +28,7 @@ import qualified Data.List as List
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
+import Language.GTL.BuchiHistory
 import Language.GTL.Expression (ExprOrdering(..))
 import qualified Data.IntMap as IMap
 import qualified Data.IntSet as ISet
@@ -114,6 +115,9 @@ instance Show a => Show (LTL a) where
                            else showString "ff" --showChar '\x22a5'
   showsPrec p (LTLAutomaton b) = showsPrec p b
 
+instance Show a => HistoryState (LTL a) where
+  showState = show
+
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
 distributeNegation (Ground p) = Ground p
@@ -184,10 +188,7 @@ instance Ord a => AtomContainer (Map a Bool) a where
 
 -- | Merge redundant transitions in a B&#xFC;chi automaton.
 optimizeTransitionsBA :: (Ord st,AtomContainer b a,Ord b) => BA b st -> BA b st
-optimizeTransitionsBA ba = BA { baTransitions = ntrans
-                              , baInits = baInits ba
-                              , baFinals = baFinals ba
-                              }
+optimizeTransitionsBA ba = ba { baTransitions = ntrans }
   where
     ntrans = fmap (minimizeTrans []) (baTransitions ba)
 
@@ -208,6 +209,7 @@ minimizeBA :: (AtomContainer b a,Ord st,Ord b) => BA b st -> BA b st
 minimizeBA ba = BA { baTransitions = ntrans
                    , baInits = ninit
                    , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
+                   , baHistory = baHistory ba
                    }
   where
     ntrans = Map.fromList ntrans'
@@ -236,6 +238,7 @@ gba2ba :: (Ord st, AtomContainer b a, Ord b) => GBA b st -> BA b (Set st,Int)
 gba2ba gba = BA { baInits = inits
                 , baFinals = Set.map (\x -> (x,final_size)) (Map.keysSet (gbaTransitions gba))
                 , baTransitions = buildTrans (Set.toList inits) Map.empty
+                , baHistory = NoHistory
                 }
   where
     inits = Set.map (\x -> (x,0)) (gbaInits gba)
@@ -542,7 +545,7 @@ transUnion :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b
 transUnion = (++)
 
 -- | Translate a LTL formula into a B&#xFC;chi automaton
-ltl2ba :: AtomContainer [a] a => LTL a -> BA [a] Integer
+ltl2ba :: (AtomContainer [a] a, Show a) => LTL a -> BA [a] Integer
 ltl2ba f = let (f',auts) = extractAutomata f
                mprod b1 b2 = renameStates $ baProduct b1 b2
            in renameStates $ optimizeTransitionsBA $ minimizeBA $ case f' of
@@ -553,14 +556,16 @@ ltl2ba f = let (f',auts) = extractAutomata f
 
 -- | Construct the product automaton for two B&#xFC;chi automata.
 baProduct :: (Ord a,Ord st,Ord st',AtomContainer a b) => BA a st -> BA a st' -> BA a (st,st',Bool)
-baProduct b1 b2 
+baProduct b1 b2
   | Map.keysSet (baTransitions b1) == baFinals b1 = BA { baTransitions = trans'
                                                        , baInits = Set.fromList inits'
                                                        , baFinals = fins'
+                                                       , baHistory = Product (baHistory b1) (baHistory b2)
                                                        }
   | otherwise = BA { baTransitions = trans
                    , baInits = Set.fromList inits'
                    , baFinals = fins
+                   , baHistory = Product (baHistory b1) (baHistory b2)
                    }
   where
     inits' = [ (i1,i2,False)

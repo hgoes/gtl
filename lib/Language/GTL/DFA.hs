@@ -1,7 +1,8 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances,
+  ExistentialQuantification #-}
 
 module Language.GTL.DFA (
-    DFA(..), determinizeBA, minimizeDFA, renameDFAStates, unTotal
+    DFA(..), determinizeBA, minimizeDFA, renameDFAStates, unTotal, showDfaHistory
   )
   where
 
@@ -11,6 +12,7 @@ import Data.Map as Map
 import Data.Maybe
 import Data.Foldable (foldl, find)
 import Language.GTL.Buchi
+import Language.GTL.BuchiHistory
 
 -- Models total functions via mapping structures. The instances may not really be total,
 -- this has to be ensured by the user (how should that be checked?).
@@ -26,6 +28,19 @@ instance Ord a => TotalFunction (MakeTotal (Map a b)) a b where
 
 type DFATransitionFunc a st = MakeTotal (Map st (Map a st))
 
+data DFAHistory =
+  NoDfaHistory
+  | FromBA BAHistory
+  | PowerSet DFAHistory
+  | Minimize DFAHistory
+  | forall a. (HistoryState a) => RenameDfa (Map a Integer) DFAHistory
+
+showDfaHistory NoDfaHistory = "none"
+showDfaHistory (FromBA h) = showBaHistory h
+showDfaHistory (PowerSet h) = "power(" ++ showDfaHistory h ++ ")"
+showDfaHistory (Minimize h) = "minimize(" ++ showDfaHistory h ++ ")"
+showDfaHistory (RenameDfa m h) = "rename(" ++ (showDfaHistory h) ++ ", " ++ (showStateMap m) ++ ")"
+
 {-| Not a real DFA. Has no final states as they are not needed (the acceptance condition
     of the Buchi automaton can not be represented). The semantics are that the automaton
     should never stop (see below).
@@ -36,6 +51,7 @@ type DFATransitionFunc a st = MakeTotal (Map st (Map a st))
 data DFA a st = DFA { dfaTransitions :: DFATransitionFunc a st
                   , dfaInit :: st
                   -- , dfaFinals :: Set st -- Not needed at the moment
+                  , dfaHistory :: DFAHistory
                   }
 
 instance (Show a,Show st,Ord st) => Show (DFA a st) where
@@ -77,8 +93,9 @@ determinizeBA ba
           initS = Set.singleton $ Set.findMin $ baInits ba
           (trans, states) = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
       in Just $ DFA {
-          dfaTransitions = MakeTotal trans,
-          dfaInit = initS
+          dfaTransitions = MakeTotal trans
+          , dfaInit = initS
+          , dfaHistory = PowerSet $ FromBA $ baHistory ba
         }
       where
         determinize' :: (Eq a, Ord a, Eq st, Ord st) =>
@@ -125,7 +142,7 @@ minimizeDFA dfa =
       eqClasses = findEqClasses dfa initEqClasses
       trans' = buildMinDFA dfa eqClasses
       init' = fromJust $ find (Set.member $ dfaInit dfa) eqClasses
-  in DFA (MakeTotal trans') init'
+  in DFA (MakeTotal trans') init' (Minimize (dfaHistory dfa))
   where
     getEquivClass eqClasses s = fromJust $ find (Set.member s) eqClasses -- the state is guaranteed to be in some class
 
@@ -158,9 +175,9 @@ minimizeDFA dfa =
         buildTrans :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> PowSetSt st -> Map a (PowSetSt st)
         buildTrans dfa eqClasses = foldl (\trans s -> trans `Map.union` (Map.map (getEquivClass eqClasses) (dfaTransitions dfa !$ s))) Map.empty
 
-renameDFAStates :: (Eq st, Ord st) => DFA a st -> DFA a Integer
+renameDFAStates :: (Eq st, Ord st, HistoryState st) => DFA a st -> DFA a Integer
 renameDFAStates dfa =
   let stateMap = MakeTotal $ fst $ foldl (\(sMap, i) s -> (Map.insert s i sMap, i + 1)) (Map.empty, 0::Integer) $ states dfa
       trans' = Map.mapKeysMonotonic (stateMap !$) $ Map.map (Map.map (stateMap !$)) $ unTotal $ dfaTransitions dfa
       init' = stateMap !$ (dfaInit dfa) :: Integer
-  in DFA (MakeTotal trans') init'
+  in DFA (MakeTotal trans') init' (RenameDfa (unTotal stateMap) (dfaHistory dfa))

@@ -28,6 +28,7 @@ Library
     Language.GTL.Backend.All
     Language.GTL.Expression
     Language.GTL.Buchi
+    Language.GTL.BuchiHistory
     Language.GTL.Types
     Language.GTL.Restriction
     Language.GTL.DFA

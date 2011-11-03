@@ -3,6 +3,8 @@
     paper "Fast LTL to B&#xFC;chi Automata Translation" by Gastin and Oddoux. -}
 module Language.GTL.Buchi where
 
+import Language.GTL.BuchiHistory
+
 import Data.Map as Map
 import Data.Set as Set
 import Data.Foldable
@@ -28,7 +30,20 @@ data GBA a st = GBA { gbaTransitions :: Map (Set st) (Set (a,Set st,Set st))
 data BA a st = BA { baTransitions :: Map st [(a,st)]
                   , baInits :: Set st
                   , baFinals :: Set st
-                  } deriving (Eq,Ord)
+                  , baHistory :: BAHistory
+                  }
+
+instance (Eq a, Eq st) => Eq (BA a st) where
+  b1 == b2 = (baTransitions b1 == baTransitions b2)
+            && (baInits b1 == baInits b2)
+            && (baFinals b1 == baFinals b2)
+
+instance (Ord a, Ord st) => Ord (BA a st) where
+  compare b1 b2 = case compare (baTransitions b1) (baTransitions b2) of
+    EQ -> case compare (baInits b1) (baInits b2) of
+      EQ -> compare (baFinals b1) (baFinals b2)
+      o -> o
+    o -> o
 
 instance (Binary a,Binary st,Ord st) => Binary (BA a st) where
   put ba = do
@@ -39,7 +54,7 @@ instance (Binary a,Binary st,Ord st) => Binary (BA a st) where
     trans <- get
     inits <- get
     fins <- get
-    return $ BA trans inits fins
+    return $ BA trans inits fins NoHistory
 
 instance (Show a,Show st,Ord st) => Show (BA a st) where
   show ba = unlines $ concat [ [(if Set.member st (baInits ba)
@@ -78,7 +93,7 @@ baMapAlphabet :: (Ord a,Ord b,Ord st) => (a -> b) -> BA a st -> BA b st
 baMapAlphabet f ba = ba { baTransitions = fmap (fmap (\(c,trg) -> (f c,trg))) (baTransitions ba) }
 
 -- | Enumerates all states starting from 0 thus reducing the space needed to store the automaton.
-renameStates :: Ord st => BA a st -> BA a Integer
+renameStates :: (Ord st, HistoryState st) => BA a st -> BA a Integer
 renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions ba)
                       trans' = fmap (\trg -> fmap (\(c,t) -> (c,stmp!t)) trg) $ Map.mapKeysMonotonic (\k -> stmp!k) (baTransitions ba)
                       inits' = Set.mapMonotonic (stmp!) (baInits ba)
@@ -86,6 +101,7 @@ renameStates ba = let (_,stmp) = Map.mapAccum (\i _ -> (i+1,i)) 0 (baTransitions
                   in BA { baTransitions = trans'
                         , baInits = inits'
                         , baFinals = fins'
+                        , baHistory = Rename stmp (baHistory ba)
                         }
 
 removeDeadlocks :: (Ord a,Ord st) => BA a st -> BA a st
@@ -103,6 +119,7 @@ removeDeadlocks ba
     in BA { baTransitions = ntrans
           , baInits = Set.intersection (baInits ba) (Map.keysSet ntrans)
           , baFinals = Set.intersection (baFinals ba) (Map.keysSet ntrans)
+          , baHistory = baHistory ba
           }
 
 {- Farewell, all joys! Oh death, come close mine eyes!

@@ -3,7 +3,7 @@
   DeriveFunctor,RankNTypes #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
-module Language.GTL.Expression 
+module Language.GTL.Expression
        (Fix(..),
         Term(..),
         GTLConstant,
@@ -47,6 +47,7 @@ module Language.GTL.Expression
 import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
 import Language.GTL.Buchi
+import Language.GTL.BuchiHistory
 import Language.GTL.Types
 
 import Data.Binary
@@ -62,7 +63,7 @@ import Control.Monad.Error ()
 import Control.Exception
 import Data.Fix
 import Debug.Trace
- 
+
 data VarUsage = Input
               | Output
               | StateIn
@@ -251,10 +252,10 @@ instance Binary2 a => Binary2 (Typed a) where
     tp <- get
     val <- get2
     return (Typed tp val)
-    
+
 instance Eq v => Eq2 (Term v) where
   eq2 = (==)
-  
+
 instance Ord v => Ord2 (Term v) where
   compare2 = compare
 
@@ -277,7 +278,7 @@ instance Ord v => Ord2 (Typed (Term v)) where
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
 showTerm f (Var name lvl u) = (if u == StateOut
-                              then "#out " 
+                              then "#out "
                               else "") ++ show name ++ (if lvl==0
                                                         then ""
                                                         else "_"++show lvl)
@@ -513,11 +514,12 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
       return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> [ (case cond of
                                                                              Nothing -> tcond
                                                                              Just t -> t:tcond,trg)
-                                                                       | (cond,trg) <- nxts, 
+                                                                       | (cond,trg) <- nxts,
                                                                          let (_,_,tcond,_) = stmp!trg
                                                                        ]) stmp
                               , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
                               , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
+                              , baHistory = NoHistory
                               }
     parseTerm' mu f ex inf (GIndex expr ind) = do
       rind <- case ind of
@@ -581,7 +583,7 @@ getTermVars mu expr = case getValue expr of
   UnBoolExpr op p -> mu p
   IndexExpr e i -> fmap (\(v,u,idx,lvl,tp) -> (v,u,i:idx,lvl,tp)) (mu e)
   Automaton buchi -> concat [ concat $ fmap mu cond
-                            | trans <- Map.elems (baTransitions buchi), 
+                            | trans <- Map.elems (baTransitions buchi),
                               (cond,_) <- trans
                             ]
   BuiltIn _ args -> concat $ fmap mu args
@@ -801,7 +803,7 @@ getClocks (Fix e) = case getValue e of
 
 automatonClocks :: (a -> [TypedExpr v]) -> BA a st -> [Integer]
 automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
-                               | trans <- Map.elems (baTransitions aut), 
+                               | trans <- Map.elems (baTransitions aut),
                                  (cond,_) <- trans
                                ]
 

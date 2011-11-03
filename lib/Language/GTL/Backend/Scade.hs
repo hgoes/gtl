@@ -88,6 +88,7 @@ instance GTLBackend Scade where
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
         dump opts gtlName name buchi
+        dumpStatemap opts gtlName name dfa
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
@@ -111,10 +112,17 @@ instance GTLBackend Scade where
               else return Nothing
 
 -- | Deals with dumping debug informations.
-dump opts gtlName name buchi =
-  if "dump-buchi" `Set.member` (debug opts) then
+dump opts gtlName name buchi
+  | "dump-buchi" `Set.member` (debug opts) =
     writeFile ((outputPath opts) </> (gtlName ++ name ++ "-buchi" ++ ".txt")) (show buchi)
-  else return ()
+  | otherwise = return ()
+
+dumpStatemap opts gtlName name dfa
+  | "dump-statemap" `Set.member` (debug opts) =
+    case dfa of
+      Just a -> writeFile ((outputPath opts) </> (gtlName ++ name ++ "-statemap" ++ ".txt")) (showDfaHistory $ dfaHistory a)
+      Nothing -> return ()
+  | otherwise = return ()
 
 generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
 generateProver name nodePath ins outs

@@ -17,6 +17,7 @@ import Data.List (genericLength,elemIndex)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
+import Language.GTL.BuchiHistory
 import Language.GTL.Expression as GTL
 import Language.GTL.Types
 
@@ -70,7 +71,7 @@ atomToC f (Fix expr) = case getValue expr of
   UnBoolExpr GTL.Not p -> "!"++atomToC f p
 
 -- | Convert a GTL value to a C value
-valueToC :: GTLType -> GTLValue a -> String      
+valueToC :: GTLType -> GTLValue a -> String
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
@@ -121,6 +122,7 @@ traceToBuchi :: Trace -> BA [TypedExpr (String,String)] Integer
 traceToBuchi trace = BA { baTransitions = Map.fromList $ end:trans
                         , baInits = Set.singleton 0
                         , baFinals = Set.singleton len
+                        , baHistory = NoHistory
                         }
   where
     len = genericLength trace
