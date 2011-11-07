@@ -19,6 +19,8 @@ import Data.Traversable
 import Prelude hiding (mapM,sequence)
 import Data.List (genericIndex,intersperse)
 import Data.Word
+import Control.Concurrent
+import Control.Concurrent.Chan
 
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
 
@@ -255,6 +257,16 @@ translateExpr f (Fix expr)
         rr = translateExpr f r
     GTL.IndexExpr expr' idx -> let IndexedVar vars = translateExpr f expr'
                                in genericIndex vars idx
+    GTL.BinBoolExpr op l r -> BasicVar $ USMTExpr (case op of
+                                                      GTL.And -> and' [lll,rrr]
+                                                      GTL.Or -> or' [lll,rrr]
+                                                      GTL.Implies -> lll .=>. rrr
+                                                  )
+      where
+        BasicVar ll = translateExpr f l
+        BasicVar rr = translateExpr f r
+        lll = castUSMT' ll
+        rrr = castUSMT' rr
     GTL.UnBoolExpr GTL.Not arg -> let BasicVar ll = translateExpr f arg
                                   in BasicVar $ USMTExpr $ not' $ castUSMT' ll
 
@@ -586,7 +598,8 @@ verifyModel solver spec = do
   let solve = case solver of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc SimpleScheduling spec
+  --res <- solve $ bmc SimpleScheduling spec
+  res <- kInduction SimpleScheduling solve spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
@@ -655,3 +668,110 @@ enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,
                                                   let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                                 ])
                in Map.fromList (Prelude.zip (Set.toList enums) [0..])
+
+kInduction :: Scheduling s => s -> (SMT () -> IO ()) -> GTLSpec String -> IO (Maybe [Map (String,String) GTLConstant])
+kInduction sched solver spec = do
+  let enums = enumMap spec
+      bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                               formula = case gtlInstanceContract inst of
+                                 Nothing -> gtlModelContract mdl
+                                 Just con -> gand con (gtlModelContract mdl)
+                           in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
+      Fix (Typed _ (UnBoolExpr Always formula)) = gtlSpecVerify spec
+  baseCaseOrders <- newChan
+  indCaseOrders <- newChan
+  baseCaseResults <- newChan
+  indCaseResults <- newChan
+  baseCase <- forkIO $ solver $ do
+    sched_data <- createSchedulingData sched (Map.keysSet bas)
+    start <- newState enums spec "0"
+    assert $ initState enums spec bas start
+    kInductionBase baseCaseOrders baseCaseResults (encodeProperty formula) enums spec bas sched sched_data [] start 1
+  indCase <- forkIO $ solver $ do
+    sched_data <- createSchedulingData sched (Map.keysSet bas)
+    start <- newState enums spec "0"
+    kInductionInd indCaseOrders indCaseResults (encodeProperty formula) enums spec bas sched sched_data start 1 
+  kInduction' baseCaseOrders indCaseOrders baseCaseResults indCaseResults
+
+kInduction' :: Chan Bool -> Chan Bool -> Chan (Maybe [Map (String,String) GTLConstant]) -> Chan Bool -> IO (Maybe [Map (String,String) GTLConstant])
+kInduction' baseCaseOrders indCaseOrders baseCaseResults indCaseResults = do
+  --writeChan baseCaseOrders True
+  writeChan indCaseOrders True
+  base <- return Nothing --readChan baseCaseResults
+  case base of
+    Just counterExample -> do
+      writeChan indCaseOrders False
+      return (Just counterExample)
+    Nothing -> do
+      ind <- readChan indCaseResults
+      if ind
+        then return Nothing
+        else kInduction' baseCaseOrders indCaseOrders baseCaseResults indCaseResults
+
+
+encodeProperty :: TypedExpr (String,String) -> GlobalState -> SMTExpr Bool
+encodeProperty expr st = let BasicVar var = translateExpr (\(m,n) _ h -> fst3 $ (instanceVars $ (instanceStates st)!m)!n) expr
+                         in castUSMT' var
+
+kInductionBase :: Scheduling s => Chan Bool -> Chan (Maybe [Map (String,String) GTLConstant])
+                  -> (GlobalState -> SMTExpr Bool)
+                  -> Map [String] Integer -> GTLSpec String -> Map String (BA [TypedExpr String] Integer)
+                  -> s -> SchedulingData s
+                  -> [GlobalState] -> GlobalState -> Integer -> SMT ()
+kInductionBase orders results prop enums spec bas sched sched_data all last n = do
+  continue <- liftIO $ readChan orders
+  if continue
+    then (do
+             assert $ connections (gtlSpecConnections spec) last last
+             res <- stack $ do
+               assert $ not' $ prop last
+               r <- checkSat
+               if r then (do
+                             -- A counter example has been found
+                             path <- mapM getVarValues (Prelude.reverse $ (last:all))
+                             return (Just path)
+                         )
+                 else return Nothing
+             case res of
+               Just path -> liftIO $ writeChan results (Just path)
+               Nothing -> do
+                 liftIO $ writeChan results Nothing
+                 next <- newState enums spec (show n)
+                 assert $ prop last
+                 assert $ schedule sched sched_data bas last next
+                 kInductionBase orders results prop enums spec bas sched sched_data (last:all) next (n+1)
+         )
+    else return ()
+
+kInductionInd :: Scheduling s => Chan Bool -> Chan Bool
+                 -> (GlobalState -> SMTExpr Bool)
+                 -> Map [String] Integer -> GTLSpec String -> Map String (BA [TypedExpr String] Integer)
+                 -> s -> SchedulingData s
+                 -> GlobalState -> Integer -> SMT ()
+kInductionInd orders results prop enums spec bas sched sched_data last n = do
+  continue <- liftIO $ readChan orders
+  if continue
+    then (do
+             assert $ connections (gtlSpecConnections spec) last last
+             assert $ limitPCs bas last
+             res <- stack $ do
+               assert $ not' $ prop last
+               checkSat
+             if res then (do
+                             -- The property is not n-inductive
+                             liftIO $ writeChan results False
+                             next <- newState enums spec (show n)
+                             assert $ prop last
+                             --assert $ step bas last next
+                             assert $ schedule sched sched_data bas last next
+                             kInductionInd orders results prop enums spec bas sched sched_data next (n+1)
+                         )
+               else (liftIO $ writeChan results True)
+         )
+    else return ()
+
+limitPCs :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
+limitPCs bas st = and' $ concat
+                  [ [BVUGE (instancePC inst) 0
+                    ,BVULT (instancePC inst) (SMT.constant (fromIntegral sz))]
+                  | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ]
