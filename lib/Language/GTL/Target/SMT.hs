@@ -642,16 +642,27 @@ bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(la
                Just path -> return $ Just path
                Nothing -> bmc' sched sdata enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se history')
 
-verifyModel :: Maybe String -> GTLSpec String -> IO ()
-verifyModel solver spec = do
+-- | Verify a given specification using K-Induction
+verifyModelKInduction :: Maybe String -> GTLSpec String -> IO ()
+verifyModelKInduction solver spec = do
   let solve = case solver of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  --res <- solve $ bmc SimpleScheduling spec
   res <- kInduction SimpleScheduling solve spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
+
+verifyModelBMC :: Maybe String -> GTLSpec String -> IO ()
+verifyModelBMC solver spec = do
+  let solve = case solver of
+        Nothing -> withZ3
+        Just x -> withSMTSolver x
+  res <- solve $ bmc SimpleScheduling spec
+  case res of
+    Nothing -> putStrLn "No errors found in model"
+    Just path -> putStrLn $ renderPath path
+
 
 {-
 let y3 = l3
@@ -745,9 +756,9 @@ kInduction sched solver spec = do
 
 kInduction' :: Chan Bool -> Chan Bool -> Chan (Maybe [Map (String,String) GTLConstant]) -> Chan Bool -> IO (Maybe [Map (String,String) GTLConstant])
 kInduction' baseCaseOrders indCaseOrders baseCaseResults indCaseResults = do
-  --writeChan baseCaseOrders True
+  writeChan baseCaseOrders True
   writeChan indCaseOrders True
-  base <- return Nothing --readChan baseCaseResults
+  base <- readChan baseCaseResults
   case base of
     Just counterExample -> do
       writeChan indCaseOrders False

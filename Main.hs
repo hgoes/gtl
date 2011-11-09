@@ -91,5 +91,6 @@ main = do
     Pretty -> putStrLn (simplePrettyPrint rgtl)
     Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
     UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
-    SMT -> SMT.verifyModel (smtBinary opts) rgtl
+    SMTBMC -> SMT.verifyModelBMC (smtBinary opts) rgtl
+    SMTInduction -> SMT.verifyModelKInduction (smtBinary opts) rgtl
   return ()
