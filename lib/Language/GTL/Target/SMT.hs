@@ -22,44 +22,55 @@ import Data.Word
 import Control.Concurrent
 import Control.Concurrent.Chan
 
+-- | An untyped SMT expression
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
 
 instance Show USMTExpr where
   show (USMTExpr e) = show e
 
+-- | Safely cast an untyped SMT expression into a typed one
 castUSMT :: Typeable a => USMTExpr -> Maybe (SMTExpr a)
 castUSMT (USMTExpr x) = gcast x
 
+-- | Unsafely cast an untyped SMT expression.
+--   Throws an error if it fails.
 castUSMT' :: Typeable a => USMTExpr -> SMTExpr a
 castUSMT' e = case castUSMT e of
   Nothing -> let res = error $ "Internal type-error in SMT target: Expected "++(show $ typeOf $ getUndef res)++", but got "++(show (typeOfUSMT e))
              in res
   Just e' -> e'
 
+-- | Gets the type representation for the return type of the untyped SMT expression.
 typeOfUSMT :: USMTExpr -> TypeRep
 typeOfUSMT (USMTExpr e) = typeOf (getUndef e)
 
+-- | Given a function which accepts a typed SMT expression of any type, applies that function to the untyped SMT expression.
 useUSMT :: (forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => SMTExpr a -> b) -> USMTExpr -> b
 useUSMT f (USMTExpr x) = f x
 
+-- | Saves the variables of all components in the GALS system
 data GlobalState = GlobalState
                    { instanceStates :: Map String InstanceState
                    }
 
+-- | Saves the variables of one instance (including the state variable of the state machine)
 data InstanceState = InstanceState
                      { instanceVars :: Map String (UnrolledVar,GTLType,VarUsage)
-                     , instancePC :: SMTExpr Word64
+                     , instancePC :: SMTExpr Word64 -- ^ Saves the state of the state machine
                      }
 
-data UnrolledVar = BasicVar USMTExpr
-                 | IndexedVar [UnrolledVar]
+-- | A GTL variable which is (possibly) composed from more than one SMT variable
+data UnrolledVar = BasicVar USMTExpr -- ^ Just a simple SMT variable
+                 | IndexedVar [UnrolledVar] -- ^ A composed variable
                  deriving Show
 
+-- | Saves the variables needed for the encoding of LTL properties
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxGEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    }
 
+-- | Create a new named unrolled variable of a given type.
 newUnrolledVar :: Map [String] Integer -> GTLType -> String -> SMT UnrolledVar
 newUnrolledVar enums (Fix tp) base = case tp of
   GTLArray sz tp -> do
@@ -73,6 +84,7 @@ newUnrolledVar enums (Fix tp) base = case tp of
     v <- SMT.varNamed' u $ T.pack base
     return $ BasicVar $ USMTExpr $ assertEq u v
 
+-- | Creates an anonymous existential unrolled variable
 existsUnrolledVar :: Map [String] Integer -> GTLType -> (UnrolledVar -> SMTExpr Bool) -> SMTExpr Bool
 existsUnrolledVar enums (Fix tp) f = case tp of
   GTLArray sz tp -> genExists sz []
@@ -86,10 +98,12 @@ existsUnrolledVar enums (Fix tp) f = case tp of
   _ -> getUndefined enums (Fix tp) $ \u ->
     exists $ \v -> f (BasicVar $ USMTExpr $ assertEq u v)
 
+-- | Creates an SMT expression which states that two GTL variables are to be equal
 eqUnrolled :: UnrolledVar -> UnrolledVar -> SMTExpr Bool
 eqUnrolled (BasicVar x) (BasicVar y) = useUSMT (\ex -> ex .==. (castUSMT' y)) x
 eqUnrolled (IndexedVar x) (IndexedVar y) = and' (Prelude.zipWith eqUnrolled x y)
 
+-- | Print a global variable mapping for debugging
 debugState :: GlobalState -> String
 debugState st = Prelude.unlines [ Prelude.unlines (iname:[ "|-"++vname++": "++debugVar var  | (vname,(var,tp,_)) <- Map.toList (instanceVars inst) ])
                                 | (iname,inst) <- Map.toList (instanceStates st) ]
@@ -104,6 +118,7 @@ debugTemporalVars tmp
     ++ [ "<F "++show expr++"> = "++show var | (expr,var) <- Map.toList (auxFEnc tmp) ]
     ++ [ "<G "++show expr++"> = "++show var | (expr,var) <- Map.toList (auxGEnc tmp) ]
 
+-- | Create an unrestricted, global state with a given name
 newState :: Map [String] Integer -> GTLSpec String -> String -> SMT GlobalState
 newState enums spec n = do
   mp <- mapM (\(iname,inst) -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
@@ -113,6 +128,7 @@ newState enums spec n = do
              ) (Map.toAscList $ gtlSpecInstances spec)
   return $ GlobalState { instanceStates = Map.fromAscList mp }
 
+-- | Create a new instance state for a named instance
 newInstanceState :: Map [String] Integer -> String -> GTLModel String -> String -> SMT InstanceState
 newInstanceState enums iname mdl n = do
   mp_inp <- mapM (\(name,tp) -> do
@@ -130,10 +146,12 @@ newInstanceState enums iname mdl n = do
   pc <- SMT.varNamed $ T.pack $ "pc"++n++"_"++iname
   return $ InstanceState (Map.unions [Map.fromAscList mp_inp,Map.fromAscList mp_outp,Map.fromAscList mp_loc]) pc
 
+-- | Assert that two instance states are equal
 eqInst :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInst st1 st2 = and' ((instancePC st1 .==. instancePC st2):
                        (Map.elems $ Map.intersectionWith (\(v1,_,_) (v2,_,_) -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
 
+-- | Asserts that two instance states are equal in their output and state variables.
 eqInstOutp :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInstOutp st1 st2 
   = and' ((instancePC st1 .==. instancePC st2):
@@ -142,15 +160,18 @@ eqInstOutp st1 st2
                                                Input -> SMT.constant True
                                                _ -> eqUnrolled v1 v2) (instanceVars st1) (instanceVars st2)))
 
+-- | Asserts that two global states are equal.
 eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
 eqSt st1 st2 = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates st1) (instanceStates st2)
 
+-- | Existentially quantifies a global state
 existsState :: Map [String] Integer -> GTLSpec String -> (GlobalState -> SMTExpr Bool) -> SMTExpr Bool
 existsState enums spec f = genExists (Map.toDescList $ gtlSpecInstances spec) []
   where
     genExists [] ys = f (GlobalState { instanceStates = Map.fromAscList ys })
     genExists ((i,inst):xs) ys = existsInstanceState enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) $ \is -> genExists xs ((i,is):ys)
 
+-- | Existentially quantifies an instance state
 existsInstanceState :: Map [String] Integer -> GTLModel String -> (InstanceState -> SMTExpr Bool) -> SMTExpr Bool
 existsInstanceState enums mdl f = genExists (Map.toDescList $ Map.unions 
                                              [fmap (\x -> (x,Input)) $ gtlModelInput mdl
@@ -160,24 +181,41 @@ existsInstanceState enums mdl f = genExists (Map.toDescList $ Map.unions
     genExists [] ys = exists $ \pc -> f (InstanceState (Map.fromAscList ys) pc)
     genExists ((vn,(vt,vu)):xs) ys = existsUnrolledVar enums vt $ \v -> genExists xs ((vn,(v,vt,vu)):ys)
 
+-- | Use a list of indices to navigate a GTL variable
 indexUnrolled :: UnrolledVar -> [Integer] -> UnrolledVar
 indexUnrolled v [] = v
 indexUnrolled (IndexedVar vs) (i:is) = indexUnrolled (vs `genericIndex` i) is
 
-getVar :: String -> String -> [Integer] -> GlobalState -> UnrolledVar
+-- | Extract a variable from a global state
+getVar :: String -- ^ Name of the instance
+          -> String -- ^ Name of the variable
+          -> [Integer] -- ^ (possible empty) list of indices
+          -> GlobalState -- ^ State from which to extract
+          -> UnrolledVar
 getVar inst name idx st = let (v,vt,vu) = (instanceVars $ (instanceStates st)!inst)!name
                           in indexUnrolled v idx
 
+-- | Assert the declared connections from a GTL specification in the SMT model
 connections :: [(GTLConnectionPoint String,GTLConnectionPoint String)] -> GlobalState -> GlobalState -> SMTExpr Bool
 connections conns stf stt
   = and' [ eqUnrolled (getVar f fv fi stf) (getVar t tv ti stt)
          | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- conns
          ]
 
+-- | A scheduling dictates which instance may perform a calculation step at which point in time.
 class Scheduling s where
+  -- | A scheduling may define extra data it needs to perform the scheduling
   type SchedulingData s
-  createSchedulingData :: s -> Set String -> SMT (SchedulingData s)
-  schedule :: s -> SchedulingData s -> Map String (BA [TypedExpr String] Integer) -> GlobalState -> GlobalState -> SMTExpr Bool
+  -- | Allocate the needed data for the scheduling
+  createSchedulingData :: s -- ^ The scheduling
+                          -> Set String -- ^ The names of all components
+                          -> SMT (SchedulingData s)
+  -- | Perform scheduling on two global states: The current one and the next one
+  schedule :: s -> SchedulingData s 
+              -> Map String (BA [TypedExpr String] Integer) -- ^ The buchi automatons for all components
+              -> GlobalState -- ^ The current state
+              -> GlobalState -- ^ The next state
+              -> SMTExpr Bool
 
 data SimpleScheduling = SimpleScheduling
 
@@ -192,6 +230,7 @@ instance Scheduling SimpleScheduling where
                                 | (iname,ba) <- Map.toList mp
                                 ]
 
+-- | Perform a step in which each component performs a calculation step at the same time.
 step :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> GlobalState -> SMTExpr Bool
 step bas stf stt 
   = and' [ stepInstance ba ((instanceStates stf)!name) ((instanceStates stt)!name)
@@ -200,6 +239,7 @@ step bas stf stt
 fst3 :: (a,b,c) -> a
 fst3 (x,_,_) = x
 
+-- | Perform a calculation step in a single component
 stepInstance :: BA [TypedExpr String] Integer -> InstanceState -> InstanceState -> SMTExpr Bool
 stepInstance ba stf stt
   = and' [ (instancePC stf .==. SMT.constant (fromIntegral st)) .=>. 
@@ -215,6 +255,7 @@ stepInstance ba stf stt
                ]
          | (st,trans) <- Map.toList (baTransitions ba) ]
 
+-- | Translate a GTL expression into a SMT expression
 translateExpr :: (v -> VarUsage -> Integer -> UnrolledVar) ->  TypedExpr v -> UnrolledVar
 translateExpr f (Fix expr)
   = case GTL.getValue expr of
@@ -270,6 +311,7 @@ translateExpr f (Fix expr)
     GTL.UnBoolExpr GTL.Not arg -> let BasicVar ll = translateExpr f arg
                                   in BasicVar $ USMTExpr $ not' $ castUSMT' ll
 
+-- | Assert that an instance state is an initial state
 initInstance :: Map [String] Integer -> GTLModel String -> BA [TypedExpr String] Integer -> InstanceState -> SMTExpr Bool
 initInstance enums mdl ba inst
   = and' $ (or' [ (instancePC inst) .==. SMT.constant (fromIntegral f)
@@ -279,12 +321,14 @@ initInstance enums mdl ba inst
       (translateExpr (\v _ _ -> fst3 $ (instanceVars inst)!v) (constantToExpr (Map.keysSet enums) def))
     | (var,Just def) <- Map.toList $ gtlModelDefaults mdl ]
 
+-- | Assert that a global state is a combination of all initial component state
 initState :: Map [String] Integer -> GTLSpec String -> Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
 initState enums spec bas st
   = and' [ initInstance enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) (bas!name) ((instanceStates st)!name)
          | (name,inst) <- Map.toList (gtlSpecInstances spec)
          ]
 
+-- | Get the internal variable name for a GTL expression
 typedExprVarName :: TypedExpr (String,String) -> String
 typedExprVarName expr = case GTL.getValue (unfix expr) of
   GTL.Var (iname,name) h u -> iname++"_"++name
@@ -311,7 +355,7 @@ typedExprVarName expr = case GTL.getValue (unfix expr) of
                                     GTL.UntilOp _ -> "R")++"_"++typedExprVarName lhs++"_"++typedExprVarName rhs
   _ -> error $ "Please implement typedExprVarName for "++show expr
                                     
-
+-- | Create new temporal variables to encode a piece of a LTL formula
 newTemporalVars :: String -> TypedExpr (String,String) -> SMT (TemporalVars (String,String))
 newTemporalVars n expr = newTemporalVars' n expr (TemporalVars Map.empty Map.empty Map.empty)
 
@@ -368,6 +412,7 @@ newTemporalVars' n expr p
     where
       mkvar = SMT.varNamed $ T.pack $ "fe"++n++"_"++typedExprVarName expr
 
+-- | Create dependencies between the temporal variables of a previous and the current state
 dependencies :: Ord v => (v -> VarUsage -> Integer -> UnrolledVar) -> TypedExpr v -> TemporalVars v -> TemporalVars v -> SMT (SMTExpr Bool)
 dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
   GTL.Var v h u -> do
@@ -404,7 +449,7 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     self = (formulaEnc cur)!expr
     nself = (formulaEnc nxt)!expr
 
-
+-- | Perform bounded model checking of a given GTL specification
 bmc :: Scheduling s => s -> GTLSpec String -> SMT (Maybe [Map (String,String) GTLConstant])
 bmc sched spec = do
   let enums = enumMap spec
@@ -428,6 +473,7 @@ data BMCState = BMCState { bmcVars :: GlobalState
                          , bmcInLoop :: SMTExpr Bool
                          }
 
+-- | Once the SMT solver has produced a model, extract the value of a given GTL variable from it
 getGTLValue :: GTLType -> UnrolledVar -> SMT GTLConstant
 getGTLValue _ (BasicVar v) = useUSMT (\rv -> do
                                          r <- SMT.getValue rv
@@ -443,6 +489,7 @@ getGTLValue (Fix (GTLTuple tps)) (IndexedVar vs)
 getGTLValue (Fix (GTLNamed _ tp)) v = getGTLValue tp v
 getGTLValue tp v = error $ "Can't match type "++show tp++" with "++show v
 
+-- | Extract the values for all variables in the state once the SMT solver has produced a model
 getVarValues :: GlobalState -> SMT (Map (String,String) GTLConstant)
 getVarValues st = do
   lst <- mapM (\(iname,inst) -> mapM (\(vname,(var,tp,us)) -> do
@@ -450,9 +497,11 @@ getVarValues st = do
                                          return ((iname,vname),c)) (Map.toList $ instanceVars inst)) (Map.toList $ instanceStates st)
   return $ Map.fromList (Prelude.concat lst)
 
+-- | Extract a whole path from the SMT solver
 getPath :: [BMCState] -> SMT [Map (String,String) GTLConstant]
 getPath = mapM (getVarValues.bmcVars) . Prelude.reverse
 
+-- | Display an extracted path to the user
 renderPath :: [Map (String,String) GTLConstant] -> String
 renderPath path = unlines $ concat [ ("Step "++show i):[ "| "++iname++"."++var++" = "++show c | ((iname,var),c) <- Map.toList mp ] | (i,mp) <- zip [0..] path ]
 
@@ -616,6 +665,7 @@ let y3 = l3
  in y0
  -}
 
+-- Encodes the contraint that exactly one of the given expressions must be true
 exactlyOne :: [SMTExpr Bool] -> SMTExpr Bool
 exactlyOne [] = SMT.constant False
 exactlyOne (y:ys) = exactlyOne' y (not' y) ys
