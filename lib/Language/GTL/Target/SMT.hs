@@ -684,6 +684,7 @@ exactlyOne (y:ys) = exactlyOne' y (not' y) ys
     exactlyOne' y n [] = y
     exactlyOne' y n (x:xs) = let' (ite x n y) (\y' -> let' (and' [not' x,n]) (\n' -> exactlyOne' y' n' xs))
 
+-- | Used to represent Enum values. Stores not only the value but also the type and the derived type-number of the enum.
 data EnumVal = EnumVal [String] Integer String deriving Typeable
 
 instance ToGTL EnumVal where
@@ -702,7 +703,11 @@ instance ToGTL Word64 where
   toGTL x = GTLIntVal (fromIntegral x)
   gtlTypeOf _ = gtlInt
 
-getUndefined :: Map [String] Integer -> GTLType -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -> b
+-- | Create a undefined value for a given type and apply it to the supplied function.
+getUndefined :: Map [String] Integer -- ^ Map of all enum types
+                -> GTLType -- ^ The type for the undefined value
+                -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -- ^ The function to apply the undefined value to
+                -> b
 getUndefined mp rep f = case unfix rep of
   GTLInt -> f (undefined::Word64)
   GTLBool -> f (undefined::Bool)
@@ -710,19 +715,23 @@ getUndefined mp rep f = case unfix rep of
   GTLNamed _ r -> getUndefined mp r f
   _ -> error $ "Please implement getUndefined for "++show rep++" you lazy fuck"
 
+-- | Like 'getUndefined', but also restrict the type to be numeric
 getUndefinedNumeric :: GTLType -> (forall a. (Typeable a,SMTType a,Num a,ToGTL a,SMTValue a,SMTBV a) => a -> b) -> b
 getUndefinedNumeric rep f
   | rep == gtlInt = f (undefined::Word64)
 
+-- | Returns 'True' if the given type is a numeric one
 isNumeric :: GTLType -> Bool
 isNumeric (Fix GTLInt) = True
 isNumeric (Fix GTLByte) = True
 isNumeric (Fix GTLFloat) = True
 isNumeric _ = False
 
+-- | Helper function to make sure that two haskell expressions have the same type
 assertEq :: a -> b a -> b a
 assertEq _ = id
 
+-- | Create a mapping from enum types to Integers for all the enums in the spec.
 enumMap :: Ord v => GTLSpec v -> Map [String] Integer
 enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,gtlModelOutput mdl,gtlModelLocals mdl]
                                                 | (iname,inst) <- Map.toList (gtlSpecInstances spec),
@@ -730,6 +739,7 @@ enumMap spec = let enums = getEnums (Map.unions [ Map.unions [gtlModelInput mdl,
                                                 ])
                in Map.fromList (Prelude.zip (Set.toList enums) [0..])
 
+-- | Perform k-induction by providing a solver and a GTL specification.
 kInduction :: Scheduling s => s -> (SMT () -> IO ()) -> GTLSpec String -> IO (Maybe [Map (String,String) GTLConstant])
 kInduction sched solver spec = do
   let enums = enumMap spec
@@ -831,6 +841,7 @@ kInductionInd orders results prop enums spec bas sched sched_data last n = do
          )
     else return ()
 
+-- | Apply limits to all integers used to store the current state of a component. Used to strengthen k-induction.
 limitPCs :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
 limitPCs bas st = and' $ concat
                   [ [BVUGE (instancePC inst) 0
