@@ -15,7 +15,7 @@ instance HistoryState Int where
   showState = show
 
 instance HistoryState [Char] where
-  showState = show
+  showState s = "%" ++ s ++ "%"
 
 instance (HistoryState a, HistoryState b) => HistoryState (a,b,Bool) where
   showState (a,b,c) = "(" ++ showState a ++ "," ++ showState b ++ "," ++ show c ++ ")"
@@ -40,7 +40,7 @@ showStateMap m
   | Map.null m = "{}"
   | otherwise =
     let m' = Map.toAscList m
-        showMapping (s,s') = "%" ++ showState s ++ "%" ++ " -> " ++ "%" ++ showState s' ++ "%"
+        showMapping (s,s') = showState s ++ " -> " ++ showState s'
         str = foldl (\str f -> str ++ ", " ++ showMapping f) (showMapping $ head m') (tail m')
     in "{" ++ str ++ "}"
 

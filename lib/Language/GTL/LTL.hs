@@ -116,7 +116,7 @@ instance Show a => Show (LTL a) where
   showsPrec p (LTLAutomaton b) = showsPrec p b
 
 instance Show a => HistoryState (LTL a) where
-  showState = show
+  showState f = "%" ++ show f ++ "%"
 
 distributeNegation :: LTL a -> LTL a
 distributeNegation (Atom x) = Atom x
