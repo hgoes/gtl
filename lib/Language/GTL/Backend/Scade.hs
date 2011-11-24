@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies,GADTs #-}
+{-# LANGUAGE TypeFamilies,GADTs,FlexibleContexts #-}
 {-| SCADE is a synchronous specification language for software-components.
     It provides a code-generator and a verification tool. -}
 module Language.GTL.Backend.Scade
@@ -19,6 +19,8 @@ import Control.Monad.Identity
 import Data.List as List (intercalate, null, mapAccumL)
 import Data.Maybe (maybeToList, isJust)
 import Data.Set as Set (member)
+
+import Control.Monad.Error.Class (MonadError(..))
 
 import System.FilePath
 import System.Process as Proc
@@ -355,11 +357,11 @@ scadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont
 scadeTypes ((PackageDecl _ name decls):xs) = Map.insert name (ScadePackage (scadeTypes decls)) (scadeTypes xs)
 scadeTypes (_:xs) = scadeTypes xs
 
-scadeTypeMap :: ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> Either String (Map String GTLType)
+scadeTypeMap :: MonadError String m => ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> m (Map String GTLType)
 scadeTypeMap global local tps = do
   res <- mapM (\(name,expr) -> case scadeTypeToGTL global local expr of
-                  Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
-                  Just tp -> Right (name,tp)) tps
+                  Nothing -> throwError $ "Couldn't convert SCADE type "++show expr++" to GTL"
+                  Just tp -> return (name,tp)) tps
   return $ Map.fromList res
 
 scadeParseNodeName :: String -> [String]

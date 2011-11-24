@@ -13,10 +13,13 @@ data Declaration = Model ModelDecl -- ^ Declares a model.
                  | TypeAlias String UnResolvedType
                  deriving Show
 
+-- data ModelArgs = StrArg String | ConstantDecl String GExpr deriving Show
+
 -- | Declares a synchronous model.
 data ModelDecl = ModelDecl
                  { modelName :: String -- ^ The name of the model in the GTL formalism.
                  , modelType :: String -- ^ The synchronous formalism the model is written in (for example /scade/)
+                 -- , modelArgs :: [ModelArgs] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelArgs :: [String] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
                  , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.

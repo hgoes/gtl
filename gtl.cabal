@@ -43,7 +43,8 @@ Library
     Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
     Data.Fix
+    Data.MapMonad
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal,mtl
   Main-Is: Main.hs

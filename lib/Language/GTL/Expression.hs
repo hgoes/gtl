@@ -3,7 +3,7 @@
   DeriveFunctor,RankNTypes #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
-module Language.GTL.Expression 
+module Language.GTL.Expression
        (Fix(..),
         Term(..),
         GTLConstant,
@@ -62,7 +62,9 @@ import Control.Monad.Error ()
 import Control.Exception
 import Data.Fix
 import Debug.Trace
- 
+import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad (liftM)
+
 data VarUsage = Input
               | Output
               | StateIn
@@ -251,10 +253,10 @@ instance Binary2 a => Binary2 (Typed a) where
     tp <- get
     val <- get2
     return (Typed tp val)
-    
+
 instance Eq v => Eq2 (Term v) where
   eq2 = (==)
-  
+
 instance Ord v => Ord2 (Term v) where
   compare2 = compare
 
@@ -277,7 +279,7 @@ instance Ord v => Ord2 (Typed (Term v)) where
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
 showTerm f (Var name lvl u) = (if u == StateOut
-                              then "#out " 
+                              then "#out "
                               else "") ++ show name ++ (if lvl==0
                                                         then ""
                                                         else "_"++show lvl)
@@ -311,20 +313,22 @@ showTerm f (ClockRef clk) = "clock("++show clk++")"
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
-enforceType :: String -- ^ A string representation of the type checked entity
+enforceType :: MonadError String m =>
+              String -- ^ A string representation of the type checked entity
                -> GTLType -- ^ The actual type of the entity
                -> GTLType -- ^ The expected type
-               -> Either String ()
+               -> m ()
 enforceType expr ac tp = if baseType ac == baseType tp
-                         then Right ()
-                         else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
+                         then return ()
+                         else throwError $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
 -- | Convert a untyped, generalized expression into a typed expression by performing type checking
-makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
+makeTypedExpr :: (Ord v,Show v,MonadError String m) =>
+                (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
                  -> Map v GTLType -- ^ A type mapping for variables
                  -> Set [String] -- ^ All possible enum types
                  -> GExpr -- ^ The generalized expression to type check
-                 -> Either String (TypedExpr v)
+                 -> m (TypedExpr v)
 makeTypedExpr f varmp enums expr = parseTerm f Map.empty Nothing expr >>= typeCheck varmp enums
 
 -- | Convert an expression into a constant, if it is one.
@@ -337,21 +341,20 @@ getConstant e = case getValue (unfix e) of
   _ -> Nothing
 
 -- | Type-check an untyped expression.
-typeCheck :: (Ord v,Show v) => Map v GTLType -- ^ A type mapping for all variables
+typeCheck :: (Ord v,Show v,MonadError String m) =>
+            Map v GTLType -- ^ A type mapping for all variables
              -> Set [String] -- ^ A set of all allowed enum types
              -> Expr v -- ^ The untyped expression
-             -> Either String (TypedExpr v)
-typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix) (show . untyped) varmp enums (unfix e) of
-  Left err -> Left err
-  Right res -> Right $ Fix res
+             -> m (TypedExpr v)
+typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getType.unfix) (show . untyped) varmp enums (unfix e)
   where
-    typeCheck' :: (Ord v,Show v,Ord r2)
-                  => (r1 -> Either String r2)
+    typeCheck' :: (Ord v,Show v,Ord r2,MonadError String m) =>
+                  (r1 -> m r2)
                   -> (r2 -> GTLType)
                   -> (r2 -> String)
-                  -> Map v GTLType -> Set [String] -> Term v r1 -> Either String (Typed (Term v) r2)
+                  -> Map v GTLType -> Set [String] -> Term v r1 -> m (Typed (Term v) r2)
     typeCheck' mu mutp mus varmp enums (Var x lvl u) = case Map.lookup x varmp of
-      Nothing -> Left $ "Unknown variable "++show x
+      Nothing -> throwError $ "Unknown variable "++show x
       Just tp -> return $ Typed tp (Var x lvl u)
     typeCheck' mu mutp mus varmp enums (Value val) = case val of
       GTLIntVal i -> return $ Typed gtlInt (Value $ GTLIntVal i)
@@ -359,15 +362,15 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
       GTLBoolVal i -> return $ Typed gtlBool (Value $ GTLBoolVal i)
       GTLFloatVal i -> return $ Typed gtlFloat (Value $ GTLFloatVal i)
       GTLEnumVal x -> case find (elem x) enums of
-        Nothing -> Left $ "Unknown enum value "++show x
+        Nothing -> throwError $ "Unknown enum value "++show x
         Just e -> return $ Typed (gtlEnum e) (Value $ GTLEnumVal x)
       GTLArrayVal vals -> do
         res <- mapM mu vals
         case res of
-          [] -> Left "Empty arrays not allowed"
+          [] -> throwError "Empty arrays not allowed"
           (x:xs) -> mapM_ (\tp -> if (mutp tp)==(mutp x)
                                   then return ()
-                                  else Left "Not all array elements have the same type") xs
+                                  else throwError "Not all array elements have the same type") xs
         return $ Typed (gtlArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
       GTLTupleVal vals -> do
         tps <- mapM mu vals
@@ -403,11 +406,11 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
       case unfix $ baseType $ mutp pp of
         GTLArray sz tp -> if idx < sz
                           then return $ Typed tp (IndexExpr pp idx)
-                          else Left $ "Index "++show idx++" out of bounds "++show sz
+                          else throwError $ "Index "++show idx++" out of bounds "++show sz
         GTLTuple tps -> if idx < genericLength tps
                         then return $ Typed (tps `genericIndex` idx) (IndexExpr pp idx)
-                        else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
-        _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
+                        else throwError $ "Index "++show idx++" out of bounds "++show (genericLength tps)
+        _ -> throwError $ "Expression " ++ mus pp ++ " is not indexable"
     typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
       ntrans <- mapM (\trans -> mapM (\(cond,trg) -> do
                                          ncond <- mapM mu cond
@@ -424,29 +427,28 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
             x:xs -> do
               mapM_ (\tp -> if (mutp tp)==(mutp x)
                             then return ()
-                            else Left "Not all \"equal\" arguments have the same type") xs
+                            else throwError "Not all \"equal\" arguments have the same type") xs
               return $ Typed gtlBool (BuiltIn name tps)
-        _ -> Left $ "Unknown built-in "++show name
+        _ -> throwError $ "Unknown built-in "++show name
 
 -- | Discard type information for an expression
 untyped :: TypedExpr v -> Expr v
 untyped expr = Fix $ fmap untyped (getValue (unfix expr))
 
 -- | Convert a generalized expression into a regular one.
-parseTerm :: Ord v => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
+parseTerm :: (MonadError String m, Ord v) =>
+            (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
              -> ExistsBinding v -- ^ All existentially bound variables
              -> Maybe ContextInfo -- ^ Information about variable context (input or output)
              -> GExpr -- ^ The generalized expression
-             -> Either String (Expr v)
-parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e of
-  Left err -> Left err
-  Right res -> Right $ Fix res
+             -> m (Expr v)
+parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e
   where
-    parseTerm' :: Ord r => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> Either String r)
-                  -> (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage))
+    parseTerm' :: (MonadError String m, Ord r) => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> m r)
+                  -> (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage))
                   -> ExistsBinding v
                   -> Maybe ContextInfo
-                  -> GExpr -> Either String (Term v r)
+                  -> GExpr -> m (Term v r)
     parseTerm' mu f ex inf (GBin op tspec l r) = do
       rec_l <- mu ex inf l
       rec_r <- mu ex inf r
@@ -456,7 +458,7 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
           Just rop -> return $ BinRelExpr rop rec_l rec_r
           Nothing -> case toIntOp op of
             Just rop -> return $ BinIntExpr rop rec_l rec_r
-            Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
+            Nothing -> throwError $ "Internal error, please implement parseTerm for operator "++show op
     parseTerm' mu f ex inf (GUn op ts p) = do
       rec <- mu (case op of
                     GOpNext -> fmap (\(v,lvl,u) -> (v,lvl+1,u)) ex
@@ -513,7 +515,7 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
       return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> [ (case cond of
                                                                              Nothing -> tcond
                                                                              Just t -> t:tcond,trg)
-                                                                       | (cond,trg) <- nxts, 
+                                                                       | (cond,trg) <- nxts,
                                                                          let (_,_,tcond,_) = stmp!trg
                                                                        ]) stmp
                               , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
@@ -522,7 +524,7 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
     parseTerm' mu f ex inf (GIndex expr ind) = do
       rind <- case ind of
         GConst x -> return x
-        _ -> Left $ "Index must be an integer"
+        _ -> throwError $ "Index must be an integer"
       rexpr <- mu ex inf expr
       return $ IndexExpr rexpr (fromIntegral rind)
     parseTerm' mu f ex inf (GBuiltIn name args) = do
@@ -581,7 +583,7 @@ getTermVars mu expr = case getValue expr of
   UnBoolExpr op p -> mu p
   IndexExpr e i -> fmap (\(v,u,idx,lvl,tp) -> (v,u,i:idx,lvl,tp)) (mu e)
   Automaton buchi -> concat [ concat $ fmap mu cond
-                            | trans <- Map.elems (baTransitions buchi), 
+                            | trans <- Map.elems (baTransitions buchi),
                               (cond,_) <- trans
                             ]
   BuiltIn _ args -> concat $ fmap mu args
@@ -801,7 +803,7 @@ getClocks (Fix e) = case getValue e of
 
 automatonClocks :: (a -> [TypedExpr v]) -> BA a st -> [Integer]
 automatonClocks f aut = concat [ concat $ fmap getClocks (f cond)
-                               | trans <- Map.elems (baTransitions aut), 
+                               | trans <- Map.elems (baTransitions aut),
                                  (cond,_) <- trans
                                ]
 
