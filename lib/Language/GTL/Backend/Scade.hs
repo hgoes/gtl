@@ -84,11 +84,12 @@ instance GTLBackend Scade where
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
-            testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
-            proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
-            scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
-        dump opts gtlName name buchi
-        dumpStatemap opts gtlName name dfa
+            fileBaseName = gtlName ++ "-" ++ name
+            testNodeFile = outputDir </> fileBaseName <.> "scade"
+            proofNodeFile = outputDir </> (fileBaseName ++ "-proof") <.> "scade"
+            scenarioFile = outputDir </> (fileBaseName ++ "-proof-counterex") <.> "sss"
+        dump opts fileBaseName buchi
+        dumpStatemap opts fileBaseName dfa
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
@@ -112,15 +113,15 @@ instance GTLBackend Scade where
               else return Nothing
 
 -- | Deals with dumping debug informations.
-dump opts gtlName name buchi
+dump opts fileBaseName buchi
   | "dump-buchi" `Set.member` (debug opts) =
-    writeFile ((outputPath opts) </> (gtlName ++ name ++ "-buchi" ++ ".txt")) (show buchi)
+    writeFile ((outputPath opts) </> (fileBaseName ++ "-buchi" ++ ".txt")) (show buchi)
   | otherwise = return ()
 
-dumpStatemap opts gtlName name dfa
+dumpStatemap opts fileBaseName dfa
   | "dump-statemap" `Set.member` (debug opts) =
     case dfa of
-      Just a -> writeFile ((outputPath opts) </> (gtlName ++ name ++ "-statemap" ++ ".txt")) (showDfaHistory $ dfaHistory a)
+      Just a -> writeFile ((outputPath opts) </> (fileBaseName ++ "-statemap" ++ ".txt")) (showDfaHistory $ dfaHistory a)
       Nothing -> return ()
   | otherwise = return ()
 
