@@ -697,7 +697,8 @@ instance SMTType EnumVal where
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
-  unmangle (L.Symbol v) = EnumVal undefined undefined (T.unpack v)
+  unmangle (L.Symbol v) = Just $ EnumVal undefined undefined (T.unpack v)
+  unmangle _ = Nothing
 
 instance ToGTL Word64 where
   toGTL x = GTLIntVal (fromIntegral x)
