@@ -93,40 +93,43 @@ neverClaim trace spec
 -- | Create promela processes for each component in a GTL specification.
 generatePromelaCode :: GTLSpec String -> Map (String,String) Integer -> [Pr.Module]
 generatePromelaCode spec history
-  = let procs = fmap (\(name,mdl) -> let iface = allCInterface (gtlModelBackend mdl)
-                                         steps = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
-                                                                         [ varName iface name v lvl++" = "++
-                                                                           varName iface name v (lvl-1)++";"
-                                                                         | ((q,v),mlvl) <- Map.toList history
-                                                                         , q == name
-                                                                         , lvl <- reverse [1..mlvl]
-                                                                         ]++
-                                                                         [ cIFaceGetInputVar iface (inputVars name iface) tvar ++ " = " ++
-                                                                           source ++ ";"
-                                                                         | (GTLConnPt fmod fvar [],GTLConnPt tmod tvar []) <- gtlSpecConnections spec
-                                                                         , tmod == name
-                                                                         , let siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!fmod
-                                                                               source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar
-                                                                         ]++
-                                                                         [ cIFaceIterate iface (stateVars name iface) (inputVars name iface) ++ ";"
+  = let procs = fmap (\(name,inst) -> let iface = allCInterface (gtlModelBackend mdl)
+                                          mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                                          steps = [Pr.StepStmt (Pr.prDo [[Pr.StmtCCode $ unlines $
+                                                                          [ varName iface name v lvl++" = "++
+                                                                            varName iface name v (lvl-1)++"; //history book-keeping"
+                                                                          | ((q,v),mlvl) <- Map.toList history
+                                                                          , q == name
+                                                                          , lvl <- reverse [1..mlvl]
+                                                                          ]++
+                                                                          [ cIFaceGetInputVar iface (inputVars name iface) tvar ++ " = " ++
+                                                                            source ++ ";"
+                                                                          | (GTLConnPt fmod fvar [],GTLConnPt tmod tvar []) <- gtlSpecConnections spec
+                                                                          , tmod == name
+                                                                          , let sinst = (gtlSpecInstances spec)!fmod
+                                                                                siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!(gtlInstanceModel sinst)
+                                                                                source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar
+                                                                          ]++
+                                                                          [ cIFaceIterate iface (stateVars name iface) (inputVars name iface) ++ ";"
+                                                                          ]
                                                                          ]
-                                                                        ]
-                                                                       ]) Nothing
-                                                 ]
-                                     in Pr.ProcType { Pr.proctypeActive = Nothing
-                                                    , Pr.proctypeName = name
-                                                    , Pr.proctypeArguments = []
-                                                    , Pr.proctypePriority = Nothing
-                                                    , Pr.proctypeProvided = Nothing
-                                                    , Pr.proctypeSteps = steps
-                                                    }
-                     ) (Map.toList (gtlSpecModels spec))
+                                                                        ]) Nothing
+                                                  ]
+                                      in Pr.ProcType { Pr.proctypeActive = Nothing
+                                                     , Pr.proctypeName = name
+                                                     , Pr.proctypeArguments = []
+                                                     , Pr.proctypePriority = Nothing
+                                                     , Pr.proctypeProvided = Nothing
+                                                     , Pr.proctypeSteps = steps
+                                                     }
+                     ) (Map.toList (gtlSpecInstances spec))
         states = [ Pr.CState (tp++" state_"++name++show i) "Global" Nothing
                  | (name,mdl) <- Map.toList (gtlSpecModels spec) 
                  , (i,tp) <- zip [0..] $ cIFaceStateType (allCInterface $ gtlModelBackend mdl) ] ++
                  [ Pr.CState (tp++" history_"++q++"_"++n++"_"++show clvl) "Global" (Just "0")
                  | ((q,n),lvl) <- Map.toList history
-                 , let mdl = (gtlSpecModels spec)!q
+                 , let inst = (gtlSpecInstances spec)!q
+                       mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                        dtp = case Map.lookup n (gtlModelInput mdl) of
                          Nothing -> let Just t = Map.lookup n (gtlModelOutput mdl) in t
                          Just t -> t
@@ -148,13 +151,16 @@ generatePromelaCode spec history
                             | (name,mdl) <- Map.toList (gtlSpecModels spec)
                             , let iface = allCInterface $ gtlModelBackend mdl
                             ]++
-                            [ cIFaceGetInputVar iface (stateVars name iface) var ++ "=" ++ cIFaceTranslateValue iface val++";"
-                            | (name,mdl) <- Map.toList (gtlSpecModels spec)
+                            [ if Map.member var (gtlModelInput mdl)
+                              then cIFaceGetInputVar iface (stateVars name iface) var ++ "=" ++ cIFaceTranslateValue iface val++";"
+                              else cIFaceGetOutputVar iface (stateVars name iface) var ++ "=" ++ cIFaceTranslateValue iface val++";"
+                            | (name,inst) <- Map.toList (gtlSpecInstances spec)
                             , let iface = allCInterface $ gtlModelBackend mdl
+                                  mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                             , (var,Just val) <- Map.toList (gtlModelDefaults mdl)
                             ]
                            ,Pr.prAtomic
                             [Pr.StmtExpr $ Pr.ExprAny $ Pr.RunExpr name [] Nothing
-                            | name <- Map.keys $ gtlSpecModels spec]
+                            | name <- Map.keys $ gtlSpecInstances spec]
                            ])]
     in inp_decls ++ states ++ procs ++ init

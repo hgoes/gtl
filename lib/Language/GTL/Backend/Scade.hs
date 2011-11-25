@@ -16,7 +16,7 @@ import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map)
 import Control.Monad.Identity
-import Data.List as List (intercalate, null, mapAccumL)
+import Data.List as List (intercalate, null, mapAccumL, intersperse, findIndex)
 import Data.Maybe (maybeToList, isJust)
 import Data.Set as Set (member)
 
@@ -58,18 +58,19 @@ instance GTLBackend Scade where
     return (rins,routs)
   cInterface Scade (ScadeData name decls tps opFile)
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-      in CInterface { cIFaceIncludes = [(fmap (\c -> case c of
-                                                  '.' -> '_'
-                                                  _ -> c) name)++".h"]
-                    , cIFaceStateType = ["outC_"++name]
-                    , cIFaceInputType = if Prelude.null inp
-                                        then []
-                                        else ["inC_"++name]
-                    , cIFaceStateInit = \[st] -> name++"_reset(&("++st++"))"
-                    , cIFaceIterate = \[st] inp -> case inp of
-                         [] -> name++"(&("++st++"))"
-                         [rinp] -> name++"(&("++rinp++"),&("++st++"))"
-                    , cIFaceGetInputVar = \[inp] var -> inp++"."++var
+          rname = fmap (\c -> case c of
+                           '.' -> '_'
+                           _ -> c) name
+      in CInterface { cIFaceIncludes = [rname++".h"]
+                    , cIFaceStateType = ["outC_"++rname]
+                    , cIFaceInputType = [ scadeTranslateTypeC gtp
+                                        | (vname,tp) <- inp,
+                                          let Just gtp = scadeTypeToGTL tps Map.empty tp ]
+                    , cIFaceStateInit = \[st] -> rname++"_reset(&("++st++"))"
+                    , cIFaceIterate = \[st] inp -> rname++"("++(concat $ intersperse "," (inp++["&("++st++")"]))++")"
+                    , cIFaceGetInputVar = \vars var -> case List.findIndex (\(n,_) -> n==var) inp of
+                         Nothing -> error $ "["++name++"] can't find "++show var++" in "++show inp
+                         Just i -> vars!!i
                     , cIFaceGetOutputVar = \[st] var -> st++"."++var
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
@@ -292,6 +293,7 @@ generateScenario scenarioFile report =
 scadeTranslateTypeC :: GTLType -> String
 scadeTranslateTypeC (Fix GTLInt) = "kcg_int"
 scadeTranslateTypeC (Fix GTLBool) = "kcg_bool"
+scadeTranslateTypeC (Fix (GTLNamed n _)) = n
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: GTLConstant -> String
