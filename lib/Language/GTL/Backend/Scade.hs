@@ -40,45 +40,48 @@ x2s opts fp = case (scadeRoot opts) of
   Just p -> readProcess (p </> "SCADE Suite" </> "bin" </> "x2s613.exe") [fp] ""
 
 instance GTLBackend Scade where
-  data GTLBackendModel Scade = ScadeData String [Sc.Declaration] ScadeTypeMapping FilePath
+  data GTLBackendModel Scade = ScadeData { scadeOperatorName :: [String]
+                                         , scadeFileContent :: [Sc.Declaration]
+                                         , scadeTypeMapping :: ScadeTypeMapping
+                                         , scadeFileName :: FilePath
+                                         }
   backendName Scade = "scade"
   initBackend Scade opts [file,name] = do
     str <- case takeExtension file of
       ".scade" -> readFile file
       ".xscade" -> x2s opts file
     let decls = scade $ alexScanTokens str
-    return $ ScadeData name decls (scadeTypes decls) file
+    return $ ScadeData (splitScadeName name) decls (scadeTypes decls) file
   typeCheckInterface Scade (ScadeData name decls tps opFile) (ins,outs) = do
-    let (sc_ins,sc_outs) = scadeInterface (scadeParseNodeName name) decls
-        Just local = scadeMakeLocal (scadeParseNodeName name) tps
+    let (sc_ins,sc_outs) = scadeInterface name decls
+        Just local = scadeMakeLocal name tps
     mp_ins <- scadeTypeMap tps local sc_ins
     mp_outs <- scadeTypeMap tps local sc_outs
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
   cInterface Scade (ScadeData name decls tps opFile)
-    = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
-          rname = fmap (\c -> case c of
-                           '.' -> '_'
-                           _ -> c) name
+    = let (inp,outp) = scadeInterface name decls
+          rname = concat $ intersperse "_" name
+          resetName [x] = ["reset",x]
+          resetName (x:xs) = x:resetName xs
       in CInterface { cIFaceIncludes = [rname++".h"]
                     , cIFaceStateType = ["outC_"++rname]
                     , cIFaceInputType = [ scadeTranslateTypeC gtp
                                         | (vname,tp) <- inp,
                                           let Just gtp = scadeTypeToGTL tps Map.empty tp ]
-                    , cIFaceStateInit = \[st] -> rname++"_reset(&("++st++"))"
+                    , cIFaceStateInit = \[st] -> (concat $ intersperse "_" $ resetName name) ++ "(&("++st++"))"
                     , cIFaceIterate = \[st] inp -> rname++"("++(concat $ intersperse "," (inp++["&("++st++")"]))++")"
                     , cIFaceGetInputVar = \vars var -> case List.findIndex (\(n,_) -> n==var) inp of
-                         Nothing -> error $ "["++name++"] can't find "++show var++" in "++show inp
+                         Nothing -> error $ show name++" can't find "++show var++" in "++show inp
                          Just i -> vars!!i
                     , cIFaceGetOutputVar = \[st] var -> st++"."++var
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
   backendVerify Scade (ScadeData node decls tps opFile) cy expr locals opts gtlName
-    = let nodePath = scadeParseNodeName node
-          name = (intercalate "_" nodePath)
-          (inp,outp) = scadeInterface nodePath decls
+    = let name = (intercalate "_" node)
+          (inp,outp) = scadeInterface node decls
           buchi = gtl2ba (Just cy) expr
           dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA buchi
           scade = fmap (dfaToScade name inp outp locals) dfa
@@ -93,7 +96,7 @@ instance GTLBackend Scade where
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
             writeFile testNodeFile (show $ prettyScade [scade'])
-            writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
+            writeFile proofNodeFile (show $ prettyScade [generateProver name node inp outp])
             if not (dryRun opts) then
               case scadeRoot opts of
                 Just p -> do
@@ -110,6 +113,16 @@ instance GTLBackend Scade where
                           return $ Just $ verified report
                 Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
               else return Nothing
+
+splitScadeName :: String -> [String]
+splitScadeName xs = let (cur,all) = splitScadeName' xs
+                    in case cur of
+                      [] -> all
+                      _ -> (cur:all)
+  where
+    splitScadeName' (':':':':xs) = let (cur,all) = splitScadeName' xs in ("",cur:all)
+    splitScadeName' (x:xs) = let (cur,all) = splitScadeName' xs in (x:cur,all)
+    splitScadeName' [] = ("",[])
 
 -- | Deals with dumping debug informations.
 dump opts gtlName name buchi =
@@ -363,11 +376,6 @@ scadeTypeMap global local tps = do
                   Nothing -> Left $ "Couldn't convert SCADE type "++show expr++" to GTL"
                   Just tp -> Right (name,tp)) tps
   return $ Map.fromList res
-
-scadeParseNodeName :: String -> [String]
-scadeParseNodeName name = case break (=='.') name of
-  (rname,[]) -> [rname]
-  (name1,rest) -> name1:(scadeParseNodeName (tail rest))
 
 -- | Extract type information from a SCADE model.
 --   Returns two list of variable-type pairs, one for the input variables, one for the outputs.
