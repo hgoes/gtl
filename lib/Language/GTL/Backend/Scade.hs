@@ -72,10 +72,14 @@ instance GTLBackend Scade where
                                           let Just gtp = scadeTypeToGTL tps Map.empty tp ]
                     , cIFaceStateInit = \[st] -> (concat $ intersperse "_" $ resetName name) ++ "(&("++st++"))"
                     , cIFaceIterate = \[st] inp -> rname++"("++(concat $ intersperse "," (inp++["&("++st++")"]))++")"
-                    , cIFaceGetInputVar = \vars var -> case List.findIndex (\(n,_) -> n==var) inp of
+                    , cIFaceGetInputVar = \vars var idx -> case List.findIndex (\(n,_) -> n==var) inp of
                          Nothing -> error $ show name++" can't find "++show var++" in "++show inp
-                         Just i -> vars!!i
-                    , cIFaceGetOutputVar = \[st] var -> st++"."++var
+                         Just i -> (vars!!i)++(case idx of
+                                                  [] -> ""
+                                                  _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                    , cIFaceGetOutputVar = \[st] var idx -> st++"."++var++(case idx of
+                                                                              [] -> ""
+                                                                              _ -> concat $ fmap (\x -> "["++show x++"]") idx)
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
