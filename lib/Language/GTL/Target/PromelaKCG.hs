@@ -124,7 +124,8 @@ generatePromelaCode spec history
                                                      }
                      ) (Map.toList (gtlSpecInstances spec))
         states = [ Pr.CState (tp++" state_"++name++show i) "Global" Nothing
-                 | (name,mdl) <- Map.toList (gtlSpecModels spec) 
+                 | (name,inst) <- Map.toList (gtlSpecInstances spec)
+                 , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                  , (i,tp) <- zip [0..] $ cIFaceStateType (allCInterface $ gtlModelBackend mdl) ] ++
                  [ Pr.CState (tp++" history_"++q++"_"++n++"_"++show clvl) "Global" (Just "0")
                  | ((q,n),lvl) <- Map.toList history
@@ -142,14 +143,16 @@ generatePromelaCode spec history
                      , incl <- cIFaceIncludes (allCInterface $ gtlModelBackend mdl)
                      ] ++
                      [ tp++" input_"++name++show i++";"
-                     | (name,mdl) <- Map.toList (gtlSpecModels spec)
+                     | (name,inst) <- Map.toList (gtlSpecInstances spec)
+                     , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                      , (i,tp) <- zip [0..] (cIFaceInputType (allCInterface $ gtlModelBackend mdl))
                      ]
                     ]
         init = [Pr.prInit ([Pr.StmtCCode $ unlines $
                             [ cIFaceStateInit iface (stateVars name iface) ++ ";"
-                            | (name,mdl) <- Map.toList (gtlSpecModels spec)
-                            , let iface = allCInterface $ gtlModelBackend mdl
+                            | (name,inst) <- Map.toList (gtlSpecInstances spec)
+                            , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                                  iface = allCInterface $ gtlModelBackend mdl
                             ]++
                             [ if Map.member var (gtlModelInput mdl)
                               then cIFaceGetInputVar iface (stateVars name iface) var ++ "=" ++ cIFaceTranslateValue iface val++";"
