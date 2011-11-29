@@ -14,11 +14,12 @@ import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.DFA
-import Data.Map as Map hiding (map)
+import Data.Map as Map hiding (map, filter)
 import Control.Monad.Identity
 import Data.List as List (intercalate, null, mapAccumL)
 import Data.Maybe (maybeToList, isJust)
 import Data.Set as Set (member)
+import qualified Data.Generics.Aliases as Syb (orElse)
 
 import Control.Monad.Error.Class (MonadError(..))
 
@@ -50,15 +51,15 @@ instance GTLBackend Scade where
       ".xscade" -> x2s opts file
     let decls = scade $ alexScanTokens str
     return $ ScadeData name decls (scadeTypes decls) file
-  typeCheckInterface Scade (ScadeData name decls tps opFile) (ins,outs) = do
+  typeCheckInterface Scade (ScadeData name decls types opFile) (ins,outs) = do
     let (sc_ins,sc_outs) = scadeInterface (scadeParseNodeName name) decls
-        Just local = scadeMakeLocal (scadeParseNodeName name) tps
-    mp_ins <- scadeTypeMap tps local sc_ins
-    mp_outs <- scadeTypeMap tps local sc_outs
+        Just local = scadeMakeLocal (scadeParseNodeName name) types
+    mp_ins <- scadeTypeMap types local sc_ins
+    mp_outs <- scadeTypeMap types local sc_outs
     rins <- mergeTypes ins mp_ins
     routs <- mergeTypes outs mp_outs
     return (rins,routs)
-  cInterface Scade (ScadeData name decls tps opFile)
+  cInterface Scade (ScadeData name decls types opFile)
     = let (inp,outp) = scadeInterface (scadeParseNodeName name) decls
       in CInterface { cIFaceIncludes = [(fmap (\c -> case c of
                                                   '.' -> '_'
@@ -76,13 +77,13 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls tps opFile) cy expr locals opts gtlName
+  backendVerify Scade (ScadeData node decls types opFile) cy expr locals constVars opts gtlName
     = let nodePath = scadeParseNodeName node
           name = (intercalate "_" nodePath)
           (inp,outp) = scadeInterface nodePath decls
           buchi = gtl2ba (Just cy) expr
           dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA buchi
-          scade = fmap (dfaToScade name inp outp locals) dfa
+          scade = fmap (dfaToScade types name inp outp locals) dfa
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
@@ -94,7 +95,7 @@ instance GTLBackend Scade where
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
             writeFile testNodeFile (show $ prettyScade [scade'])
-            writeFile proofNodeFile (show $ prettyScade [generateProver name nodePath inp outp])
+            writeFile proofNodeFile (show $ prettyScade [generateProver types name nodePath inp outp constVars])
             if not (dryRun opts) then
               case scadeRoot opts of
                 Just p -> do
@@ -118,15 +119,19 @@ dump opts gtlName name buchi =
     writeFile ((outputPath opts) </> (gtlName ++ name ++ "-buchi" ++ ".txt")) (show buchi)
   else return ()
 
-generateProver :: String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)] -> Sc.Declaration
-generateProver name nodePath ins outs
-  = UserOpDecl
+generateProver :: ScadeTypeMapping
+                -> String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)]
+                -> Map String (GTLType, GTLConstant) -- ^ Constant variables
+                -> Sc.Declaration
+generateProver types name nodePath ins outs constVars =
+  let nonConstInp = filterNonConst constVars ins
+  in UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
     , userOpInterface = InterfaceStatus Nothing False
     , userOpName = name ++ "_proof"
     , userOpSize = Nothing
-    , userOpParams = interfaceToDeclaration ins
+    , userOpParams = interfaceToDeclaration nonConstInp
     , userOpReturns = [VarDecl { Sc.varNames = [VarId "test_result" False False]
                                , Sc.varType = TypeBool
                                , Sc.varDefault = Nothing
@@ -134,8 +139,10 @@ generateProver name nodePath ins outs
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = interfaceToDeclaration outs
-                              , dataEquations = [
+                              , dataLocals = interfaceToDeclaration outs ++ (declareConstVars types constVars)
+                              , dataEquations =
+                                (constAssign constVars) ++
+                                [
                                   SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
                                   , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
                                 ]
@@ -144,6 +151,9 @@ generateProver name nodePath ins outs
 
 interfaceToDeclaration :: [(String,Sc.TypeExpr)] -> [VarDecl]
 interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Nothing Nothing | v <- vars]
+
+filterNonConst :: Ord a => Map a b -> [(a,c)] -> [(a,c)]
+filterNonConst constVars = filter (not . (flip Map.member $ constVars) . fst)
 
 -- | List of TCL commands
 type ScadeTick = [String]
@@ -419,14 +429,15 @@ buildTest opname ins outs = UserOpDecl
   }
 
 -- | Convert a DFA to Scade.
-dfaToScade :: String -- ^ Name of the resulting SCADE node
+dfaToScade :: ScadeTypeMapping
+                -> String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
                 -> Map String GTLType -- ^ Local variables of the mode
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
-dfaToScade name ins outs locals dfa
+dfaToScade types name ins outs locals dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -442,7 +453,7 @@ dfaToScade name ins outs locals dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = declarationsToScade $ Map.toList locals
+                              , dataLocals = (declarationsToScade types $ Map.toList locals)
                               , dataEquations = [StateEquation
                                                  (StateMachine Nothing (dfaToStates locals dfa))
                                                  [] True
@@ -510,7 +521,7 @@ exprToScade locals (Fix expr) = case getValue expr of
                                                            StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
                                                            _ -> IdExpr (Path [name])
                                                        ) [1..lvl], Nothing)
-  Value val -> (valueToScade locals (getType expr) val, Nothing)
+  Value val -> (valueToScade locals val, Nothing)
   BinIntExpr op l r ->
     let (lExpr, lAssign) = exprToScade locals l
         (rExpr, rAssign) = exprToScade locals r
@@ -544,7 +555,7 @@ exprToScade locals (Fix expr) = case getValue expr of
   UnBoolExpr GTL.Not p -> first (Sc.UnaryExpr Sc.UnNot) (exprToScade locals p)
   GTL.IndexExpr r i -> first (flip Sc.IndexExpr $ (Sc.ConstIntExpr i)) (exprToScade locals r)
 
--- | If on the lhs of an equality expression a state output variable is found
+-- | If on the lhs of an equality expression a state output variable is fund
 -- this expression is transformed into an assignment on the transition.
 mkEqExprBinEquals :: Map String GTLType -> TypedExpr String -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 mkEqExprBinEquals locals l r =
@@ -572,19 +583,28 @@ exprToScadeNoAssigns locals e =
   let (e', a) = exprToScade locals e
   in if isJust a then error "assignment not allowed here" else e'
 
-valueToScade :: Map String GTLType -> GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
-valueToScade locals _ (GTLIntVal v) = Sc.ConstIntExpr v
-valueToScade locals _ (GTLBoolVal v) = Sc.ConstBoolExpr v
-valueToScade locals _ (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
-valueToScade locals _ (GTLEnumVal v) = Sc.IdExpr $ Path [v]
-valueToScade locals _ (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- no assignments should be generated inside index expression
-valueToScade locals _ (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- or tuple expressions
+valueToScade :: Map String GTLType -> GTLValue (Fix (Typed (Term String))) -> Sc.Expr
+valueToScade locals (GTLIntVal v) = Sc.ConstIntExpr v
+valueToScade locals (GTLBoolVal v) = Sc.ConstBoolExpr v
+valueToScade locals (GTLByteVal v) = Sc.ConstIntExpr (fromIntegral v)
+valueToScade locals (GTLEnumVal v) = Sc.IdExpr $ Path [v]
+valueToScade locals (GTLArrayVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- no assignments should be generated inside index expression
+valueToScade locals (GTLTupleVal xs) = Sc.ArrayExpr (fmap (exprToScadeNoAssigns locals) xs) -- or tuple expressions
 
-declarationsToScade :: [(String, GTLType)] -> [Sc.VarDecl]
-declarationsToScade = concat . map declarationsToScade'
+-- Generate plain values, no expressions allowed, only constants
+constantToScade :: GTLConstant -> Sc.Expr
+constantToScade (Fix (GTLIntVal v)) = Sc.ConstIntExpr v
+constantToScade (Fix (GTLBoolVal v)) = Sc.ConstBoolExpr v
+constantToScade (Fix (GTLByteVal v)) = Sc.ConstIntExpr (fromIntegral v)
+constantToScade (Fix (GTLEnumVal v)) = Sc.IdExpr $ Path [v]
+constantToScade (Fix (GTLArrayVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
+constantToScade (Fix (GTLTupleVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
+
+declarationsToScade :: ScadeTypeMapping -> [(String, GTLType)] -> [Sc.VarDecl]
+declarationsToScade types = concat . map declarationsToScade'
   where
     declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
-    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade t) Nothing (Just $ ConstIntExpr 0)]
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ ConstIntExpr 0)]
 
     -- Tuples are declared as follows:
     -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
@@ -594,18 +614,35 @@ declarationsToScade = concat . map declarationsToScade'
       where
         makeTupleDecl :: String -> [Int] -> Int -> GTLType -> (Int, [Sc.VarDecl])
         makeTupleDecl n indcs indx (Fix (GTLTuple ts)) = (indx + 1, makeTupleDecls n (indx : indcs) ts)
-        makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade t) Nothing Nothing])
+        makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade types t) Nothing Nothing])
         expandName = foldl (\n i -> n ++ "_" ++ show i ) ""
 
-gtlTypeToScade :: GTLType -> Sc.TypeExpr
-gtlTypeToScade (Fix GTLInt) = Sc.TypeInt
+declareConstVars :: ScadeTypeMapping -> Map String (GTLType, GTLConstant) -> [Sc.VarDecl]
+declareConstVars types = foldrWithKey (\n (t,v) l -> (VarDecl [VarId n False False] (gtlTypeToScade types t) Nothing Nothing) : l) []
+
+constAssign :: Map String (GTLType, GTLConstant) -> [Sc.Equation]
+constAssign = foldrWithKey (\n (t,v) l -> (SimpleEquation [Named n ] (constantToScade v) ) : l) []
+
+enumAlias :: ScadeTypeMapping -> [String] -> Maybe String
+enumAlias types enum = Map.foldrWithKey (\n' t n -> n `Syb.orElse` (matchesEnum enum n' t)) Nothing types
+  where
+    matchesEnum enum name (ScadeType (TypeEnum enum')) = if enum == enum' then Just name else Nothing
+    matchesEnum _ _ _ = Nothing
+
+gtlTypeToScade :: ScadeTypeMapping -> GTLType -> Sc.TypeExpr
+gtlTypeToScade _ (Fix GTLInt) = Sc.TypeInt
 -- gtlTypeToScade GTLByte = ?
-gtlTypeToScade (Fix GTLBool) = Sc.TypeBool
-gtlTypeToScade (Fix GTLFloat) = Sc.TypeReal
--- gtlTypeToScade (GTLEnum decls) = Sc.TypeEnum decls -- We can't use this one here as we may want to refer to a already declared enum. That information is lost.
--- So we're missing something like GTLTypeVar String just like Sc.TypePath.
-gtlTypeToScade (Fix (GTLArray size t)) = Sc.TypePower (gtlTypeToScade t) (Sc.ConstIntExpr size)
+gtlTypeToScade _ (Fix GTLBool) = Sc.TypeBool
+gtlTypeToScade _ (Fix GTLFloat) = Sc.TypeReal
+gtlTypeToScade types (Fix (GTLEnum decls)) =
+  let malias = enumAlias types decls
+  in case malias of
+    Just alias -> Sc.TypePath (Path [alias])
+    Nothing -> Sc.TypeEnum decls
+gtlTypeToScade types (Fix (GTLArray size t)) = Sc.TypePower (gtlTypeToScade types t) (Sc.ConstIntExpr size)
 --gtlTypeToScade (GTLTuple ts) = map gtlTypeToScade ts
+gtlTypeToScade _ (Fix (GTLNamed n _)) = Sc.TypePath (Path [n])
+gtlTypeToScade _ t = error $ "Cannot generate type " ++ show t
 
 apPairs f g = \(x1,y1) (x2,y2) -> (f x1 x2, g y1 y2)
 

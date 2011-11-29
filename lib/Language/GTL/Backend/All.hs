@@ -19,7 +19,7 @@ import Misc.ProgramOptions as Opts
 data AllBackend = AllBackend
                   { allTypecheck :: MonadError String m => ModelInterface -> m ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Opts.Options -> String -> IO (Maybe Bool)
+                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 -- | Try to initialize a given backend with a name and arguments.

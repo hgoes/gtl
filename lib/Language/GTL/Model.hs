@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts, TupleSections #-}
+
 {-| This module provides a data structure for type-checked GTL specifications.
  -}
 module Language.GTL.Model where
@@ -7,8 +9,9 @@ import Language.GTL.Parser.Syntax
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Language.GTL.Types
-import Data.Map as Map
-import Data.Set as Set
+import Data.Map as Map hiding (map)
+import Data.Set as Set hiding (map)
+import Data.Either (partitionEithers)
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
 import Misc.ProgramOptions
@@ -25,7 +28,7 @@ data GTLModel a = GTLModel
                   , gtlModelLocals :: Map a GTLType -- ^ The local variables with types of the model.
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
                   , gtlModelCycleTime :: Integer -- ^ Cycle time in us
-                  , gtlModelConstants :: Map a GTLConstant
+                  , gtlModelConstantInputs :: Map a (GTLType, GTLConstant)
                   }
 
 -- | Represents the start or end of a connection, by specifying the instance
@@ -64,13 +67,15 @@ gtlParseModel opts aliases mdl = do
   inps <- mapM (resolveType aliases) (modelInputs mdl)
   outps <- mapM (resolveType aliases) (modelOutputs mdl)
   locs <- mapM (resolveType aliases) (modelLocals mdl)
-  mback <- liftIO $ initAllBackend (modelType mdl) opts (modelArgs mdl)
+  let (args, constDecls) = splitArgs (modelArgs mdl)
+  mback <- liftIO $ initAllBackend (modelType mdl) opts args
   case mback of
     Nothing -> throwError $ "Couldn't initialize backend "++(modelType mdl)
     Just back -> do
       (inp,outp) <- allTypecheck back (inps,outps)
       let allType = Map.unions [inp,outp,locs]
           enums = getEnums allType
+      constInputs <- checkConstInputs allType enums constDecls
       expr <- makeTypedExpr
               (\q n inf -> case q of
                   Nothing -> return (n,if Map.member n inp
@@ -106,6 +111,7 @@ gtlParseModel opts aliases mdl = do
                                      , gtlModelLocals = locs
                                      , gtlModelDefaults = Map.fromList lst
                                      , gtlModelCycleTime = modelCycleTime mdl
+                                     , gtlModelConstantInputs = constInputs
                                      },enums)
 
 -- | Get all possible enum types.
@@ -118,6 +124,29 @@ getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
     getEnums' (Fix (GTLTuple xs)) = Set.unions (fmap getEnums' xs)
     getEnums' (Fix (GTLNamed name tp)) = getEnums' tp
     getEnums' _ = Set.empty
+
+splitArgs :: [ModelArgs] -> ([String], [(String, GExpr)])
+splitArgs = partitionEithers . map mArgsToEither
+  where
+    mArgsToEither :: ModelArgs -> Either String (String, GExpr)
+    mArgsToEither (StrArg s) = Left s
+    mArgsToEither (ConstantDecl var val) = Right (var, val)
+
+checkConstInputs :: MonadError String m => Map String GTLType -> Set [String] -> [(String, GExpr)] -> m (Map String (GTLType, GTLConstant))
+checkConstInputs allTypes enums = liftM Map.fromList . mapM (makeTypedConst allTypes enums)
+  where
+    makeTypedConst :: MonadError String m => Map String GTLType -> Set [String] -> (String, GExpr) -> m (String, (GTLType, GTLConstant))
+    makeTypedConst allTypes enums (n, v) = do
+      v' <- makeTypedExpr makeVar Map.empty enums v
+      case getConstant v' of
+        Just v'' -> case Map.lookup n allTypes of
+          Just t -> return (n, (t, v''))
+          Nothing -> throwError $ "Variable " ++ show n ++ " not declared in constant declaration"
+        Nothing -> throwError $ "Expected constant expression in constant declaration for " ++ show n
+
+    makeVar q n _ = case q of
+      Nothing -> return (n, Input)
+      Just _ -> throwError $ "Qualified names for constants not supported"
 
 -- | Parse a GTL specification from an unchecked list of declarations.
 gtlParseSpec :: Options -> [Declaration] -> ErrorIO (GTLSpec String)
