@@ -19,8 +19,8 @@ instance GTLBackend None where
     , cIFaceInputType = []
     , cIFaceStateInit = const ""
     , cIFaceIterate = \_ _ -> ""
-    , cIFaceGetOutputVar = \_ _ -> ""
-    , cIFaceGetInputVar = \_ _ -> ""
+    , cIFaceGetOutputVar = \_ _ _ -> ""
+    , cIFaceGetInputVar = \_ _ _ -> ""
     , cIFaceTranslateType = \_ -> ""
     , cIFaceTranslateValue = \_ -> ""
     }

@@ -41,7 +41,8 @@ module Language.GTL.Expression
         relNot,
         maximumHistory,
         getClocks,
-        automatonClocks
+        automatonClocks,
+        showTermWith
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -64,6 +65,7 @@ import Data.Fix
 import Debug.Trace
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad (liftM)
+import Text.Show
 
 data VarUsage = Input
               | Output
@@ -276,40 +278,68 @@ instance Eq v => Eq2 (Typed (Term v)) where
 instance Ord v => Ord2 (Typed (Term v)) where
   compare2 = compare
 
+
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
-showTerm f (Var name lvl u) = (if u == StateOut
-                              then "#out "
-                              else "") ++ show name ++ (if lvl==0
-                                                        then ""
-                                                        else "_"++show lvl)
-showTerm f (Value val) = showGTLValue f 0 val ""
-showTerm f (BinBoolExpr op l r) = "(" ++ (f l) ++ (case op of
-                                                      And -> " and "
-                                                      Or -> " or "
-                                                      Implies -> " implies "
-                                                      Until ts -> " until"++show ts++" "
-                                                  ) ++ (f r) ++ ")"
-showTerm f (BinRelExpr rel l r) = "(" ++ (f l) ++ (case rel of
-                                                      BinLT -> " < "
-                                                      BinLTEq -> " <= "
-                                                      BinGT -> " > "
-                                                      BinGTEq -> " >= "
-                                                      BinEq -> " = "
-                                                      BinNEq -> " != "
-                                                      BinAssign -> " := ") ++ (f r) ++ ")"
-showTerm f (BinIntExpr op l r) = "(" ++ (f l) ++ (case op of
-                                                     OpPlus -> " + "
-                                                     OpMinus -> " - "
-                                                     OpMult -> " * "
-                                                     OpDiv -> " / ") ++ (f r) ++ ")"
-showTerm f (UnBoolExpr op p) = "(" ++ (case op of
-                                          Not -> "not "
-                                          Always -> "always "
-                                          Next ts -> "next"++show ts++" ") ++ (f p) ++ ")"
-showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
-showTerm f (ClockReset clk limit) = "clock("++show clk++") := "++show limit
-showTerm f (ClockRef clk) = "clock("++show clk++")"
+showTerm g t = showTermWith (\name lvl -> showsPrec 0 name . (if lvl==0 then id else (showChar '_' . showsPrec 0 lvl))) (\p r -> showString $ g r) 0 t ""
+
+opPrec And = 5
+opPrec Or = 4
+opPrec Implies = 6
+opPrec (Until _) = 3
+
+intPrec OpPlus = 9
+intPrec OpMinus = 10
+intPrec OpMult = 11
+intPrec OpDiv = 12
+
+unPrec Not = 7
+unPrec Always = 2
+unPrec (Next _) = 2
+
+showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
+showTermWith f g p (Var name lvl u) = (if u == StateOut
+                                       then showString "#out " 
+                                       else id) . f name lvl
+showTermWith f g p (Value val) = showString $ showGTLValue (\r -> g 0 r "") 0 val ""
+showTermWith f g p (BinBoolExpr op l r)
+  = showParen (p > opPrec op) $
+    (g (opPrec op) l) .
+    (case op of
+        And -> showString " and "
+        Or -> showString " or "
+        Implies -> showString " implies "
+        Until ts -> showString $ " until"++show ts++" "
+    ) . (g (opPrec op) r)
+showTermWith f g p (BinRelExpr rel l r)
+  = showParen (p > 8) $
+    (g 8 l) . (showString $ case rel of
+                  BinLT -> " < "
+                  BinLTEq -> " <= "
+                  BinGT -> " > "
+                  BinGTEq -> " >= "
+                  BinEq -> " = "
+                  BinNEq -> " != "
+                  BinAssign -> " := ") . (g 8 r)
+showTermWith f g p (BinIntExpr op l r)
+  = showParen (p > intPrec op) $ 
+    (g (intPrec op) l) .
+    (showString $ case op of
+        OpPlus -> " + "
+        OpMinus -> " - "
+        OpMult -> " * "
+        OpDiv -> " / ") .
+    (g (intPrec op) r)
+showTermWith f g p (UnBoolExpr op arg)
+  = showParen (p > unPrec op) $ 
+    (showString $ case op of
+        Not -> "not "
+        Always -> "always "
+        Next ts -> "next"++show ts++" ") . 
+    (g (unPrec op) arg)
+showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
+showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit
+showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
