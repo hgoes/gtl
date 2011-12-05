@@ -73,32 +73,22 @@ determinizeBA :: (Eq a, Ord a, Eq st, Ord st, BAState st) => BA a st -> Maybe (D
 determinizeBA ba
   | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = Nothing
   | otherwise =
-      let ba' = mergeInits ba
-          initS = Set.singleton $ Set.findMin $ baInits ba
-          (trans, states) = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
+      let initS = baInits ba 
+          trans = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) Set.empty [initS] Map.empty
       in Just $ DFA {
           dfaTransitions = MakeTotal trans,
           dfaInit = initS
         }
       where
         determinize' :: (Eq a, Ord a, Eq st, Ord st) =>
-          BATransitionFunc a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-            -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-        determinize' ba remaining r
-          | Set.null remaining = r
-          | otherwise =
-            let next = Set.findMax remaining
-                (remaining', trans', qs') = buildTransition ba next r
-            in determinize' ba (Set.union remaining' (Set.delete next remaining)) (trans', qs')
-
-        buildTransition :: (Eq a, Ord a, Eq st, Ord st) =>
-          BATransitionFunc a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-            -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-        buildTransition ba q (trans, qs) =
-          let trans' = getTransitions ba q
-              trans'' = mergeTransitions trans'
-              newStates = (targetStates trans'') `Set.difference` qs
-          in (newStates, Map.insert q trans'' trans, Set.insert q qs)
+          BATransitionFunc a st -> Set (PowSetSt st) -> [Set st] 
+          -> Map (PowSetSt st) (Map a (PowSetSt st))
+          -> Map (PowSetSt st) (Map a (PowSetSt st))
+        determinize' _ _ [] trans = trans
+        determinize' ba visited (next:remaining) trans
+          | Set.member next visited = determinize' ba visited remaining trans
+          | otherwise = let trans' = mergeTransitions $ getTransitions ba next
+                        in determinize' ba (Set.insert next visited) (Set.toList (targetStates trans')++remaining) (Map.insert next trans' trans)
 
         -- Get the transitions in the BA which origin at the given set of states.
         getTransitions :: (Eq a, Ord a, Eq st, Ord st) =>
