@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable,FlexibleInstances,
   ExistentialQuantification, StandaloneDeriving, TypeSynonymInstances, FlexibleContexts,
-  DeriveFunctor,RankNTypes #-}
+  DeriveFunctor,RankNTypes,MultiParamTypeClasses #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
 module Language.GTL.Expression
@@ -49,6 +49,7 @@ import Language.GTL.Parser.Syntax
 import Language.GTL.Parser.Token
 import Language.GTL.Buchi
 import Language.GTL.Types
+import Data.AtomContainer
 
 import Data.Binary
 import Data.Maybe
@@ -813,14 +814,6 @@ relTurn rel = case rel of
   BinNEq -> BinNEq
   --BinAssign -> error "Can't turn assignments"
 
--- | Represents the relations in which two expressions can stand
-data ExprOrdering = EEQ -- ^ Both expressions define the same value space
-                  | ENEQ -- ^ The expressions define non-overlapping value spaces
-                  | EGT -- ^ The value space of the second expression is contained by the first
-                  | ELT -- ^ The value space of the first expression is contained by the second
-                  | EUNK -- ^ The expressions have overlapping value spaces or the relation isn't known
-                  deriving (Show,Eq,Ord)
-
 getClocks :: TypedExpr v -> [Integer]
 getClocks (Fix e) = case getValue e of
   ClockReset c _ -> [c]
@@ -973,3 +966,51 @@ compareExpr e1 e2
                                  Nothing -> EUNK
                                  Just c2 -> ENEQ)
                       else EUNK)
+
+instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
+  atomsTrue = []
+  atomSingleton True x = [x]
+  atomSingleton False x = [distributeNot x]
+  compareAtoms x y = compareAtoms' EEQ x y
+    where
+      compareAtoms' p [] [] = p
+      compareAtoms' p [] _  = case p of
+        EEQ -> EGT
+        EGT -> EGT
+        _ -> EUNK
+      compareAtoms' p (x:xs) ys = case compareAtoms'' p x ys of
+        Nothing -> case p of
+          EEQ -> compareAtoms' ELT xs ys
+          ELT -> compareAtoms' ELT xs ys
+          ENEQ -> ENEQ
+          _ -> EUNK
+        Just (p',ys') -> compareAtoms' p' xs ys'
+      compareAtoms'' p x [] = Nothing
+      compareAtoms'' p x (y:ys) = case compareExpr x y of
+        EEQ -> Just (p,ys)
+        ELT -> case p of
+          EEQ -> Just (ELT,ys)
+          ELT -> Just (ELT,ys)
+          _ -> Just (EUNK,ys)
+        EGT -> case p of
+          EEQ -> Just (EGT,ys)
+          EGT -> Just (EGT,ys)
+          _ -> Just (EUNK,ys)
+        ENEQ -> Just (ENEQ,ys)
+        EUNK -> case compareAtoms'' p x ys of
+          Nothing -> Nothing
+          Just (p',ys') -> Just (p',y:ys')
+  mergeAtoms [] ys = Just ys
+  mergeAtoms (x:xs) ys = case mergeAtoms' x ys of
+    Nothing -> Nothing
+    Just ys' -> mergeAtoms xs ys'
+    where
+      mergeAtoms' x [] = Just [x]
+      mergeAtoms' x (y:ys) = case compareExpr x y of
+        EEQ -> Just (y:ys)
+        ELT -> Just (x:ys)
+        EGT -> Just (y:ys)
+        EUNK -> case mergeAtoms' x ys of
+          Nothing -> Nothing
+          Just ys' -> Just (y:ys')
+        ENEQ -> Nothing

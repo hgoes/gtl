@@ -14,7 +14,6 @@ import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat,mapM)
-
 import Data.Set as Set
 
 -- | Translates a GTL expression into a buchi automaton.
@@ -22,54 +21,6 @@ import Data.Set as Set
 --   true into the variable type of the buchi automaton.
 gtl2ba :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> BA [TypedExpr v] Integer
 gtl2ba cy e = ltl2ba $ gtlToLTL cy e
-
-instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
-  atomsTrue = []
-  atomSingleton True x = [x]
-  atomSingleton False x = [distributeNot x]
-  compareAtoms x y = compareAtoms' EEQ x y
-    where
-      compareAtoms' p [] [] = p
-      compareAtoms' p [] _  = case p of
-        EEQ -> EGT
-        EGT -> EGT
-        _ -> EUNK
-      compareAtoms' p (x:xs) ys = case compareAtoms'' p x ys of
-        Nothing -> case p of
-          EEQ -> compareAtoms' ELT xs ys
-          ELT -> compareAtoms' ELT xs ys
-          ENEQ -> ENEQ
-          _ -> EUNK
-        Just (p',ys') -> compareAtoms' p' xs ys'
-      compareAtoms'' p x [] = Nothing
-      compareAtoms'' p x (y:ys) = case compareExpr x y of
-        EEQ -> Just (p,ys)
-        ELT -> case p of
-          EEQ -> Just (ELT,ys)
-          ELT -> Just (ELT,ys)
-          _ -> Just (EUNK,ys)
-        EGT -> case p of
-          EEQ -> Just (EGT,ys)
-          EGT -> Just (EGT,ys)
-          _ -> Just (EUNK,ys)
-        ENEQ -> Just (ENEQ,ys)
-        EUNK -> case compareAtoms'' p x ys of
-          Nothing -> Nothing
-          Just (p',ys') -> Just (p',y:ys')
-  mergeAtoms [] ys = Just ys
-  mergeAtoms (x:xs) ys = case mergeAtoms' x ys of
-    Nothing -> Nothing
-    Just ys' -> mergeAtoms xs ys'
-    where
-      mergeAtoms' x [] = Just [x]
-      mergeAtoms' x (y:ys) = case compareExpr x y of
-        EEQ -> Just (y:ys)
-        ELT -> Just (x:ys)
-        EGT -> Just (y:ys)
-        EUNK -> case mergeAtoms' x ys of
-          Nothing -> Nothing
-          Just ys' -> Just (y:ys')
-        ENEQ -> Nothing
 
 getSteps :: Integer -> TimeSpec -> Integer
 getSteps _ NoTime = 0
