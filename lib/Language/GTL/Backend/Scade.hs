@@ -91,7 +91,7 @@ instance GTLBackend Scade where
     = let name = (intercalate "_" node)
           (inp,outp) = scadeInterface node decls
           buchi = gtl2ba (Just cy) expr
-          dfa = fmap (renameDFAStates . minimizeDFA) $ determinizeBA buchi
+          dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
           scade = fmap (dfaToScade types name inp outp locals) dfa
           --scade = buchiToScade name inp outp ()
       in do
@@ -488,9 +488,7 @@ dfaToStates locals dfa = failState :
                                          , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
                                          }
                    , stateUnless = [ stateToTransition locals cond trg
-                                   | (cond, trg) <- Map.toList trans, not (List.null cond) ] ++
-                                   -- put unconditional transition at the end if available
-                                   (maybeToList $ fmap (stateToTransition locals []) $ Map.lookup [] trans) ++
+                                   | (cond, trg) <- trans ] ++
                                    [failTransition]
                    , stateUntil = []
                    , stateSynchro = Nothing
@@ -518,9 +516,9 @@ failState = Sc.State
   }
 
 -- | Given a state this function creates a transition into the state.
-stateToTransition :: Map String GTLType -> [TypedExpr String] -> Integer -> Sc.Transition
+stateToTransition :: Map String GTLType ->  [TypedExpr String] -> Integer -> Sc.Transition
 stateToTransition locals cond trg =
-  let (e, a) = relsToExpr locals cond
+  let (e, a) = relsToExpr locals [cond]
   in Transition
       e
       (fmap Sc.ActionDef a)
@@ -661,6 +659,10 @@ gtlTypeToScade _ t = error $ "Cannot generate type " ++ show t
 
 apPairs f g = \(x1,y1) (x2,y2) -> (f x1 x2, g y1 y2)
 
-relsToExpr :: Map String GTLType -> [TypedExpr String] -> (Sc.Expr, Maybe Sc.DataDef)
-relsToExpr _ [] = (Sc.ConstBoolExpr True, Nothing)
-relsToExpr locals xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap (exprToScade locals) xs)
+relsToExpr :: Map String GTLType -> [[TypedExpr String]] -> (Sc.Expr, Maybe Sc.DataDef)
+relsToExpr _ [] = (Sc.ConstBoolExpr False, Nothing)
+relsToExpr locals xs = foldl1 (apPairs (Sc.BinaryExpr Sc.BinOr) mergeAssigns)
+                       (fmap (\x -> case x of
+                                 [] -> (Sc.ConstBoolExpr True, Nothing)
+                                 _ -> foldl1 (apPairs (Sc.BinaryExpr Sc.BinAnd) mergeAssigns) (fmap (exprToScade locals) x)
+                             ) xs)
