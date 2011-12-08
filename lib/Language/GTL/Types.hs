@@ -61,13 +61,13 @@ type UnResolvedType = Fix UnResolvedType'
 instance Show2 UnResolvedType' where
   show2 (UnResolvedType' tp) = show tp
 
-resolveType :: MonadError String m => Map String UnResolvedType -> UnResolvedType -> m GTLType
-resolveType mp ut = case resolveType' mp Set.empty ut of
+resolveType :: MonadError String m => Map String GTLType -> Map String UnResolvedType -> UnResolvedType -> m GTLType
+resolveType aliases mp ut = case resolveType' aliases mp Set.empty ut of
   Left e -> throwError e
   Right t -> return t
 
-resolveType' :: Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
-resolveType' mp tried (Fix (UnResolvedType' tp))
+resolveType' :: Map String GTLType -> Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
+resolveType' aliases mp tried (Fix (UnResolvedType' tp))
   = case tp of
   Right GTLInt -> Right gtlInt
   Right GTLByte -> Right gtlByte
@@ -75,17 +75,19 @@ resolveType' mp tried (Fix (UnResolvedType' tp))
   Right GTLFloat -> Right gtlFloat
   Right (GTLEnum xs) -> Right $ gtlEnum xs
   Right (GTLArray sz t) -> do
-    t' <- resolveType' mp tried t
+    t' <- resolveType' aliases mp tried t
     return $ gtlArray sz t'
   Right (GTLTuple xs) -> do
-    xs' <- mapM (resolveType' mp tried) xs
+    xs' <- mapM (resolveType' aliases mp tried) xs
     return $ gtlTuple xs'
-  Left name -> if Set.member name tried
+  Left name -> case Map.lookup name aliases of
+    Just res -> Right $ Fix $ GTLNamed name res
+    Nothing -> if Set.member name tried
                then Left $ "Recursive types not allowed."
                else case Map.lookup name mp of
                  Nothing -> Left $ "Language.GTL.Types.resolveType: Unknown named type "++show name
                  Just rtp -> do
-                   rtp' <- resolveType' mp (Set.insert name tried) rtp
+                   rtp' <- resolveType' aliases mp (Set.insert name tried) rtp
                    return $ Fix $ GTLNamed name rtp'
 
 baseType :: GTLType -> GTLType
