@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables,GADTs,DeriveDataTypeable,FlexibleInstances,
   ExistentialQuantification, StandaloneDeriving, TypeSynonymInstances, FlexibleContexts,
-  DeriveFunctor,RankNTypes #-}
+  DeriveFunctor,RankNTypes,MultiParamTypeClasses #-}
 {-| Provides the expression data type as well as the type-checking algorithm.
  -}
 module Language.GTL.Expression
@@ -41,7 +41,8 @@ module Language.GTL.Expression
         relNot,
         maximumHistory,
         getClocks,
-        automatonClocks
+        automatonClocks,
+        showTermWith
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -49,6 +50,7 @@ import Language.GTL.Parser.Token
 import Language.GTL.Buchi
 import Language.GTL.BuchiHistory
 import Language.GTL.Types
+import Data.AtomContainer
 
 import Data.Binary
 import Data.Maybe
@@ -63,6 +65,9 @@ import Control.Monad.Error ()
 import Control.Exception
 import Data.Fix
 import Debug.Trace
+import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad (liftM)
+import Text.Show
 
 data VarUsage = Input
               | Output
@@ -275,57 +280,87 @@ instance Eq v => Eq2 (Typed (Term v)) where
 instance Ord v => Ord2 (Typed (Term v)) where
   compare2 = compare
 
+
 -- | Render a term by applying a recursive rendering function to it.
 showTerm :: Show v => (r -> String) -> Term v r -> String
-showTerm f (Var name lvl u) = (if u == StateOut
-                              then "#out "
-                              else "") ++ show name ++ (if lvl==0
-                                                        then ""
-                                                        else "_"++show lvl)
-showTerm f (Value val) = showGTLValue f 0 val ""
-showTerm f (BinBoolExpr op l r) = "(" ++ (f l) ++ (case op of
-                                                      And -> " and "
-                                                      Or -> " or "
-                                                      Implies -> " implies "
-                                                      Until ts -> " until"++show ts++" "
-                                                  ) ++ (f r) ++ ")"
-showTerm f (BinRelExpr rel l r) = "(" ++ (f l) ++ (case rel of
-                                                      BinLT -> " < "
-                                                      BinLTEq -> " <= "
-                                                      BinGT -> " > "
-                                                      BinGTEq -> " >= "
-                                                      BinEq -> " = "
-                                                      BinNEq -> " != "
-                                                      BinAssign -> " := ") ++ (f r) ++ ")"
-showTerm f (BinIntExpr op l r) = "(" ++ (f l) ++ (case op of
-                                                     OpPlus -> " + "
-                                                     OpMinus -> " - "
-                                                     OpMult -> " * "
-                                                     OpDiv -> " / ") ++ (f r) ++ ")"
-showTerm f (UnBoolExpr op p) = "(" ++ (case op of
-                                          Not -> "not "
-                                          Always -> "always "
-                                          Next ts -> "next"++show ts++" ") ++ (f p) ++ ")"
-showTerm f (IndexExpr expr idx) = f expr ++ "["++show idx++"]"
-showTerm f (ClockReset clk limit) = "clock("++show clk++") := "++show limit
-showTerm f (ClockRef clk) = "clock("++show clk++")"
+showTerm g t = showTermWith (\name lvl -> showsPrec 0 name . (if lvl==0 then id else (showChar '_' . showsPrec 0 lvl))) (\p r -> showString $ g r) 0 t ""
+
+opPrec And = 5
+opPrec Or = 4
+opPrec Implies = 6
+opPrec (Until _) = 3
+
+intPrec OpPlus = 9
+intPrec OpMinus = 10
+intPrec OpMult = 11
+intPrec OpDiv = 12
+
+unPrec Not = 7
+unPrec Always = 2
+unPrec (Next _) = 2
+
+showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
+showTermWith f g p (Var name lvl u) = (if u == StateOut
+                                       then showString "#out " 
+                                       else id) . f name lvl
+showTermWith f g p (Value val) = showString $ showGTLValue (\r -> g 0 r "") 0 val ""
+showTermWith f g p (BinBoolExpr op l r)
+  = showParen (p > opPrec op) $
+    (g (opPrec op) l) .
+    (case op of
+        And -> showString " and "
+        Or -> showString " or "
+        Implies -> showString " implies "
+        Until ts -> showString $ " until"++show ts++" "
+    ) . (g (opPrec op) r)
+showTermWith f g p (BinRelExpr rel l r)
+  = showParen (p > 8) $
+    (g 8 l) . (showString $ case rel of
+                  BinLT -> " < "
+                  BinLTEq -> " <= "
+                  BinGT -> " > "
+                  BinGTEq -> " >= "
+                  BinEq -> " = "
+                  BinNEq -> " != "
+                  BinAssign -> " := ") . (g 8 r)
+showTermWith f g p (BinIntExpr op l r)
+  = showParen (p > intPrec op) $ 
+    (g (intPrec op) l) .
+    (showString $ case op of
+        OpPlus -> " + "
+        OpMinus -> " - "
+        OpMult -> " * "
+        OpDiv -> " / ") .
+    (g (intPrec op) r)
+showTermWith f g p (UnBoolExpr op arg)
+  = showParen (p > unPrec op) $ 
+    (showString $ case op of
+        Not -> "not "
+        Always -> "always "
+        Next ts -> "next"++show ts++" ") . 
+    (g (unPrec op) arg)
+showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
+showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit
+showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
-enforceType :: String -- ^ A string representation of the type checked entity
+enforceType :: MonadError String m =>
+              String -- ^ A string representation of the type checked entity
                -> GTLType -- ^ The actual type of the entity
                -> GTLType -- ^ The expected type
-               -> Either String ()
+               -> m ()
 enforceType expr ac tp = if baseType ac == baseType tp
-                         then Right ()
-                         else Left $ expr ++ " should have type "++show tp++" but it has type "++show ac
+                         then return ()
+                         else throwError $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
 -- | Convert a untyped, generalized expression into a typed expression by performing type checking
-makeTypedExpr :: (Ord v,Show v) => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
+makeTypedExpr :: (Ord v,Show v,MonadError String m) =>
+                (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
                  -> Map v GTLType -- ^ A type mapping for variables
                  -> Set [String] -- ^ All possible enum types
                  -> GExpr -- ^ The generalized expression to type check
-                 -> Either String (TypedExpr v)
+                 -> m (TypedExpr v)
 makeTypedExpr f varmp enums expr = parseTerm f Map.empty Nothing expr >>= typeCheck varmp enums
 
 -- | Convert an expression into a constant, if it is one.
@@ -338,21 +373,20 @@ getConstant e = case getValue (unfix e) of
   _ -> Nothing
 
 -- | Type-check an untyped expression.
-typeCheck :: (Ord v,Show v) => Map v GTLType -- ^ A type mapping for all variables
+typeCheck :: (Ord v,Show v,MonadError String m) =>
+            Map v GTLType -- ^ A type mapping for all variables
              -> Set [String] -- ^ A set of all allowed enum types
              -> Expr v -- ^ The untyped expression
-             -> Either String (TypedExpr v)
-typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix) (show . untyped) varmp enums (unfix e) of
-  Left err -> Left err
-  Right res -> Right $ Fix res
+             -> m (TypedExpr v)
+typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getType.unfix) (show . untyped) varmp enums (unfix e)
   where
-    typeCheck' :: (Ord v,Show v,Ord r2)
-                  => (r1 -> Either String r2)
+    typeCheck' :: (Ord v,Show v,Ord r2,MonadError String m) =>
+                  (r1 -> m r2)
                   -> (r2 -> GTLType)
                   -> (r2 -> String)
-                  -> Map v GTLType -> Set [String] -> Term v r1 -> Either String (Typed (Term v) r2)
+                  -> Map v GTLType -> Set [String] -> Term v r1 -> m (Typed (Term v) r2)
     typeCheck' mu mutp mus varmp enums (Var x lvl u) = case Map.lookup x varmp of
-      Nothing -> Left $ "Unknown variable "++show x
+      Nothing -> throwError $ "Unknown variable "++show x
       Just tp -> return $ Typed tp (Var x lvl u)
     typeCheck' mu mutp mus varmp enums (Value val) = case val of
       GTLIntVal i -> return $ Typed gtlInt (Value $ GTLIntVal i)
@@ -360,15 +394,15 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
       GTLBoolVal i -> return $ Typed gtlBool (Value $ GTLBoolVal i)
       GTLFloatVal i -> return $ Typed gtlFloat (Value $ GTLFloatVal i)
       GTLEnumVal x -> case find (elem x) enums of
-        Nothing -> Left $ "Unknown enum value "++show x
+        Nothing -> throwError $ "Unknown enum value "++show x
         Just e -> return $ Typed (gtlEnum e) (Value $ GTLEnumVal x)
       GTLArrayVal vals -> do
         res <- mapM mu vals
         case res of
-          [] -> Left "Empty arrays not allowed"
+          [] -> throwError "Empty arrays not allowed"
           (x:xs) -> mapM_ (\tp -> if (mutp tp)==(mutp x)
                                   then return ()
-                                  else Left "Not all array elements have the same type") xs
+                                  else throwError "Not all array elements have the same type") xs
         return $ Typed (gtlArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
       GTLTupleVal vals -> do
         tps <- mapM mu vals
@@ -404,11 +438,11 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
       case unfix $ baseType $ mutp pp of
         GTLArray sz tp -> if idx < sz
                           then return $ Typed tp (IndexExpr pp idx)
-                          else Left $ "Index "++show idx++" out of bounds "++show sz
+                          else throwError $ "Index "++show idx++" out of bounds "++show sz
         GTLTuple tps -> if idx < genericLength tps
                         then return $ Typed (tps `genericIndex` idx) (IndexExpr pp idx)
-                        else Left $ "Index "++show idx++" out of bounds "++show (genericLength tps)
-        _ -> Left $ "Expression " ++ mus pp ++ " is not indexable"
+                        else throwError $ "Index "++show idx++" out of bounds "++show (genericLength tps)
+        _ -> throwError $ "Expression " ++ mus pp ++ " is not indexable"
     typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
       ntrans <- mapM (\trans -> mapM (\(cond,trg) -> do
                                          ncond <- mapM mu cond
@@ -425,29 +459,28 @@ typeCheck varmp enums e = case typeCheck' (typeCheck varmp enums) (getType.unfix
             x:xs -> do
               mapM_ (\tp -> if (mutp tp)==(mutp x)
                             then return ()
-                            else Left "Not all \"equal\" arguments have the same type") xs
+                            else throwError "Not all \"equal\" arguments have the same type") xs
               return $ Typed gtlBool (BuiltIn name tps)
-        _ -> Left $ "Unknown built-in "++show name
+        _ -> throwError $ "Unknown built-in "++show name
 
 -- | Discard type information for an expression
 untyped :: TypedExpr v -> Expr v
 untyped expr = Fix $ fmap untyped (getValue (unfix expr))
 
 -- | Convert a generalized expression into a regular one.
-parseTerm :: Ord v => (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
+parseTerm :: (MonadError String m, Ord v) =>
+            (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
              -> ExistsBinding v -- ^ All existentially bound variables
              -> Maybe ContextInfo -- ^ Information about variable context (input or output)
              -> GExpr -- ^ The generalized expression
-             -> Either String (Expr v)
-parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e of
-  Left err -> Left err
-  Right res -> Right $ Fix res
+             -> m (Expr v)
+parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e
   where
-    parseTerm' :: Ord r => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> Either String r)
-                  -> (Maybe String -> String -> Maybe ContextInfo -> Either String (v,VarUsage))
+    parseTerm' :: (MonadError String m, Ord r) => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> m r)
+                  -> (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage))
                   -> ExistsBinding v
                   -> Maybe ContextInfo
-                  -> GExpr -> Either String (Term v r)
+                  -> GExpr -> m (Term v r)
     parseTerm' mu f ex inf (GBin op tspec l r) = do
       rec_l <- mu ex inf l
       rec_r <- mu ex inf r
@@ -457,7 +490,7 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
           Just rop -> return $ BinRelExpr rop rec_l rec_r
           Nothing -> case toIntOp op of
             Just rop -> return $ BinIntExpr rop rec_l rec_r
-            Nothing -> Left $ "Internal error, please implement parseTerm for operator "++show op
+            Nothing -> throwError $ "Internal error, please implement parseTerm for operator "++show op
     parseTerm' mu f ex inf (GUn op ts p) = do
       rec <- mu (case op of
                     GOpNext -> fmap (\(v,lvl,u) -> (v,lvl+1,u)) ex
@@ -524,7 +557,7 @@ parseTerm f ex inf e = case parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' e
     parseTerm' mu f ex inf (GIndex expr ind) = do
       rind <- case ind of
         GConst x -> return x
-        _ -> Left $ "Index must be an integer"
+        _ -> throwError $ "Index must be an integer"
       rexpr <- mu ex inf expr
       return $ IndexExpr rexpr (fromIntegral rind)
     parseTerm' mu f ex inf (GBuiltIn name args) = do
@@ -783,14 +816,6 @@ relTurn rel = case rel of
   BinNEq -> BinNEq
   --BinAssign -> error "Can't turn assignments"
 
--- | Represents the relations in which two expressions can stand
-data ExprOrdering = EEQ -- ^ Both expressions define the same value space
-                  | ENEQ -- ^ The expressions define non-overlapping value spaces
-                  | EGT -- ^ The value space of the second expression is contained by the first
-                  | ELT -- ^ The value space of the first expression is contained by the second
-                  | EUNK -- ^ The expressions have overlapping value spaces or the relation isn't known
-                  deriving (Show,Eq,Ord)
-
 getClocks :: TypedExpr v -> [Integer]
 getClocks (Fix e) = case getValue e of
   ClockReset c _ -> [c]
@@ -943,3 +968,51 @@ compareExpr e1 e2
                                  Nothing -> EUNK
                                  Just c2 -> ENEQ)
                       else EUNK)
+
+instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
+  atomsTrue = []
+  atomSingleton True x = [x]
+  atomSingleton False x = [distributeNot x]
+  compareAtoms x y = compareAtoms' EEQ x y
+    where
+      compareAtoms' p [] [] = p
+      compareAtoms' p [] _  = case p of
+        EEQ -> EGT
+        EGT -> EGT
+        _ -> EUNK
+      compareAtoms' p (x:xs) ys = case compareAtoms'' p x ys of
+        Nothing -> case p of
+          EEQ -> compareAtoms' ELT xs ys
+          ELT -> compareAtoms' ELT xs ys
+          ENEQ -> ENEQ
+          _ -> EUNK
+        Just (p',ys') -> compareAtoms' p' xs ys'
+      compareAtoms'' p x [] = Nothing
+      compareAtoms'' p x (y:ys) = case compareExpr x y of
+        EEQ -> Just (p,ys)
+        ELT -> case p of
+          EEQ -> Just (ELT,ys)
+          ELT -> Just (ELT,ys)
+          _ -> Just (EUNK,ys)
+        EGT -> case p of
+          EEQ -> Just (EGT,ys)
+          EGT -> Just (EGT,ys)
+          _ -> Just (EUNK,ys)
+        ENEQ -> Just (ENEQ,ys)
+        EUNK -> case compareAtoms'' p x ys of
+          Nothing -> Nothing
+          Just (p',ys') -> Just (p',y:ys')
+  mergeAtoms [] ys = Just ys
+  mergeAtoms (x:xs) ys = case mergeAtoms' x ys of
+    Nothing -> Nothing
+    Just ys' -> mergeAtoms xs ys'
+    where
+      mergeAtoms' x [] = Just [x]
+      mergeAtoms' x (y:ys) = case compareExpr x y of
+        EEQ -> Just (y:ys)
+        ELT -> Just (x:ys)
+        EGT -> Just (y:ys)
+        EUNK -> case mergeAtoms' x ys of
+          Nothing -> Nothing
+          Just ys' -> Just (y:ys')
+        ENEQ -> Nothing

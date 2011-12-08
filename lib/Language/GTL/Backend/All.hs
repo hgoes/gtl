@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies,RankNTypes,ImpredicativeTypes #-}
+{-# LANGUAGE TypeFamilies,RankNTypes,ImpredicativeTypes,FlexibleContexts #-}
 {-| Provides a common interface for all backend types.
  -}
 module Language.GTL.Backend.All where
@@ -10,14 +10,16 @@ import Language.GTL.Backend.None
 import Language.GTL.Types
 import Data.Map
 
+import Control.Monad.Error (MonadError(..))
+
 import Misc.ProgramOptions as Opts
 
 -- | Essentially a `GTLBackend' with the parameters instantiated, thus eliminating
 --   the type variable.
 data AllBackend = AllBackend
-                  { allTypecheck :: ModelInterface -> Either String ModelInterface
+                  { allTypecheck :: MonadError String m => ModelInterface -> m ModelInterface
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Opts.Options -> String -> IO (Maybe Bool)
+                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 -- | Try to initialize a given backend with a name and arguments.

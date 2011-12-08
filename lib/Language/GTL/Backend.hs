@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
 {-| Provides an abstraction over many different synchronized formalisms.
  -}
 module Language.GTL.Backend where
@@ -6,8 +6,9 @@ module Language.GTL.Backend where
 import Language.GTL.Expression
 import Language.GTL.Types
 import Data.Map as Map
-import Data.Traversable
+import Data.MapMonad (unionWithKeyM)
 import Prelude hiding (mapM)
+import Control.Monad.Error (MonadError(..))
 
 import Misc.ProgramOptions as Opts
 
@@ -23,10 +24,11 @@ class GTLBackend b where
   -- | Initialize a backend with a list of parameters
   initBackend :: b -> Opts.Options -> [String] -> IO (GTLBackendModel b)
   -- | Perform type checking on the synchronized model
-  typeCheckInterface :: b -- ^ The backend
+  typeCheckInterface :: MonadError String m =>
+                        b -- ^ The backend
                         -> GTLBackendModel b -- ^ The backend data
                         -> ModelInterface -- ^ A type mapping for the in- and outputs
-                        -> Either String ModelInterface
+                        -> m ModelInterface
   -- | Get the C-interface of a GTL model
   cInterface :: b -- ^ The backend
                 -> GTLBackendModel b -- ^ The backend data
@@ -37,6 +39,7 @@ class GTLBackend b where
                    -> Integer -- ^ Cycle time
                    -> TypedExpr String -- ^ Contract
                    -> Map String GTLType -- ^ Local variables of the model
+                   -> Map String (GTLType, GTLConstant) -- ^ Variables which get a constant value
                    -> Opts.Options -- ^ Options
                    -> String -- ^ Name of the GTL file without extension
                    -> IO (Maybe Bool)
@@ -54,9 +57,9 @@ data CInterface = CInterface
                     -- | Perform one iteration of the state machine
                     cIFaceIterate :: [String] -> [String] -> String,
                     -- | Extract an output variable from the machine state
-                    cIFaceGetOutputVar :: [String] -> String -> String,
+                    cIFaceGetOutputVar :: [String] -> String -> [Integer] -> String,
                     -- | Extract an input variable from the state machine
-                    cIFaceGetInputVar :: [String] -> String -> String,
+                    cIFaceGetInputVar :: [String] -> String -> [Integer] -> String,
                     -- | Translate a haskell type to C
                     cIFaceTranslateType :: GTLType -> String,
                     -- | Translate a haskell value to C
@@ -64,12 +67,11 @@ data CInterface = CInterface
                   }
 
 -- | Merge two type-mappings into one, report conflicting types
-mergeTypes :: Map String GTLType -> Map String GTLType -> Either String (Map String GTLType)
+mergeTypes :: MonadError String m => Map String GTLType -> Map String GTLType -> m (Map String GTLType)
 mergeTypes m1 m2
-  = mapM id $
-    Map.unionWithKey (\name (Right tp1) (Right tp2) -> if tp1 == tp2
-                                                       then Right tp1
-                                                       else Left $ "Type error for variable "++name++
-                                                            ": gtl-specification says it's "++show tp1++
-                                                            ", but the backend says it's "++show tp2
-                     ) (fmap (Right) m1) (fmap (Right) m2)
+  = unionWithKeyM (\name tp1 tp2 -> if tp1 == tp2
+                                   then return tp1
+                                   else throwError $ "Type error for variable "++name++
+                                        ": gtl-specification says it's "++show tp1++
+                                        ", but the backend says it's "++show tp2
+                     ) m1 m2

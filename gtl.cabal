@@ -10,7 +10,7 @@ Description:
 
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
-    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue
+    mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue,syb
   Hs-Source-Dirs: lib
   GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
@@ -44,7 +44,9 @@ Library
     Misc.VerificationEnvironment
     Data.Graph.Inductive.Query.MinSpanningPath
     Data.Fix
+    Data.MapMonad
+    Data.AtomContainer
 
 Executable gtl
-  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal
+  Build-Depends: base,gtl,language-scade,language-promela,process,filepath,directory,language-uppaal,mtl
   Main-Is: Main.hs

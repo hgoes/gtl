@@ -12,16 +12,16 @@ instance GTLBackend None where
   data GTLBackendModel None = NoneData
   backendName _ = "none"
   initBackend _ _ args = return NoneData
-  typeCheckInterface _ _ x = Right x
+  typeCheckInterface _ _ x = return x
   cInterface _ _ = CInterface
     { cIFaceIncludes = []
     , cIFaceStateType = []
     , cIFaceInputType = []
     , cIFaceStateInit = const ""
     , cIFaceIterate = \_ _ -> ""
-    , cIFaceGetOutputVar = \_ _ -> ""
-    , cIFaceGetInputVar = \_ _ -> ""
+    , cIFaceGetOutputVar = \_ _ _ -> ""
+    , cIFaceGetInputVar = \_ _ _ -> ""
     , cIFaceTranslateType = \_ -> ""
     , cIFaceTranslateValue = \_ -> ""
     }
-  backendVerify _ _ _ _ _ _ _ = return Nothing
+  backendVerify _ _ _ _ _ _ _ _ = return Nothing

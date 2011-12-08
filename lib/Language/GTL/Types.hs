@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
@@ -20,7 +20,7 @@ import Data.Binary
 import Data.List (genericLength,genericIndex)
 import Data.Foldable (Foldable)
 import Data.Traversable
-import Control.Monad.Error ()
+import Control.Monad.Error (MonadError(..))
 import Data.Fix
 import Data.Map as Map
 import Data.Set as Set
@@ -61,8 +61,10 @@ type UnResolvedType = Fix UnResolvedType'
 instance Show2 UnResolvedType' where
   show2 (UnResolvedType' tp) = show tp
 
-resolveType :: Map String UnResolvedType -> UnResolvedType -> Either String GTLType
-resolveType mp = resolveType' mp Set.empty
+resolveType :: MonadError String m => Map String UnResolvedType -> UnResolvedType -> m GTLType
+resolveType mp ut = case resolveType' mp Set.empty ut of
+  Left e -> throwError e
+  Right t -> return t
 
 resolveType' :: Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
 resolveType' mp tried (Fix (UnResolvedType' tp))
@@ -85,7 +87,7 @@ resolveType' mp tried (Fix (UnResolvedType' tp))
                  Just rtp -> do
                    rtp' <- resolveType' mp (Set.insert name tried) rtp
                    return $ Fix $ GTLNamed name rtp'
-    
+
 baseType :: GTLType -> GTLType
 baseType (Fix (GTLNamed _ tp)) = baseType tp
 baseType x = x
@@ -148,16 +150,16 @@ isSubtypeOf tp1 tp2 = tp1 == tp2
 --   For example, if the type is a tuple of (int,float,int) and the indices are
 --   [1], the result would be float.
 --   Fails if the type isn't indexable.
-resolveIndices :: GTLType -> [Integer] -> Either String GTLType
+resolveIndices :: MonadError String m => GTLType -> [Integer] -> m GTLType
 resolveIndices tp [] = return tp
 resolveIndices (Fix (GTLArray sz tp)) (x:xs) = if x < sz
                                                then resolveIndices tp xs
-                                               else Left $ "Index "++show x++" is out of array bounds ("++show sz++")"
+                                               else throwError $ "Index "++show x++" is out of array bounds ("++show sz++")"
 resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
                                              then resolveIndices (tps `genericIndex` x) xs
-                                             else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
+                                             else throwError $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
 resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
-resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
+resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
 
 -- | Given a type, a function to extract type information from sub-values and a
 --   value, this function checks if the value is in the domain of the given type.
