@@ -18,6 +18,7 @@ import Misc.ProgramOptions as Opts
 --   the type variable.
 data AllBackend = AllBackend
                   { allTypecheck :: MonadError String m => ModelInterface -> m ModelInterface
+                  , allAliases :: Map String GTLType
                   , allCInterface :: CInterface
                   , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
                   }
@@ -30,6 +31,7 @@ tryInit be name opts args
     dat <- initBackend be opts args
     return $ Just $ AllBackend
       { allTypecheck = typeCheckInterface be dat
+      , allAliases = backendGetAliases be dat
       , allCInterface = cInterface be dat
       , allVerifyLocal = backendVerify be dat
       }
