@@ -23,6 +23,7 @@ class GTLBackend b where
   backendName :: b -> String
   -- | Initialize a backend with a list of parameters
   initBackend :: b -> Opts.Options -> [String] -> IO (GTLBackendModel b)
+  backendGetAliases :: b -> GTLBackendModel b -> Map String GTLType
   -- | Perform type checking on the synchronized model
   typeCheckInterface :: MonadError String m =>
                         b -- ^ The backend

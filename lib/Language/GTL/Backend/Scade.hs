@@ -16,8 +16,8 @@ import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map, filter)
 import Control.Monad.Identity
-import Data.List as List (intercalate, null, mapAccumL, intersperse, findIndex)
-import Data.Maybe (maybeToList, isJust)
+import Data.List as List (intercalate, mapAccumL, intersperse, findIndex)
+import Data.Maybe (isJust)
 import Data.Set as Set (member)
 import qualified Data.Generics.Aliases as Syb (orElse)
 
@@ -55,6 +55,10 @@ instance GTLBackend Scade where
       ".xscade" -> x2s opts file
     let decls = scade $ alexScanTokens str
     return $ ScadeData (splitScadeName name) decls (scadeTypes decls) file
+  backendGetAliases Scade (ScadeData name decls types opFile)
+    = Map.mapMaybe (\t -> case t of
+                       ScadeType tp -> scadeTypeToGTL types Map.empty tp
+                       _ -> Nothing) types
   typeCheckInterface Scade (ScadeData name decls types opFile) (ins,outs) = do
     let (sc_ins,sc_outs) = scadeInterface name decls
         Just local = scadeMakeLocal name types

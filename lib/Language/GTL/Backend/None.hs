@@ -4,6 +4,7 @@
 module Language.GTL.Backend.None where
 
 import Language.GTL.Backend
+import Data.Map as Map
 
 -- | The none backend data type
 data None = None
@@ -12,6 +13,7 @@ instance GTLBackend None where
   data GTLBackendModel None = NoneData
   backendName _ = "none"
   initBackend _ _ args = return NoneData
+  backendGetAliases _ _ = Map.empty
   typeCheckInterface _ _ x = return x
   cInterface _ _ = CInterface
     { cIFaceIncludes = []
