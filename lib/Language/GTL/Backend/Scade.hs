@@ -16,8 +16,8 @@ import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map, filter)
 import Control.Monad.Identity
-import Data.List as List (intercalate, null, mapAccumL, intersperse, findIndex)
-import Data.Maybe (maybeToList, isJust)
+import Data.List as List (intercalate, mapAccumL, intersperse, findIndex)
+import Data.Maybe (isJust)
 import Data.Set as Set (member)
 import qualified Data.Generics.Aliases as Syb (orElse)
 
