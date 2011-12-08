@@ -104,12 +104,13 @@ determinizeBA ba
         mergeTransitions' t trg ((t',trg'):trans) n mp = case mergeAtoms t t' of
           Nothing -> mergeTransitions' t trg trans n mp
           Just nt -> if nt==t
-                     then mergeTransitions' t trg trans n mp
+                     then mergeTransitions' t (Set.union trg trg') trans (n+1) mp
                      else (let nmp = mergeTransitions' nt (Set.union trg trg') trans (n+1) mp
                            in mergeTransitions' t trg trans n nmp)
         insertTransition t trg n [] = [(t,trg,n)]
         insertTransition t trg n ((t',trg',n'):ts) = case compareAtoms t t' of
           ELT -> (t',Set.union trg trg',max n n'):ts
+          EGT -> (t, Set.union trg trg',max n n'):ts
           EEQ -> (t',Set.union trg trg',max n n'):ts
           _ -> (t',trg',n'):insertTransition t trg n ts
 
