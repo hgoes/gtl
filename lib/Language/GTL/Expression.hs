@@ -976,6 +976,7 @@ flattenVar (Fix (GTLArray sz tp)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVa
 flattenVar (Fix (GTLArray sz tp)) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
 flattenVar (Fix (GTLTuple tps)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
 flattenVar (Fix (GTLTuple tps)) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
+flattenVar (Fix (GTLNamed _ tp)) idx = flattenVar tp idx
 flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
 
 flattenConstant :: GTLConstant -> [GTLConstant]
