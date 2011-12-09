@@ -298,6 +298,7 @@ instance Binary2 GTLType' where
   put2 (GTLEnum xs) = put (4::Word8) >> put xs
   put2 (GTLArray sz tp) = put (5::Word8) >> put sz >> put tp
   put2 (GTLTuple tps) = put (6::Word8) >> put tps
+  put2 (GTLNamed name tp) = put (7::Word8) >> put name >> put tp
   get2 = do
     i <- get
     case (i::Word8) of
@@ -315,6 +316,10 @@ instance Binary2 GTLType' where
       6 -> do
         tps <- get
         return (GTLTuple tps)
+      7 -> do
+        name <- get
+        tp <- get
+        return (GTLNamed name tp)
 
 instance Ord2 GTLType' where
   compare2 = compare

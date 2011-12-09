@@ -19,6 +19,7 @@ import Language.Promela.Pretty
 import Data.Map (Map,(!))
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Data.Maybe (fromJust)
 
 -- | Compile a GTL declaration into a promela module simulating the specified model.
 --   Optionally takes a trace that is used to restrict the execution.
@@ -44,7 +45,10 @@ varName :: CInterface
            -> Integer -- ^ The history level of the variable
            -> String
 varName iface q v idx lvl = if lvl==0
-                            then cIFaceGetOutputVar iface (stateVars q iface) v idx
+                            then (case cIFaceGetOutputVar iface (stateVars q iface) v idx of
+                                     Nothing -> let Just res = cIFaceGetInputVar iface (inputVars q iface) v idx
+                                                in res
+                                     Just res -> res)
                             else "now.history_"++q++"_"++v++"_"++show lvl++(case idx of
                                                                                [] -> ""
                                                                                _ -> concat $ fmap (\x -> "["++show x++"]") idx)
@@ -105,13 +109,13 @@ generatePromelaCode spec history
                                                                           , q == name
                                                                           , lvl <- reverse [1..mlvl]
                                                                           ]++
-                                                                          [ cIFaceGetInputVar iface (inputVars name iface) tvar tix ++ " = " ++
+                                                                          [ (fromJust (cIFaceGetInputVar iface (inputVars name iface) tvar tix)) ++ " = " ++
                                                                             source ++ ";"
                                                                           | (GTLConnPt fmod fvar fix,GTLConnPt tmod tvar tix) <- gtlSpecConnections spec
                                                                           , tmod == name
                                                                           , let sinst = (gtlSpecInstances spec)!fmod
                                                                                 siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!(gtlInstanceModel sinst)
-                                                                                source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar fix
+                                                                                source = fromJust $ cIFaceGetOutputVar siface (stateVars fmod siface) fvar fix
                                                                           ]++
                                                                           [ cIFaceIterate iface (stateVars name iface) (inputVars name iface) ++ ";"
                                                                           ]
@@ -158,8 +162,8 @@ generatePromelaCode spec history
                                   iface = allCInterface $ gtlModelBackend mdl
                             ]++
                             [ if Map.member var (gtlModelInput mdl)
-                              then mkAssign (cIFaceGetInputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
-                              else mkAssign (cIFaceGetOutputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
+                              then mkAssign (fromJust $ cIFaceGetInputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
+                              else mkAssign (fromJust $ cIFaceGetOutputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
                             | (name,inst) <- Map.toList (gtlSpecInstances spec)
                             , let iface = allCInterface $ gtlModelBackend mdl
                                   mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)

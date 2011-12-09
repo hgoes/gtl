@@ -58,9 +58,9 @@ data CInterface = CInterface
                     -- | Perform one iteration of the state machine
                     cIFaceIterate :: [String] -> [String] -> String,
                     -- | Extract an output variable from the machine state
-                    cIFaceGetOutputVar :: [String] -> String -> [Integer] -> String,
+                    cIFaceGetOutputVar :: [String] -> String -> [Integer] -> Maybe String,
                     -- | Extract an input variable from the state machine
-                    cIFaceGetInputVar :: [String] -> String -> [Integer] -> String,
+                    cIFaceGetInputVar :: [String] -> String -> [Integer] -> Maybe String,
                     -- | Translate a haskell type to C
                     cIFaceTranslateType :: GTLType -> (String,String),
                     -- | Translate a haskell value to C

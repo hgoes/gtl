@@ -94,20 +94,20 @@ instance GTLBackend Scade where
                            [st'] -> rname++"("++(concat $ intersperse "," (inp++["&("++st'++")"]))++")"
                          Function -> rname++"("++(concat $ intersperse "," (inp++st))++")"
                     , cIFaceGetInputVar = \vars var idx -> case List.findIndex (\(n,_) -> n==var) inp of
-                         Nothing -> error $ show name++" can't find "++show var++" in "++show inp
-                         Just i -> (vars!!i)++(case idx of
-                                                  [] -> ""
-                                                  _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                         Nothing -> Nothing -- error $ show name++" can't find "++show var++" in "++show inp
+                         Just i -> Just $ (vars!!i)++(case idx of
+                                                         [] -> ""
+                                                         _ -> concat $ fmap (\x -> "["++show x++"]") idx)
                     , cIFaceGetOutputVar = \st var idx -> case kind of
                          Node -> case st of
-                           [st'] -> st'++"."++var++(case idx of
-                                                       [] -> ""
-                                                       _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                           [st'] -> Just $ st'++"."++var++(case idx of
+                                                              [] -> ""
+                                                              _ -> concat $ fmap (\x -> "["++show x++"]") idx)
                          Function -> case List.findIndex (\(n,_) -> n==var) outp of
-                           Nothing -> error $ show name++" can't find "++show var++" in "++show outp
-                           Just i -> (st!!i)++(case idx of
-                                                    [] -> ""
-                                                    _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                           Nothing -> Nothing --error $ show name++" can't find "++show var++" in "++show outp
+                           Just i -> Just $ (st!!i)++(case idx of
+                                                         [] -> ""
+                                                         _ -> concat $ fmap (\x -> "["++show x++"]") idx)
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
