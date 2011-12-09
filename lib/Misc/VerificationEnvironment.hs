@@ -96,6 +96,9 @@ parseTraces opts name traceFiles f = do
     [] -> putStrLn "No errors found."
     _  -> do
       putStrLn $ show (length traces) ++ " errors found"
+      if verbosity opts > 1
+        then putStrLn $ show traces
+        else return ()
       writeTraces (name <.> "gtltrace") traces
       putStrLn $ "Written to "++(name <.> "gtltrace")
   setCurrentDirectory currentDir
