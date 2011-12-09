@@ -76,8 +76,8 @@ valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
 valueToC _ (GTLFloatVal x) = show x
-valueToC (Fix (GTLEnum vals)) (GTLEnumVal x) = let Just i = elemIndex x vals
-                                               in show i
+valueToC (Fix (GTLEnum vals)) (GTLEnumVal x) = x {-let Just i = elemIndex x vals
+                                               in show i-}
 
 -- | Convert a GTL relation to a C operator
 relToC :: GTL.Relation -> String
