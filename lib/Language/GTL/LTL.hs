@@ -14,7 +14,6 @@ module Language.GTL.LTL(
   minimizeBA,
   optimizeTransitionsBA,
   ltl2ba,
-  AtomContainer(..),
   mapLTL,
   baProduct,
   baMapAlphabet,
@@ -28,11 +27,11 @@ import qualified Data.List as List
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)
 import Language.GTL.Buchi
-import Language.GTL.Expression (ExprOrdering(..))
 import qualified Data.IntMap as IMap
 import qualified Data.IntSet as ISet
 import Data.Graph.Inductive as Graph (Gr(..), mkGraph, Graph(..), LNode, LEdge, Path, lab)
 import Data.Graph.Inductive.Query.MinSpanningPath (minSpanningPath)
+import Data.AtomContainer
 
 -- | A LTL formula with atoms of type /a/.
 data LTL a = Atom a
@@ -165,22 +164,6 @@ ltlAtoms _ (Ground _) = Set.empty
 ltlAtoms f (Bin _ l r) = Set.union (ltlAtoms f l) (ltlAtoms f r)
 ltlAtoms f (Un _ x) = ltlAtoms f x
 
--- | Represents data structures which can store atomic expressions
-class Ord b => AtomContainer a b | a -> b where
-  atomsTrue :: a -- ^ The container representing all possible values
-  atomSingleton :: Bool -> b -> a -- ^ A container containing just a single restriction on the values.
-  compareAtoms :: a -> a -> ExprOrdering -- ^ Compare the value spaces defined by the containers
-  mergeAtoms :: a -> a -> Maybe a -- ^ Merge the containers together, resulting in a container which represents the intersection between the two.
-
-instance Ord a => AtomContainer (Map a Bool) a where
-  atomsTrue = Map.empty
-  atomSingleton t p = Map.singleton p t
-  compareAtoms x y
-    | x == y = EEQ
-    | Map.isSubmapOf x y = EGT
-    | Map.isSubmapOf y x = ELT
-    | otherwise = ENEQ
-  mergeAtoms = mergeAlphabet
 
 -- | Merge redundant transitions in a B&#xFC;chi automaton.
 optimizeTransitionsBA :: (Ord st,AtomContainer b a,Ord b) => BA b st -> BA b st
@@ -513,15 +496,6 @@ ltl2vwaa ltl = VWAA { vwaaTransitions = trans'
     isFinal _ = False
 
     getFinals mp = Set.filter isFinal $ Map.keysSet mp
-
-mergeAlphabet :: Ord a => Map a Bool -> Map a Bool -> Maybe (Map a Bool)
-mergeAlphabet a1 a2
-  = if confl
-    then Nothing
-    else Just nmp
-      where (confl,nmp) = Map.mapAccum (\hasC (x,y) -> (hasC || x/=y,x)) False $ Map.unionWith (\(x1,_) (y1,_) -> (x1,y1))
-                          (fmap (\x -> (x,x)) a1)
-                          (fmap (\x -> (x,x)) a2)
 
 transProd :: AtomContainer b a => [(b,Set (LTL a))] -> [(b,Set (LTL a))] -> [(b,Set (LTL a))]
 transProd m1 m2 = [ (na,transAnd e1 e2)

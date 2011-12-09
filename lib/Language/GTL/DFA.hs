@@ -11,6 +11,8 @@ import Data.Map as Map
 import Data.Maybe
 import Data.Foldable (foldl, find)
 import Language.GTL.Buchi
+import Data.AtomContainer
+import Data.List (sortBy)
 
 -- Models total functions via mapping structures. The instances may not really be total,
 -- this has to be ensured by the user (how should that be checked?).
@@ -24,7 +26,7 @@ data MakeTotal m = MakeTotal { unTotal :: m }
 instance Ord a => TotalFunction (MakeTotal (Map a b)) a b where
   m !$ k = fromJust $ Map.lookup k $ unTotal m
 
-type DFATransitionFunc a st = MakeTotal (Map st (Map a st))
+type DFATransitionFunc a st = MakeTotal (Map st [(a,st)])
 
 {-| Not a real DFA. Has no final states as they are not needed (the acceptance condition
     of the Buchi automaton can not be represented). The semantics are that the automaton
@@ -34,16 +36,16 @@ type DFATransitionFunc a st = MakeTotal (Map st (Map a st))
     are that there is a virtual failure state into which an executing algorithm will go
     if no transition can be taken. There the automaton stops and execution fails. -}
 data DFA a st = DFA { dfaTransitions :: DFATransitionFunc a st
-                  , dfaInit :: st
-                  -- , dfaFinals :: Set st -- Not needed at the moment
-                  }
+                    , dfaInit :: st
+                      -- , dfaFinals :: Set st -- Not needed at the moment
+                    }
 
 instance (Show a,Show st,Ord st) => Show (DFA a st) where
   show dfa = unlines $ concat [ [(if st == (dfaInit dfa)
                                  then "initial "
                                  else "") ++
                                 "state "++show st]++
-                               [ "  "++show cond++" -> "++show trg | (cond,trg) <- Map.toList trans ]
+                               [ "  "++show cond++" -> "++show trg | (cond,trg) <- trans ]
                              | (st,trans) <- Map.toList $ unTotal $ dfaTransitions dfa ]
 
 states :: (Eq st, Ord st) => DFA a st -> Set st
@@ -69,40 +71,24 @@ mergeInits ba =
 
 -- | Tries to determinize a given B&#xFC;chi automaton. Only possible if all states are final.
 -- If not possible it returns Nothing.
-determinizeBA :: (Eq a, Ord a, Eq st, Ord st, BAState st) => BA a st -> Maybe (DFA a (PowSetSt st))
+determinizeBA :: (Eq a, Ord a, Eq st, Ord st,AtomContainer a el,Show a,Show st) => BA a st -> Maybe (DFA a (PowSetSt st))
 determinizeBA ba
   | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = Nothing
   | otherwise =
-      let ba' = mergeInits ba
-          initS = Set.singleton $ Set.findMin $ baInits ba
-          (trans, states) = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) (Set.singleton initS) (Map.empty, Set.empty)
+      let initS = baInits ba 
+          trans = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) Set.empty [initS] Map.empty
       in Just $ DFA {
           dfaTransitions = MakeTotal trans,
           dfaInit = initS
         }
       where
-        determinize' :: (Eq a, Ord a, Eq st, Ord st) =>
-          BATransitionFunc a st -> Set (Set st) -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-            -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-        determinize' ba remaining r
-          | Set.null remaining = r
-          | otherwise =
-            let next = Set.findMax remaining
-                (remaining', trans', qs') = buildTransition ba next r
-            in determinize' ba (Set.union remaining' (Set.delete next remaining)) (trans', qs')
-
-        buildTransition :: (Eq a, Ord a, Eq st, Ord st) =>
-          BATransitionFunc a st -> Set st -> (Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-            -> (Set (PowSetSt st), Map (PowSetSt st) (Map a (PowSetSt st)), Set (PowSetSt st))
-        buildTransition ba q (trans, qs) =
-          let trans' = getTransitions ba q
-              trans'' = mergeTransitions trans'
-              newStates = (targetStates trans'') `Set.difference` qs
-          in (newStates, Map.insert q trans'' trans, Set.insert q qs)
+        determinize' _ _ [] trans = trans
+        determinize' ba visited (next:remaining) trans
+          | Set.member next visited = determinize' ba visited remaining trans
+          | otherwise = let trans' = mergeTransitions (concat $ fmap Map.toList $ Set.toList $ getTransitions ba next) []
+                        in determinize' ba (Set.insert next visited) ([ trg | (_,trg) <- trans']++remaining) (Map.insert next trans' trans)
 
         -- Get the transitions in the BA which origin at the given set of states.
-        getTransitions :: (Eq a, Ord a, Eq st, Ord st) =>
-          BATransitionFunc a st -> PowSetSt st -> Set (Map a (Set st))
         getTransitions ba = foldl (\trans s -> Set.insert (transform $ (ba !$ s)) trans) Set.empty
           where
             transform :: (Eq a, Ord a, Eq st, Ord st) => Set (a, st) -> Map a (Set st)
@@ -110,11 +96,23 @@ determinizeBA ba
             putTransition trans' (g, ts) = Map.alter (maybe (Just $ Set.singleton ts) (\ts' -> Just $ Set.insert ts ts')) g trans'
 
         -- Given a set of transitions merge these into transitions leading into the power set of states.
-        mergeTransitions :: (Eq a, Ord a, Eq st, Ord st) => Set (Map a (Set st)) -> Map a (PowSetSt st)
-        mergeTransitions = foldl (flip mergeTransitions') Map.empty
-          where
-            mergeTransitions' trans = Map.foldrWithKey unionState trans
-            unionState g ts trans' = Map.alter (maybe (Just ts) (Just . (Set.union ts))) g trans'
+        mergeTransitions trans mp = fmap (\(t,trg,n) -> (t,trg)) $ sortBy (\(_,_,x) (_,_,y) -> compare y x) $ mergeTransitions' atomsTrue Set.empty trans 0 mp
+        
+        mergeTransitions' t trg [] n mp = if n==0
+                                          then mp
+                                          else insertTransition t trg n mp
+        mergeTransitions' t trg ((t',trg'):trans) n mp = case mergeAtoms t t' of
+          Nothing -> mergeTransitions' t trg trans n mp
+          Just nt -> if nt==t
+                     then mergeTransitions' t (Set.union trg trg') trans (n+1) mp
+                     else (let nmp = mergeTransitions' nt (Set.union trg trg') trans (n+1) mp
+                           in mergeTransitions' t trg trans n nmp)
+        insertTransition t trg n [] = [(t,trg,n)]
+        insertTransition t trg n ((t',trg',n'):ts) = case compareAtoms t t' of
+          ELT -> (t',Set.union trg trg',max n n'):ts
+          EGT -> (t, Set.union trg trg',max n n'):ts
+          EEQ -> (t',Set.union trg trg',max n n'):ts
+          _ -> (t',trg',n'):insertTransition t trg n ts
 
         targetStates :: (Eq st, Ord st) => Map a (PowSetSt st) -> Set (PowSetSt st)
         targetStates = foldl (flip Set.insert) Set.empty
@@ -144,23 +142,23 @@ minimizeDFA dfa =
           let (eqClasses'', inserted) = foldl (\(cs,f) c -> if transMatch dfa eqClasses (Set.findMin c) s then (Set.insert (Set.insert s c) cs, True) else (Set.insert c cs, f)) (Set.empty, False) eqClasses'
           in if not inserted then Set.insert (Set.singleton s) eqClasses'' else eqClasses''
         transMatch dfa eqClasses s1 s2 =
-          let t1 = (dfaTransitions dfa) !$ s1
-              t2 = (dfaTransitions dfa) !$ s2
+          let t1 = Map.fromList $ (dfaTransitions dfa) !$ s1
+              t2 = Map.fromList $ (dfaTransitions dfa) !$ s2
               d1 = Map.differenceWith (equiv eqClasses) t1 t2
               d2 = Map.differenceWith (equiv eqClasses) t2 t1
           in Map.null d1 && Map.null d2 -- symmetric difference
         equiv eqClasses s1 s2 = if Set.member s2 $ getEquivClass eqClasses s1 then Nothing else Just s1
 
-    buildMinDFA :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> Map (PowSetSt st) (Map a (PowSetSt st))
+    buildMinDFA :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> Map (PowSetSt st) [(a,PowSetSt st)]
     buildMinDFA dfa eqClasses = foldl (\trans s -> Map.insert s (buildTrans dfa eqClasses s) trans) Map.empty eqClasses
       where
         -- Takes a state in the minimized DFA and builds the transitions originating there.
-        buildTrans :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> PowSetSt st -> Map a (PowSetSt st)
-        buildTrans dfa eqClasses = foldl (\trans s -> trans `Map.union` (Map.map (getEquivClass eqClasses) (dfaTransitions dfa !$ s))) Map.empty
+        buildTrans :: (Eq a, Ord a, Eq st, Ord st) => DFA a st -> Set (PowSetSt st) -> PowSetSt st -> [(a,PowSetSt st)]
+        buildTrans dfa eqClasses = Map.toList . foldl (\trans s -> trans `Map.union` (Map.map (getEquivClass eqClasses) (Map.fromList $ dfaTransitions dfa !$ s))) Map.empty
 
 renameDFAStates :: (Eq st, Ord st) => DFA a st -> DFA a Integer
 renameDFAStates dfa =
   let stateMap = MakeTotal $ fst $ foldl (\(sMap, i) s -> (Map.insert s i sMap, i + 1)) (Map.empty, 0::Integer) $ states dfa
-      trans' = Map.mapKeysMonotonic (stateMap !$) $ Map.map (Map.map (stateMap !$)) $ unTotal $ dfaTransitions dfa
+      trans' = Map.mapKeysMonotonic (stateMap !$) $ Map.map (fmap (\(t,trg) -> (t,stateMap !$ trg))) $ unTotal $ dfaTransitions dfa
       init' = stateMap !$ (dfaInit dfa) :: Integer
   in DFA (MakeTotal trans') init'

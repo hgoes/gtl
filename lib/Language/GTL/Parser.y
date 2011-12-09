@@ -132,11 +132,17 @@ alias_decl : "type" id "=" type ";" { TypeAlias $2 $4 }
 model_args : "(" model_args1 ")" { $2 }
            |                     { [] }
 
-model_args1 : string model_args2 { $1:$2 }
+model_args1 : model_arg model_args2 { $1:$2 }
             |                    { [] }
 
-model_args2 : "," string model_args2 { $2:$3 }
+model_args2 : "," model_arg model_args2 { $2:$3 }
             |                        { [] }
+
+model_arg : string          { StrArg $1 }
+          | id ":=" const   { ConstantDecl $1 $3 }
+
+const : int     { GConst $ fromIntegral $1 }
+      | enum    { GEnum $1 }
 
 model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
                | ";"                               { id }

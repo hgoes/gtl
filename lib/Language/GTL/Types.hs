@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
@@ -21,7 +21,7 @@ import Data.Binary
 import Data.List (genericLength,genericIndex)
 import Data.Foldable (Foldable)
 import Data.Traversable
-import Control.Monad.Error ()
+import Control.Monad.Error (MonadError(..))
 import Data.Fix
 import Data.Map as Map
 import Data.Set as Set
@@ -62,11 +62,13 @@ type UnResolvedType = Fix UnResolvedType'
 instance Show2 UnResolvedType' where
   show2 (UnResolvedType' tp) = show tp
 
-resolveType :: Map String UnResolvedType -> UnResolvedType -> Either String GTLType
-resolveType mp = resolveType' mp Set.empty
+resolveType :: MonadError String m => Map String GTLType -> Map String UnResolvedType -> UnResolvedType -> m GTLType
+resolveType aliases mp ut = case resolveType' aliases mp Set.empty ut of
+  Left e -> throwError e
+  Right t -> return t
 
-resolveType' :: Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
-resolveType' mp tried (Fix (UnResolvedType' tp))
+resolveType' :: Map String GTLType -> Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
+resolveType' aliases mp tried (Fix (UnResolvedType' tp))
   = case tp of
   Right GTLInt -> Right gtlInt
   Right GTLByte -> Right gtlByte
@@ -74,19 +76,21 @@ resolveType' mp tried (Fix (UnResolvedType' tp))
   Right GTLFloat -> Right gtlFloat
   Right (GTLEnum xs) -> Right $ gtlEnum xs
   Right (GTLArray sz t) -> do
-    t' <- resolveType' mp tried t
+    t' <- resolveType' aliases mp tried t
     return $ gtlArray sz t'
   Right (GTLTuple xs) -> do
-    xs' <- mapM (resolveType' mp tried) xs
+    xs' <- mapM (resolveType' aliases mp tried) xs
     return $ gtlTuple xs'
-  Left name -> if Set.member name tried
+  Left name -> case Map.lookup name aliases of
+    Just res -> Right $ Fix $ GTLNamed name res
+    Nothing -> if Set.member name tried
                then Left $ "Recursive types not allowed."
                else case Map.lookup name mp of
                  Nothing -> Left $ "Language.GTL.Types.resolveType: Unknown named type "++show name
                  Just rtp -> do
-                   rtp' <- resolveType' mp (Set.insert name tried) rtp
+                   rtp' <- resolveType' aliases mp (Set.insert name tried) rtp
                    return $ Fix $ GTLNamed name rtp'
-    
+
 baseType :: GTLType -> GTLType
 baseType (Fix (GTLNamed _ tp)) = baseType tp
 baseType x = x
@@ -149,16 +153,16 @@ isSubtypeOf tp1 tp2 = tp1 == tp2
 --   For example, if the type is a tuple of (int,float,int) and the indices are
 --   [1], the result would be float.
 --   Fails if the type isn't indexable.
-resolveIndices :: GTLType -> [Integer] -> Either String GTLType
+resolveIndices :: MonadError String m => GTLType -> [Integer] -> m GTLType
 resolveIndices tp [] = return tp
 resolveIndices (Fix (GTLArray sz tp)) (x:xs) = if x < sz
                                                then resolveIndices tp xs
-                                               else Left $ "Index "++show x++" is out of array bounds ("++show sz++")"
+                                               else throwError $ "Index "++show x++" is out of array bounds ("++show sz++")"
 resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
                                              then resolveIndices (tps `genericIndex` x) xs
-                                             else Left $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
+                                             else throwError $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
 resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
-resolveIndices tp _ = Left $ "Type "++show tp++" isn't indexable"
+resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
 
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
 allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
@@ -302,6 +306,7 @@ instance Binary2 GTLType' where
   put2 (GTLEnum xs) = put (4::Word8) >> put xs
   put2 (GTLArray sz tp) = put (5::Word8) >> put sz >> put tp
   put2 (GTLTuple tps) = put (6::Word8) >> put tps
+  put2 (GTLNamed name tp) = put (7::Word8) >> put name >> put tp
   get2 = do
     i <- get
     case (i::Word8) of
@@ -319,6 +324,10 @@ instance Binary2 GTLType' where
       6 -> do
         tps <- get
         return (GTLTuple tps)
+      7 -> do
+        name <- get
+        tp <- get
+        return (GTLNamed name tp)
 
 instance Ord2 GTLType' where
   compare2 = compare
