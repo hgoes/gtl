@@ -392,7 +392,7 @@ newTemporalVars' n expr p
       case op of
         GTL.Not -> return $ p1 { formulaEnc = Map.insert expr (not' ((formulaEnc p1)!arg)) (formulaEnc p1) }
         GTL.Always -> do
-          v1 <- SMT.var
+          v1 <- mkvar
           aux' <- if Map.member arg (auxGEnc p1)
                   then return (auxGEnc p1)
                   else (do
