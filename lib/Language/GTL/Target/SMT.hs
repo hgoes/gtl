@@ -451,7 +451,7 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     nself = (formulaEnc nxt)!expr
 
 -- | Perform bounded model checking of a given GTL specification
-bmc :: Scheduling s => s -> GTLSpec String -> SMT (Maybe [Map (String,String) GTLConstant])
+bmc :: Scheduling s => s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool)])
 bmc sched spec = do
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
@@ -499,12 +499,22 @@ getVarValues st = do
   return $ Map.fromList (Prelude.concat lst)
 
 -- | Extract a whole path from the SMT solver
-getPath :: [BMCState] -> SMT [Map (String,String) GTLConstant]
-getPath = mapM (getVarValues.bmcVars) . Prelude.reverse
+getPath :: [BMCState] -> SMT [(Map (String,String) GTLConstant,Bool)]
+getPath = mapM (\st -> do
+                   vars <- getVarValues $ bmcVars st
+                   loop <- SMT.getValue $ bmcL st
+                   return (vars,loop)
+               ) . Prelude.reverse
 
 -- | Display an extracted path to the user
-renderPath :: [Map (String,String) GTLConstant] -> String
-renderPath path = unlines $ concat [ ("Step "++show i):[ "| "++iname++"."++var++" = "++show c | ((iname,var),c) <- Map.toList mp ] | (i,mp) <- zip [0..] path ]
+renderPath :: [(Map (String,String) GTLConstant,Bool)] -> String
+renderPath path = unlines $ concat
+                  [ ("Step "++show i++(if loop
+                                       then " (loop starts here)"
+                                       else "")):
+                    [ "| "++iname++"."++var++" = "++show c
+                    | ((iname,var),c) <- Map.toList mp ]
+                  | (i,(mp,loop)) <- zip [0..] path ]
 
 bmc' :: Scheduling s => s -> SchedulingData s
         -> Map [String] Integer -> GTLSpec String
@@ -515,7 +525,7 @@ bmc' :: Scheduling s => s -> SchedulingData s
         -> TemporalVars (String,String)
         -> SMTExpr Bool 
         -> GlobalState
-        -> [BMCState] -> SMT (Maybe [Map (String,String) GTLConstant])
+        -> [BMCState] -> SMT (Maybe [(Map (String,String) GTLConstant,Bool)])
 bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
   init <- newState enums spec "0"
   l <- SMT.varNamed $ T.pack "l0"
@@ -652,7 +662,7 @@ verifyModelKInduction solver spec = do
   res <- kInduction SimpleScheduling solve spec
   case res of
     Nothing -> putStrLn "No errors found in model"
-    Just path -> putStrLn $ renderPath path
+    Just path -> putStrLn $ renderPath [ (st,False) | st <- path ]
 
 verifyModelBMC :: Maybe String -> GTLSpec String -> IO ()
 verifyModelBMC solver spec = do
