@@ -37,7 +37,7 @@ compile
 compile opts outputDir verifier = do
   let input = outputDir </> "pan.c"
       output = outputDir </> verifier
-      flags = (ccFlags opts) ++ (ldFlags opts) ++ ["-lcudd", "-lmtr", "-lepd", "-lst", "-lutil", "-lcudd_arith", "-lm"]
+      flags = (ccFlags opts) ++ (ldFlags opts)
   exitCode <- rawSystem (ccBinary opts) ([input, "-o" ++ output] ++ flags)
   case exitCode of
     ExitSuccess -> return ()
