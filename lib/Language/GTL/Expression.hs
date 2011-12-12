@@ -299,6 +299,7 @@ intPrec OpDiv = 12
 unPrec Not = 7
 unPrec Always = 2
 unPrec (Next _) = 2
+unPrec (Finally _) = 2
 
 showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
 showTermWith f g p (Var name lvl u) = (if u == StateOut
@@ -338,7 +339,8 @@ showTermWith f g p (UnBoolExpr op arg)
     (showString $ case op of
         Not -> "not "
         Always -> "always "
-        Next ts -> "next"++show ts++" ") . 
+        Next ts -> "next"++show ts++" "
+        Finally ts -> "finaly"++show ts++" ") . 
     (g (unPrec op) arg)
 showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
 showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit

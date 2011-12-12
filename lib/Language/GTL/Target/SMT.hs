@@ -310,6 +310,7 @@ translateExpr f (Fix expr)
         rrr = castUSMT' rr
     GTL.UnBoolExpr GTL.Not arg -> let BasicVar ll = translateExpr f arg
                                   in BasicVar $ USMTExpr $ not' $ castUSMT' ll
+    _ -> error $ "Implement translateExpr for " ++ showTermWith (\_ _ -> showString "_") (\_ _ -> showString "_") 0 (GTL.getValue expr) ""
 
 -- | Assert that an instance state is an initial state
 initInstance :: Map [String] Integer -> GTLModel String -> BA [TypedExpr String] Integer -> InstanceState -> SMTExpr Bool
