@@ -538,7 +538,7 @@ bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se [] = do
               GTL.UnBoolExpr Always e -> do
                 let g_e = (auxGEnc tmp_e)!e
                 assert $ loop_exists .=>. (g_e .=>. var)
-                assert $ not' $ (auxGEnc tmp_cur)!e
+                assert $ (auxGEnc tmp_cur)!e
               GTL.BinBoolExpr (Until NoTime) lhs rhs -> do
                 let f_e = (auxFEnc tmp_e)!rhs
                 assert $ loop_exists .=>. (var .=>. f_e)
@@ -582,7 +582,7 @@ bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(la
   assert $ connections (gtlSpecConnections spec) cur_state cur_state
   
   -- k-invariant case for LoopConstraints:
-  assert $ l .=>. (eqSt cur_state se)
+  assert $ l .=>. (eqSt (bmcVars last_state) se)
   assert $ inloop .==. (or' [bmcInLoop last_state,l])
   assert $ (bmcInLoop last_state) .=>. (not' l)
   
@@ -593,8 +593,8 @@ bmc' sched sdata enums spec f bas tmp_cur tmp_e tmp_l loop_exists se history@(la
   
   -- k-invariant case for IncPLTL
   mapM_ (\(expr,var) -> let Just fe = Map.lookup expr (formulaEnc tmp_cur)
-                        in assert $ var .==. and' [(auxFEnc $ bmcTemporals last_state)!expr
-                                                  ,and' [inloop,fe]]) (Map.toList $ auxFEnc tmp_cur)
+                        in assert $ var .==. or' [(auxFEnc $ bmcTemporals last_state)!expr
+                                                 ,and' [inloop,fe]]) (Map.toList $ auxFEnc tmp_cur)
   mapM_ (\(expr,var) -> let Just ge = Map.lookup expr (formulaEnc tmp_cur)
                         in assert $ var .==. and' [(auxGEnc $ bmcTemporals last_state)!expr
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
