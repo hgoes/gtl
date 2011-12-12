@@ -602,7 +602,7 @@ distributeNot expr
     UnBoolExpr op p -> case op of
       Not -> pushNot p
       Next NoTime -> Fix $ Typed gtlBool $ UnBoolExpr (Next NoTime) (distributeNot p)
-      Always -> Fix $ Typed gtlBool $ BinBoolExpr (Until NoTime) (Fix (Typed gtlBool (Value (GTLBoolVal True)))) (distributeNot p)
+      Always -> Fix $ Typed gtlBool $ UnBoolExpr (Finally NoTime) (distributeNot p)
       Finally NoTime -> Fix $ Typed gtlBool $ UnBoolExpr Always (distributeNot p)
       Finally spec -> Fix $ Typed gtlBool $ UnBoolExpr (Next spec) (distributeNot p)
     IndexExpr e i -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
