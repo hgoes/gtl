@@ -117,6 +117,9 @@ generatePromelaCode spec history
                                                                                 siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!(gtlInstanceModel sinst)
                                                                                 source = fromJust $ cIFaceGetOutputVar siface (stateVars fmod siface) fvar fix
                                                                           ]++
+                                                                          [ mkAssign (fromJust (cIFaceGetInputVar iface (inputVars name iface) var [])) (cIFaceTranslateValue iface c)
+                                                                          | (var,(tp,c)) <- Map.toList (gtlModelConstantInputs mdl)
+                                                                          ]++
                                                                           [ cIFaceIterate iface (stateVars name iface) (inputVars name iface) ++ ";"
                                                                           ]
                                                                          ]
