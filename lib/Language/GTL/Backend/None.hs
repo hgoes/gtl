@@ -23,7 +23,7 @@ instance GTLBackend None where
     , cIFaceIterate = \_ _ -> ""
     , cIFaceGetOutputVar = \_ _ _ -> Just ""
     , cIFaceGetInputVar = \_ _ _ -> Just ""
-    , cIFaceTranslateType = \_ -> ("","")
+    , cIFaceTranslateType = \_ -> ("","",False)
     , cIFaceTranslateValue = \_ -> CValue ""
     }
   backendVerify _ _ _ _ _ _ _ _ = return Nothing

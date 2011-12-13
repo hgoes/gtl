@@ -78,7 +78,7 @@ instance GTLBackend Scade where
                          in x:"reset":rest
       in CInterface { cIFaceIncludes = [rname++".h"]
                     , cIFaceStateType = case kind of
-                         Node -> [("outC_"++rname,"")]
+                         Node -> [("outC_"++rname,"",True)]
                          Function -> [ scadeTranslateTypeC gtp
                                      | (vname,tp) <- outp,
                                        let Just gtp = scadeTypeToGTL types Map.empty tp ]
@@ -91,7 +91,7 @@ instance GTLBackend Scade where
                          Function -> ""
                     , cIFaceIterate = \st inp -> case kind of
                          Node -> case st of
-                           [st'] -> rname++"("++(concat $ intersperse "," (inp++["&("++st'++")"]))++")"
+                           [st'] -> rname++"("++(concat $ intersperse "," (inp++[st']))++")"
                          Function -> rname++"("++(concat $ intersperse "," (inp++st))++")"
                     , cIFaceGetInputVar = \vars var idx -> case List.findIndex (\(n,_) -> n==var) inp of
                          Nothing -> Nothing -- error $ show name++" can't find "++show var++" in "++show inp
@@ -344,12 +344,13 @@ generateScenario :: FilePath -> Report -> IO()
 generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
-scadeTranslateTypeC :: GTLType -> (String,String)
-scadeTranslateTypeC (Fix GTLInt) = ("kcg_int","")
-scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","")
-scadeTranslateTypeC (Fix (GTLNamed n _)) = (n,"")
-scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q) = scadeTranslateTypeC tp
-                                            in (p,q++"["++show i++"]")
+scadeTranslateTypeC :: GTLType -> (String,String,Bool)
+scadeTranslateTypeC (Fix GTLInt) = ("kcg_int","",False)
+scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","",False)
+scadeTranslateTypeC (Fix (GTLNamed n tp)) = let (_,_,ref) = scadeTranslateTypeC tp
+                                            in (n,"",ref)
+scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q,ref) = scadeTranslateTypeC tp
+                                            in (p,q++"["++show i++"]",True)
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: GTLConstant -> CExpr

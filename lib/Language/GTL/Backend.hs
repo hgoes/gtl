@@ -50,9 +50,9 @@ data CInterface = CInterface
                   { -- | A list of C-headers to be included
                     cIFaceIncludes :: [String],
                     -- | A list of C-types that together form the signature of the state of the state machine
-                    cIFaceStateType :: [(String,String)],
+                    cIFaceStateType :: [(String,String,Bool)],
                     -- | The type signature of the input variables. Input variables aren't considered state.
-                    cIFaceInputType :: [(String,String)],
+                    cIFaceInputType :: [(String,String,Bool)],
                     -- | Generate a call to initialize the state machine
                     cIFaceStateInit :: [String] -> String,
                     -- | Perform one iteration of the state machine
@@ -62,7 +62,7 @@ data CInterface = CInterface
                     -- | Extract an input variable from the state machine
                     cIFaceGetInputVar :: [String] -> String -> [Integer] -> Maybe String,
                     -- | Translate a haskell type to C
-                    cIFaceTranslateType :: GTLType -> (String,String),
+                    cIFaceTranslateType :: GTLType -> (String,String,Bool),
                     -- | Translate a haskell value to C
                     cIFaceTranslateValue :: GTLConstant -> CExpr
                   }
