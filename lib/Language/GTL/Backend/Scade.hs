@@ -111,12 +111,12 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls types opFile) cy expr locals constVars opts gtlName
+  backendVerify Scade (ScadeData node decls types opFile) cy expr locals init constVars opts gtlName
     = let name = (intercalate "_" node)
           (inp,outp,kind) = scadeInterface node decls
           buchi = gtl2ba (Just cy) expr
           dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
-          scade = fmap (dfaToScade types name inp outp locals) dfa
+          scade = fmap (dfaToScade types name inp outp locals init) dfa
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
@@ -476,10 +476,11 @@ dfaToScade :: ScadeTypeMapping
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
                 -> Map String GTLType -- ^ Local variables of the mode
+                -> Map String (Maybe GTLConstant)
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
-dfaToScade types name ins outs locals dfa
+dfaToScade types name ins outs locals defs dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -495,7 +496,7 @@ dfaToScade types name ins outs locals dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = (declarationsToScade types $ Map.toList locals)
+                              , dataLocals = declarationsToScade types (Map.toList locals) defs
                               , dataEquations = [StateEquation
                                                  (StateMachine Nothing (dfaToStates locals dfa))
                                                  [] True
@@ -640,11 +641,14 @@ constantToScade (Fix (GTLEnumVal v)) = Sc.IdExpr $ Path [v]
 constantToScade (Fix (GTLArrayVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
 constantToScade (Fix (GTLTupleVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
 
-declarationsToScade :: ScadeTypeMapping -> [(String, GTLType)] -> [Sc.VarDecl]
-declarationsToScade types = concat . map declarationsToScade'
+declarationsToScade :: ScadeTypeMapping -> [(String, GTLType)] -> Map String (Maybe GTLConstant) -> [Sc.VarDecl]
+declarationsToScade types decls defs = concat $ map declarationsToScade' decls
   where
     declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
-    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ ConstIntExpr 0)]
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ case Map.lookup n defs of
+                                                                                                            Nothing -> constantToScade $ defaultConstant t
+                                                                                                            Just (Just c) -> constantToScade c
+                                                                                                        )]
 
     -- Tuples are declared as follows:
     -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
