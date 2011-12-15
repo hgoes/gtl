@@ -60,7 +60,7 @@ instance GTLBackend Scade where
                        ScadeType tp -> scadeTypeToGTL types Map.empty tp
                        _ -> Nothing) types
   typeCheckInterface Scade (ScadeData name decls types opFile) (ins,outs) = do
-    let (sc_ins,sc_outs) = scadeInterface name decls
+    let (sc_ins,sc_outs,_) = scadeInterface name decls
         Just local = scadeMakeLocal name types
     mp_ins <- scadeTypeMap types local sc_ins
     mp_outs <- scadeTypeMap types local sc_outs
@@ -69,31 +69,51 @@ instance GTLBackend Scade where
     return (rins,routs)
 
   cInterface Scade (ScadeData name decls types opFile)
-    = let (inp,outp) = scadeInterface name decls
+    = let (inp,outp,kind) = scadeInterface name decls
           rname = concat $ intersperse "_" name
-          resetName [x] = ["reset",x]
-          resetName (x:xs) = x:resetName xs
+          splitLast [x] = ([],x)
+          splitLast (x:xs) = let (xs',y) = splitLast xs
+                             in (x:xs',y)
+          resetName xs = let (rest,x) = splitLast xs
+                         in x:"reset":rest
       in CInterface { cIFaceIncludes = [rname++".h"]
-                    , cIFaceStateType = ["outC_"++rname]
+                    , cIFaceStateType = case kind of
+                         Node -> [("outC_"++rname,"")]
+                         Function -> [ scadeTranslateTypeC gtp
+                                     | (vname,tp) <- outp,
+                                       let Just gtp = scadeTypeToGTL types Map.empty tp ]
                     , cIFaceInputType = [ scadeTranslateTypeC gtp
                                         | (vname,tp) <- inp,
                                           let Just gtp = scadeTypeToGTL types Map.empty tp ]
-                    , cIFaceStateInit = \[st] -> (concat $ intersperse "_" $ resetName name) ++ "(&("++st++"))"
-                    , cIFaceIterate = \[st] inp -> rname++"("++(concat $ intersperse "," (inp++["&("++st++")"]))++")"
+                    , cIFaceStateInit = \st -> case kind of
+                         Node -> case st of
+                           [st'] -> (concat $ intersperse "_" $ resetName name) ++ "(&("++st'++"))"
+                         Function -> ""
+                    , cIFaceIterate = \st inp -> case kind of
+                         Node -> case st of
+                           [st'] -> rname++"("++(concat $ intersperse "," (inp++["&("++st'++")"]))++")"
+                         Function -> rname++"("++(concat $ intersperse "," (inp++st))++")"
                     , cIFaceGetInputVar = \vars var idx -> case List.findIndex (\(n,_) -> n==var) inp of
-                         Nothing -> error $ show name++" can't find "++show var++" in "++show inp
-                         Just i -> (vars!!i)++(case idx of
-                                                  [] -> ""
-                                                  _ -> concat $ fmap (\x -> "["++show x++"]") idx)
-                    , cIFaceGetOutputVar = \[st] var idx -> st++"."++var++(case idx of
-                                                                              [] -> ""
-                                                                              _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                         Nothing -> Nothing -- error $ show name++" can't find "++show var++" in "++show inp
+                         Just i -> Just $ (vars!!i)++(case idx of
+                                                         [] -> ""
+                                                         _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                    , cIFaceGetOutputVar = \st var idx -> case kind of
+                         Node -> case st of
+                           [st'] -> Just $ st'++"."++var++(case idx of
+                                                              [] -> ""
+                                                              _ -> concat $ fmap (\x -> "["++show x++"]") idx)
+                         Function -> case List.findIndex (\(n,_) -> n==var) outp of
+                           Nothing -> Nothing --error $ show name++" can't find "++show var++" in "++show outp
+                           Just i -> Just $ (st!!i)++(case idx of
+                                                         [] -> ""
+                                                         _ -> concat $ fmap (\x -> "["++show x++"]") idx)
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
   backendVerify Scade (ScadeData node decls types opFile) cy expr locals constVars opts gtlName
     = let name = (intercalate "_" node)
-          (inp,outp) = scadeInterface node decls
+          (inp,outp,kind) = scadeInterface node decls
           buchi = gtl2ba (Just cy) expr
           dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
           scade = fmap (dfaToScade types name inp outp locals) dfa
@@ -324,17 +344,20 @@ generateScenario :: FilePath -> Report -> IO()
 generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
-scadeTranslateTypeC :: GTLType -> String
-scadeTranslateTypeC (Fix GTLInt) = "kcg_int"
-scadeTranslateTypeC (Fix GTLBool) = "kcg_bool"
-scadeTranslateTypeC (Fix (GTLNamed n _)) = n
+scadeTranslateTypeC :: GTLType -> (String,String)
+scadeTranslateTypeC (Fix GTLInt) = ("kcg_int","")
+scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","")
+scadeTranslateTypeC (Fix (GTLNamed n _)) = (n,"")
+scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q) = scadeTranslateTypeC tp
+                                            in (p,q++"["++show i++"]")
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
-scadeTranslateValueC :: GTLConstant -> String
+scadeTranslateValueC :: GTLConstant -> CExpr
 scadeTranslateValueC d = case unfix d of
-  GTLIntVal v -> show v
-  GTLBoolVal v -> if v then "1" else "0"
-  GTLEnumVal v -> v
+  GTLIntVal v -> CValue $ show v
+  GTLBoolVal v -> CValue $ if v then "1" else "0"
+  GTLEnumVal v -> CValue v
+  GTLArrayVal vs -> CArray (fmap scadeTranslateValueC vs)
   _ -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
@@ -418,12 +441,12 @@ scadeTypeMap global local tps = do
 --   Returns two list of variable-type pairs, one for the input variables, one for the outputs.
 scadeInterface :: [String] -- ^ The name of the Scade model to analyze
                   -> [Sc.Declaration] -- ^ The parsed source code
-                  -> ([(String,Sc.TypeExpr)],[(String,Sc.TypeExpr)])
+                  -> ([(String,Sc.TypeExpr)],[(String,Sc.TypeExpr)],UserOpKind)
 scadeInterface (name@(n1:names)) ((Sc.PackageDecl _ pname decls):xs)
   | n1==pname = scadeInterface names decls
   | otherwise = scadeInterface name xs
 scadeInterface [name] (op@(Sc.UserOpDecl {}):xs)
-  | Sc.userOpName op == name = (varNames' (Sc.userOpParams op),varNames' (Sc.userOpReturns op))
+  | Sc.userOpName op == name = (varNames' (Sc.userOpParams op),varNames' (Sc.userOpReturns op),Sc.userOpKind op)
   | otherwise = scadeInterface [name] xs
     where
       varNames' :: [Sc.VarDecl] -> [(String,Sc.TypeExpr)]

@@ -19,6 +19,7 @@ import Language.Promela.Pretty
 import Data.Map (Map,(!))
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Data.Maybe (fromJust)
 
 -- | Compile a GTL declaration into a promela module simulating the specified model.
 --   Optionally takes a trace that is used to restrict the execution.
@@ -44,7 +45,10 @@ varName :: CInterface
            -> Integer -- ^ The history level of the variable
            -> String
 varName iface q v idx lvl = if lvl==0
-                            then cIFaceGetOutputVar iface (stateVars q iface) v idx
+                            then (case cIFaceGetOutputVar iface (stateVars q iface) v idx of
+                                     Nothing -> let Just res = cIFaceGetInputVar iface (inputVars q iface) v idx
+                                                in res
+                                     Just res -> res)
                             else "now.history_"++q++"_"++v++"_"++show lvl++(case idx of
                                                                                [] -> ""
                                                                                _ -> concat $ fmap (\x -> "["++show x++"]") idx)
@@ -105,13 +109,13 @@ generatePromelaCode spec history
                                                                           , q == name
                                                                           , lvl <- reverse [1..mlvl]
                                                                           ]++
-                                                                          [ cIFaceGetInputVar iface (inputVars name iface) tvar tix ++ " = " ++
+                                                                          [ (fromJust (cIFaceGetInputVar iface (inputVars name iface) tvar tix)) ++ " = " ++
                                                                             source ++ ";"
                                                                           | (GTLConnPt fmod fvar fix,GTLConnPt tmod tvar tix) <- gtlSpecConnections spec
                                                                           , tmod == name
                                                                           , let sinst = (gtlSpecInstances spec)!fmod
                                                                                 siface = allCInterface $ gtlModelBackend $ (gtlSpecModels spec)!(gtlInstanceModel sinst)
-                                                                                source = cIFaceGetOutputVar siface (stateVars fmod siface) fvar fix
+                                                                                source = fromJust $ cIFaceGetOutputVar siface (stateVars fmod siface) fvar fix
                                                                           ]++
                                                                           [ cIFaceIterate iface (stateVars name iface) (inputVars name iface) ++ ";"
                                                                           ]
@@ -126,18 +130,18 @@ generatePromelaCode spec history
                                                      , Pr.proctypeSteps = steps
                                                      }
                      ) (Map.toList (gtlSpecInstances spec))
-        states = [ Pr.CState (tp++" state_"++name++show i) "Global" Nothing
+        states = [ Pr.CState (tp_pref++" state_"++name++show i++tp_suff) "Global" Nothing
                  | (name,inst) <- Map.toList (gtlSpecInstances spec)
                  , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                 , (i,tp) <- zip [0..] $ cIFaceStateType (allCInterface $ gtlModelBackend mdl) ] ++
-                 [ Pr.CState (tp++" history_"++q++"_"++n++"_"++show clvl) "Global" (Just "0")
+                 , (i,(tp_pref,tp_suff)) <- zip [0..] $ cIFaceStateType (allCInterface $ gtlModelBackend mdl) ] ++
+                 [ Pr.CState (tp_pref++" history_"++q++"_"++n++"_"++show clvl++tp_suff) "Global" (Just "0")
                  | ((q,n),lvl) <- Map.toList history
                  , let inst = (gtlSpecInstances spec)!q
                        mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                        dtp = case Map.lookup n (gtlModelInput mdl) of
                          Nothing -> let Just t = Map.lookup n (gtlModelOutput mdl) in t
                          Just t -> t
-                       tp = cIFaceTranslateType (allCInterface $ gtlModelBackend mdl) dtp
+                       (tp_pref,tp_suff) = cIFaceTranslateType (allCInterface $ gtlModelBackend mdl) dtp
                  , clvl <- [1..lvl]
                  ]
         inp_decls = [Pr.CDecl $ unlines $
@@ -145,10 +149,10 @@ generatePromelaCode spec history
                      | mdl <- Map.elems (gtlSpecModels spec)
                      , incl <- cIFaceIncludes (allCInterface $ gtlModelBackend mdl)
                      ] ++
-                     [ tp++" input_"++name++show i++";"
+                     [ tp_pref++" input_"++name++show i++tp_suff++";"
                      | (name,inst) <- Map.toList (gtlSpecInstances spec)
                      , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                     , (i,tp) <- zip [0..] (cIFaceInputType (allCInterface $ gtlModelBackend mdl))
+                     , (i,(tp_pref,tp_suff)) <- zip [0..] (cIFaceInputType (allCInterface $ gtlModelBackend mdl))
                      ]
                     ]
         init = [Pr.prInit ([Pr.StmtCCode $ unlines $
@@ -158,8 +162,8 @@ generatePromelaCode spec history
                                   iface = allCInterface $ gtlModelBackend mdl
                             ]++
                             [ if Map.member var (gtlModelInput mdl)
-                              then cIFaceGetInputVar iface (stateVars name iface) var [] ++ "=" ++ cIFaceTranslateValue iface val++";"
-                              else cIFaceGetOutputVar iface (stateVars name iface) var [] ++ "=" ++ cIFaceTranslateValue iface val++";"
+                              then mkAssign (fromJust $ cIFaceGetInputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
+                              else mkAssign (fromJust $ cIFaceGetOutputVar iface (stateVars name iface) var []) (cIFaceTranslateValue iface val)
                             | (name,inst) <- Map.toList (gtlSpecInstances spec)
                             , let iface = allCInterface $ gtlModelBackend mdl
                                   mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
@@ -170,3 +174,10 @@ generatePromelaCode spec history
                             | name <- Map.keys $ gtlSpecInstances spec]
                            ])]
     in inp_decls ++ states ++ procs ++ init
+
+mkAssign :: String -> CExpr -> String
+mkAssign expr val = unlines (mkAssign' expr val)
+  where
+    mkAssign' :: String -> CExpr -> [String]
+    mkAssign' expr (CValue x) = [expr++"="++x++";"]
+    mkAssign' expr (CArray xs) = concat [ mkAssign' (expr++"["++show i++"]") x | (i,x) <- zip [0..] xs]

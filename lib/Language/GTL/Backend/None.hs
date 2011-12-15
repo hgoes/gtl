@@ -21,9 +21,9 @@ instance GTLBackend None where
     , cIFaceInputType = []
     , cIFaceStateInit = const ""
     , cIFaceIterate = \_ _ -> ""
-    , cIFaceGetOutputVar = \_ _ _ -> ""
-    , cIFaceGetInputVar = \_ _ _ -> ""
-    , cIFaceTranslateType = \_ -> ""
-    , cIFaceTranslateValue = \_ -> ""
+    , cIFaceGetOutputVar = \_ _ _ -> Just ""
+    , cIFaceGetInputVar = \_ _ _ -> Just ""
+    , cIFaceTranslateType = \_ -> ("","")
+    , cIFaceTranslateValue = \_ -> CValue ""
     }
   backendVerify _ _ _ _ _ _ _ _ = return Nothing
