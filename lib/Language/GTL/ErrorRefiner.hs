@@ -69,6 +69,7 @@ atomToC f (Fix expr) = case getValue expr of
   BinRelExpr rel l r -> "("++atomToC f l++relToC rel++atomToC f r++")"
   BinIntExpr op l r -> "("++atomToC f l++intOpToC op++atomToC f r++")"
   UnBoolExpr GTL.Not p -> "!"++atomToC f p
+  IndexExpr e i -> (atomToC f e)++"["++show i++"]"
 
 -- | Convert a GTL value to a C value
 valueToC :: GTLType -> GTLValue a -> String
@@ -76,8 +77,8 @@ valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
 valueToC _ (GTLFloatVal x) = show x
-valueToC (Fix (GTLEnum vals)) (GTLEnumVal x) = let Just i = elemIndex x vals
-                                               in show i
+valueToC (Fix (GTLEnum vals)) (GTLEnumVal x) = x {-let Just i = elemIndex x vals
+                                               in show i-}
 
 -- | Convert a GTL relation to a C operator
 relToC :: GTL.Relation -> String

@@ -37,7 +37,7 @@ compile
 compile opts outputDir verifier = do
   let input = outputDir </> "pan.c"
       output = outputDir </> verifier
-      flags = (ccFlags opts) ++ (ldFlags opts) ++ ["-lcudd", "-lmtr", "-lepd", "-lst", "-lutil", "-lcudd_arith", "-lm"]
+      flags = (ccFlags opts) ++ (ldFlags opts)
   exitCode <- rawSystem (ccBinary opts) ([input, "-o" ++ output] ++ flags)
   case exitCode of
     ExitSuccess -> return ()
@@ -96,6 +96,19 @@ parseTraces opts name traceFiles f = do
     [] -> putStrLn "No errors found."
     _  -> do
       putStrLn $ show (length traces) ++ " errors found"
+      if verbosity opts > 1
+        then putStrLn $ renderTraces traces
+        else return ()
       writeTraces (name <.> "gtltrace") traces
       putStrLn $ "Written to "++(name <.> "gtltrace")
   setCurrentDirectory currentDir
+
+renderTraces :: [Trace] -> String
+renderTraces tr = unlines (renderTraces' 1 tr)
+  where
+    renderTraces' n [] = []
+    renderTraces' n (t:ts) = ("Trace "++show n):renderTrace' n t ts
+    renderTrace' n [] ts = renderTraces' n ts
+    renderTrace' n (s:ss) ts = renderAtoms' n s ss ts
+    renderAtoms' n [] ss ts = "  ~":renderTrace' n ss ts
+    renderAtoms' n (a:as) ss ts = ("  "++show a):renderAtoms' n as ss ts

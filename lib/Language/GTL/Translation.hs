@@ -90,7 +90,7 @@ gtlToLTL' clk cycle_time (Fix expr)
                                                  (LTL.Un LTL.Not (Atom $ Fix $ Typed gtlBool $ ClockRef clk1))
                                                  arg)))),clk1+1)
     IndexExpr _ _ -> (Atom (Fix expr),clk)
-    Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ {-baMapAlphabet (fmap unfix) $-} renameStates buchi),clk)
+    Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ renameStates buchi),clk)
     BuiltIn "equal" args@(x:xs) -> case unfix $ getType (unfix x) of
       GTLBool -> let (clk1,tt) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time arg in (nclk,nres:cres)) (clk,[]) args
                      (clk2,ff) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time (distributeNot arg) in (nclk,nres:cres)) (clk1,[]) args
@@ -135,7 +135,7 @@ expandExpr expr
     UnBoolExpr op p -> case op of
       GTL.Not -> let expandNot [] = [Set.empty]
                      expandNot (x:xs) = let res = expandNot xs
-                                        in Set.fold (\at cur -> fmap (Set.insert (distributeNot at)) res ++ cur) res x
+                                        in [ Set.insert (distributeNot at) el | el <- res, at <- Set.toList x ]
                  in expandNot (expandExpr p)
       GTL.Next _ -> error "Can't use next in state formulas yet"
       GTL.Always -> error "Can't use always in state formulas yet"

@@ -342,6 +342,26 @@ showTermWith f g p (UnBoolExpr op arg)
 showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
 showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit
 showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
+showTermWith f g p (Automaton ba)
+  = showString "automaton {"
+    . foldl (.) id [ (if Set.member st (baInits ba) 
+                      then showString "init "
+                      else id) .
+                     (if Set.member st (baFinals ba)
+                      then showString "final "
+                      else id) .
+                     showString "state " .
+                     shows st .
+                     showString " {" .
+                     foldl (.) id [ showString " transition"
+                                    . showListWith (g 0) cond
+                                    . showString " -> "
+                                    . shows trg
+                                    . showString ";"
+                                  | (cond,trg) <- trans ] .
+                     showString "}"
+                   | (st,trans) <- Map.toList $ baTransitions ba ]
+    . showString "}"
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
