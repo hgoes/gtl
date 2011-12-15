@@ -405,14 +405,30 @@ scadeMakeLocal (x:xs) mp = do
     ScadePackage nmp -> scadeMakeLocal xs nmp
     ScadeType _ -> Nothing
 
+-- | Types are resolved in two stages: first find all type declaration and
+--    then move types from "opened" packages into the global scope.
 scadeTypes :: [Sc.Declaration] -> ScadeTypeMapping
-scadeTypes [] = Map.empty
-scadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont of
-                                            Nothing -> mp
-                                            Just expr -> Map.insert name (ScadeType expr) mp
-                                        ) (scadeTypes xs) tps
-scadeTypes ((PackageDecl _ name decls):xs) = Map.insert name (ScadePackage (scadeTypes decls)) (scadeTypes xs)
-scadeTypes (_:xs) = scadeTypes xs
+scadeTypes decls = (\types -> resolvePackageOpen types types decls) $ (readScadeTypes decls)
+  where
+    readScadeTypes [] = Map.empty
+    readScadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont of
+                                                Nothing -> mp
+                                                Just expr -> Map.insert name (ScadeType expr) mp
+                                            ) (readScadeTypes xs) tps
+    readScadeTypes ((PackageDecl _ name decls):xs) = Map.insert name (ScadePackage (readScadeTypes decls)) (readScadeTypes xs)
+    readScadeTypes (_:xs) = scadeTypes xs
+
+    resolvePackageOpen global local ((PackageDecl _ name decls) : xs) =
+      Map.adjust (\(ScadePackage pTypes) -> ScadePackage $ resolvePackageOpen global pTypes decls) name local
+    resolvePackageOpen global local ((OpenDecl (Path path)) : xs) = local `Map.union` (packageTypes global path)
+    resolvePackageOpen global local _ = local
+
+    packageTypes :: ScadeTypeMapping -> [String] -> ScadeTypeMapping
+    packageTypes _ [] = Map.empty
+    packageTypes types [p] = case Map.lookup p types of
+      Just (ScadePackage pTypes) -> pTypes
+      _ -> Map.empty
+    packageTypes types (p:ps) = packageTypes types ps
 
 scadeTypeMap :: MonadError String m => ScadeTypeMapping -> ScadeTypeMapping -> [(String,Sc.TypeExpr)] -> m (Map String GTLType)
 scadeTypeMap global local tps = do
