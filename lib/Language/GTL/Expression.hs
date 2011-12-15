@@ -42,7 +42,8 @@ module Language.GTL.Expression
         maximumHistory,
         getClocks,
         automatonClocks,
-        showTermWith
+        showTermWith,
+        defaultConstant
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -55,7 +56,7 @@ import Data.Binary
 import Data.Maybe
 import Data.Map as Map
 import Data.Set as Set
-import Data.List as List (genericLength,genericIndex)
+import Data.List as List (genericLength,genericIndex,genericReplicate)
 import Data.Either
 import Data.Foldable
 import Data.Traversable
@@ -1034,3 +1035,15 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
           Nothing -> Nothing
           Just ys' -> Just (y:ys')
         ENEQ -> Nothing
+
+defaultConstant :: GTLType -> GTLConstant
+defaultConstant (Fix tp)
+  = case tp of
+  GTLInt -> Fix $ GTLIntVal 0
+  GTLByte -> Fix $ GTLByteVal 0
+  GTLBool -> Fix $ GTLBoolVal False
+  GTLFloat -> Fix $ GTLFloatVal 0.0
+  GTLEnum vals -> Fix $ GTLEnumVal (head vals)
+  GTLArray sz tp -> Fix $ GTLArrayVal $ genericReplicate sz (defaultConstant tp)
+  GTLTuple tps -> Fix $ GTLTupleVal $ fmap defaultConstant tps
+  GTLNamed _ tp -> defaultConstant tp
