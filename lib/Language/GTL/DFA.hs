@@ -102,7 +102,7 @@ determinizeBA ba
 
         -- Given a set of transitions merge these into transitions leading into the power set of states.
         mergeTransitions trans = fmap (\(t,trg,n) -> (t,trg))
-                                    . sortBy (compare `on` \(_,_,x) -> x)
+                                    . sortBy (flip compare `on` \(_,_,x) -> x)
                                     . mergeTransitions' atomsTrue Set.empty trans 0
           where
             mergeTransitions' t trg [] n mp = if n==0
