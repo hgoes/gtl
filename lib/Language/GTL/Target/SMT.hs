@@ -56,7 +56,7 @@ data GlobalState = GlobalState
 -- | Saves the variables of one instance (including the state variable of the state machine)
 data InstanceState = InstanceState
                      { instanceVars :: Map String (UnrolledVar,GTLType,VarUsage)
-                     , instancePC :: SMTExpr Word64 -- ^ Saves the state of the state machine
+                     , instancePC :: SMTExpr Integer -- ^ Saves the state of the state machine
                      }
 
 -- | A GTL variable which is (possibly) composed from more than one SMT variable
@@ -552,14 +552,19 @@ getPath sched = mapM (\st -> do
 
 -- | Display an extracted path to the user
 renderPath :: [(Map (String,String) GTLConstant,Bool,String)] -> String
-renderPath path = unlines $ concat
-                  [ ("Step "++show i++(if loop
-                                       then " (loop starts here) "
-                                       else " ")
-                     ++sched):
-                    [ "| "++iname++"."++var++" = "++show c
-                    | ((iname,var),c) <- Map.toList mp ]
-                  | (i,(mp,loop,sched)) <- zip [0..] path ]
+renderPath = unlines . concat . renderPath' 1 Map.empty
+  where
+    renderPath' _ _ [] = []
+    renderPath' n prev ((mp,loop,sched):xs)
+      = (("Step "++show n
+          ++(if loop
+             then " (loop starts here) "
+             else " ")
+          ++sched):[ "| "++iname++"."++var++" = "++show c
+                   | ((iname,var),c) <- Map.toList $ Map.differenceWith (\cur last -> if cur==last
+                                                                                      then Nothing
+                                                                                      else Just cur) mp prev ]
+        ):renderPath' (n+1) mp xs
 
 bmc' :: Scheduling s => s
         -> Map [String] Integer -> GTLSpec String
@@ -909,6 +914,10 @@ kInductionInd orders results prop enums spec bas sched sched_data last n = do
 -- | Apply limits to all integers used to store the current state of a component. Used to strengthen k-induction.
 limitPCs :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
 limitPCs bas st = and' $ concat
+                  [ [(instancePC inst) .>=. 0
+                    ,(instancePC inst) .<. (SMT.constant (fromIntegral sz))]
+                  | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ]
+{-limitPCs bas st = and' $ concat
                   [ [BVUGE (instancePC inst) 0
                     ,BVULT (instancePC inst) (SMT.constant (fromIntegral sz))]
-                  | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ]
+                  | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ] -}
