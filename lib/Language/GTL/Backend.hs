@@ -40,6 +40,7 @@ class GTLBackend b where
                    -> Integer -- ^ Cycle time
                    -> TypedExpr String -- ^ Contract
                    -> Map String GTLType -- ^ Local variables of the model
+                   -> Map String (Maybe GTLConstant) -- ^ Initial values
                    -> Map String (GTLType, GTLConstant) -- ^ Variables which get a constant value
                    -> Opts.Options -- ^ Options
                    -> String -- ^ Name of the GTL file without extension

@@ -20,7 +20,7 @@ data AllBackend = AllBackend
                   { allTypecheck :: MonadError String m => ModelInterface -> m ModelInterface
                   , allAliases :: Map String GTLType
                   , allCInterface :: CInterface
-                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
+                  , allVerifyLocal :: Integer -> TypedExpr String -> Map String GTLType -> Map String (Maybe GTLConstant) -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
                   }
 
 -- | Try to initialize a given backend with a name and arguments.

@@ -18,7 +18,7 @@ verifyLocal opts gtlName spec = mapM_ (\(name,mdl) -> do
                              putStrLn $ "Verifying "++name++":"
                              res <- (allVerifyLocal (gtlModelBackend mdl))
                                       (gtlModelCycleTime mdl) (gtlModelContract mdl)
-                                      (gtlModelLocals mdl) (gtlModelConstantInputs mdl) opts gtlName
+                                      (gtlModelLocals mdl) (gtlModelDefaults mdl) (gtlModelConstantInputs mdl) opts gtlName
                              case res of
                                Nothing -> putStrLn "Undecidable"
                                Just True -> putStrLn "Success"

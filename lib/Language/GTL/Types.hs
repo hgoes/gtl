@@ -147,6 +147,9 @@ instance Eq2 GTLType' where
 isSubtypeOf :: GTLType -> GTLType -> Bool
 isSubtypeOf (Fix (GTLNamed n1 _)) (Fix (GTLNamed n2 _)) = n1==n2
 isSubtypeOf tp (Fix (GTLNamed n tp2)) = isSubtypeOf tp tp2
+isSubtypeOf (Fix (GTLArray sz1 tp1)) (Fix (GTLArray sz2 tp2)) = sz1==sz2 && isSubtypeOf tp1 tp2
+isSubtypeOf (Fix (GTLTuple [])) (Fix (GTLTuple [])) = True
+isSubtypeOf (Fix (GTLTuple (t1:ts1))) (Fix (GTLTuple (t2:ts2))) = isSubtypeOf t1 t2 && isSubtypeOf (Fix $ GTLTuple ts1) (Fix $ GTLTuple ts2)
 isSubtypeOf tp1 tp2 = tp1 == tp2
 
 -- | Given a list of indices, resolve the resulting type.
