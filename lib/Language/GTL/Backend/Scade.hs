@@ -305,7 +305,10 @@ readReport reportFile = do
               (intercalate ",") >>> arr addParens
             singleValue =
               isTag "value" >>> getChildren >>> getText
-            saveValue = changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+            saveValue = changeUserState (\v r -> case v of
+                [] -> r {errorTrace = (commandTail r) : (traceTail r)} -- if value is empty -> ignore set command
+                _ -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)}
+              )
             makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace
