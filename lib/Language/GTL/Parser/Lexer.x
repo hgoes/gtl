@@ -2,7 +2,7 @@
 {-# LANGUAGE BangPatterns #-}  
 {-| The GTL Lexer  
  -}
-module Language.GTL.Parser.Lexer (lexGTL) where
+module Language.GTL.Parser.Lexer (Alex,runAlex,lexGTL,gtlLexer) where
 
 import Language.GTL.Parser.Token
 }
@@ -130,6 +130,9 @@ lexGTL str = case (runAlex str $ do
                Left msg -> error msg
                Right res -> res
   
+gtlLexer :: (Token -> Alex a) -> Alex a
+gtlLexer f = alexMonadScan >>= f
+
 key :: KeyWord -> Action Token
 key w _ _ = return $ Key w
 

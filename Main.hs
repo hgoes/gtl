@@ -78,7 +78,9 @@ main = do
   (createDirectoryIfMissing True $ outputPath opts)
     `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file
-  mgtl <- runErrorT $ gtlParseSpec opts $ GTL.gtl $ GTL.lexGTL gtl_str
+  mgtl <- case runAlex gtl_str gtl of
+    Left err -> return (Left err)
+    Right defs -> runErrorT $ gtlParseSpec opts defs
   rgtl <- case mgtl of
     Left err -> error err
     Right x -> return x
