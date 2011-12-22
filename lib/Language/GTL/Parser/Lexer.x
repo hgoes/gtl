@@ -2,12 +2,16 @@
 {-# LANGUAGE BangPatterns #-}  
 {-| The GTL Lexer  
  -}
-module Language.GTL.Parser.Lexer (Alex,runAlex,lexGTL,gtlLexer) where
+module Language.GTL.Parser.Lexer (gtlLexer,lexGTL) where
 
 import Language.GTL.Parser.Token
+import Language.GTL.Parser.Monad
+
+import Control.Monad.State
+import Control.Monad.Error
 }
 
-%wrapper "monad"
+-- %wrapper "monad"
 
 $letter = [a-zA-Z\_]
 $digit10 = [0-9]
@@ -82,8 +86,29 @@ tokens:-
   $digit10+                                      { withStr $ \s -> ConstInt (read s) }
 
 {
+type AlexInput = (Posn,Char,String)
+  
+alexGetChar :: AlexInput -> Maybe (Char,AlexInput)
+alexGetChar (p,_,c:cs) = Just (c,(movePosn p c,c,cs))
+alexGetChar (_,_,[]) = Nothing
 
-type Action r = AlexAction (Alex r)
+alexInputPrevChar :: AlexInput -> Char
+alexInputPrevChar (_,c,_) = c
+
+alexGetInput :: GTLParser AlexInput
+alexGetInput = do
+  st <- get
+  return (parserPos st,parserChr st,parserInp st)
+
+alexGetScd :: GTLParser Int
+alexGetScd = gets parserScd
+
+alexSetInput :: AlexInput -> GTLParser ()
+alexSetInput (pos,c,inp) = modify (\st -> st { parserPos = pos 
+                                             , parserChr = c
+                                             , parserInp = inp })
+
+type Action r = AlexInput -> Int -> GTLParser r
 
 nestedComment :: Action Token
 nestedComment _ _ = do  
@@ -91,7 +116,7 @@ nestedComment _ _ = do
   go 1 input
   where go 0 input = do
           alexSetInput input
-          alexMonadScan
+          lexGTL
         go n input = do
           case alexGetChar input of
             Nothing -> err input
@@ -108,30 +133,20 @@ nestedComment _ _ = do
                 _ -> go n input
         err input = do
           alexSetInput input
-          lexError "error in nested comment"
-          
-lexError s = do
-  (p,c,input) <- alexGetInput
-  alexError $ showPosn p ++ ": "++s++(if not (null input)
-                                      then " before "++ show (head input)
-                                      else " at end of file")
+          throwError "error in nested comment"
 
--- | Convert GTL code lazily into a list of tokens.
-lexGTL :: String -> [Token]
-lexGTL str = case (runAlex str $ do
-                      let loop = do
-                            tok <- alexMonadScan
-                            if tok==EOF
-                              then return []
-                              else (do
-                                       outp <- loop
-                                       return (tok:outp))
-                      loop) of
-               Left msg -> error msg
-               Right res -> res
-  
-gtlLexer :: (Token -> Alex a) -> Alex a
-gtlLexer f = alexMonadScan >>= f
+lexGTL :: GTLParser Token
+lexGTL = do
+  inp <- alexGetInput
+  scd <- alexGetScd
+  case alexScan inp scd of
+    AlexEOF -> return EOF
+    AlexError err -> throwError "lexer error"
+    AlexSkip inp' _ -> alexSetInput inp' >> lexGTL
+    AlexToken inp' len act -> alexSetInput inp' >> act inp len
+
+gtlLexer :: (Token -> GTLParser a) -> GTLParser a
+gtlLexer f = lexGTL >>= f
 
 key :: KeyWord -> Action Token
 key w _ _ = return $ Key w
@@ -148,9 +163,6 @@ tok t _ _ = return t
 withStr :: (String -> Token) -> Action Token
 withStr f (_,_,input) i = return $ f (take i input)
 
---alexEOF :: AlexAction Token
-alexEOF = return EOF
-
-showPosn (AlexPn _ line col) = show line ++ ':': show col
+skip _ _ = lexGTL
 
 }

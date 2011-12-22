@@ -10,7 +10,7 @@ import System.IO.Error
 
 import Control.Monad.Error (ErrorT(..))
 
-import Language.GTL.Parser.Lexer as GTL
+import Language.GTL.Parser.Monad as GTL
 import Language.GTL.Parser as GTL
 import Language.Scade.Lexer as Sc
 import Language.Scade.Parser as Sc
@@ -78,8 +78,8 @@ main = do
   (createDirectoryIfMissing True $ outputPath opts)
     `catch` (\e -> putStrLn $ "Could not create build dir: " ++ (ioeGetErrorString e))
   gtl_str <- readFile gtl_file
-  mgtl <- case runAlex gtl_str gtl of
-    Left err -> return (Left err)
+  mgtl <- case runGTLParser gtl gtl_str of
+    Left (err,pos) -> return (Left $ "At "++show pos++": "++err)
     Right defs -> runErrorT $ gtlParseSpec opts defs
   rgtl <- case mgtl of
     Left err -> error err

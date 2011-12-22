@@ -5,17 +5,19 @@ module Language.GTL.Parser (gtl) where
 
 import Language.GTL.Parser.Token
 import Language.GTL.Parser.Syntax
-import Language.GTL.Parser.Lexer (Alex,gtlLexer)
+import Language.GTL.Parser.Monad
+import Language.GTL.Parser.Lexer (gtlLexer)
 import Language.GTL.Types
 import Data.Fix
 
 import qualified Data.Map as Map
+import Control.Monad.Error
 }
 
 %name gtl
 %tokentype { Token }
 %lexer { gtlLexer } { EOF }
-%monad { Alex }
+%monad { GTLParser }
 %error { parseError }
 
 %token
@@ -303,5 +305,5 @@ time_spec : "[" int id "]" { case $3 of
                                 "us" -> TimeUSecs $2 }
 
 {
-parseError xs = error ("Parse error at "++show xs)
+parseError tok = throwError $ "Parse error at: "++show tok
 }
