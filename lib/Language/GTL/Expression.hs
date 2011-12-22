@@ -370,7 +370,7 @@ enforceType :: MonadError String m =>
                -> GTLType -- ^ The actual type of the entity
                -> GTLType -- ^ The expected type
                -> m ()
-enforceType expr ac tp = if baseType ac == baseType tp
+enforceType expr ac tp = if isSubtypeOf ac tp || isSubtypeOf tp ac
                          then return ()
                          else throwError $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
