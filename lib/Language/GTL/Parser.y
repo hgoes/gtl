@@ -103,8 +103,24 @@ import Control.Monad.Error
 
 %%
 
-declarations : declaration declarations { $1:$2 }
-             |                          { [] }
+list(p,q) : p lists(p,q) { $1:$2 }
+          |              { [] }
+
+lists(p,q) : q p lists(p,q) { $2:$3 }
+           |                { [] }
+
+maybe(p) : p { Just $1 }
+         |   { Nothing }
+
+bool(p) : p { True }
+        |   { False }
+
+many(p) : p many(p) { $1:$2 }
+        |           { [] }
+
+fby(p,q) : p q { $1 }
+
+declarations : many(declaration) { $1 }
 
 declaration : model_decl    { Model $1 }
             | connect_decl  { Connect $1 }
@@ -134,14 +150,8 @@ instance_decl : "instance" id id instance_contract { $4 (InstanceDecl
 
 alias_decl : "type" id "=" type ";" { TypeAlias $2 $4 }
 
-model_args : "(" model_args1 ")" { $2 }
-           |                     { [] }
-
-model_args1 : model_arg model_args2 { $1:$2 }
-            |                    { [] }
-
-model_args2 : "," model_arg model_args2 { $2:$3 }
-            |                        { [] }
+model_args : "(" list(model_arg,",") ")" { $2 }
+           |                             { [] }
 
 model_arg : string          { StrArg $1 }
           | id ":=" const   { ConstantDecl $1 $3 }
@@ -155,9 +165,9 @@ model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
 instance_contract : "{" formulas_or_inits "}" { $2 }
                   | ";"                       { id }
 
-formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
-                                                                                          in ndecl { modelContract = $2:(modelContract ndecl)
-                                                                                                   } }
+formulas_or_inits_or_vars  : bool("contract") expr ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
+                                                                                            in ndecl { modelContract = $2:(modelContract ndecl)
+                                                                                                     } }
                            | init_decl ";" formulas_or_inits_or_vars           { \decl -> let ndecl = $3 decl
                                                                                           in ndecl { modelInits = $1:(modelInits ndecl)
                                                                                                    } }
@@ -177,77 +187,64 @@ formulas_or_inits_or_vars  : mb_contract formula ";" formulas_or_inits_or_vars {
                                                                                                        "us" -> 1) } }
                            |                                                   { id }
 
-formulas_or_inits : mb_contract formula ";" formulas_or_inits { \decl -> let ndecl = $4 decl
-                                                                         in ndecl { instanceContract = $2:(instanceContract ndecl) } }
+formulas_or_inits : bool("contract") expr ";" formulas_or_inits { \decl -> let ndecl = $4 decl
+                                                                           in ndecl { instanceContract = $2:(instanceContract ndecl) } }
                   | init_decl ";" formulas_or_inits           { \decl -> let ndecl = $3 decl
                                                                          in ndecl { instanceInits = $1:(instanceInits ndecl) } }
                   |                                           { id }
 
-mb_contract : "contract" { }
-            |            { }
 
-formulas : formula ";" formulas { $1:$3 }
-         |                      { [] }
+formulas : many(fby(expr,";")) { $1 }
 
-formula : expr { $1 }
-
-expr : expr "and" expr              { GBin GOpAnd NoTime $1 $3 }
-     | expr "or" expr               { GBin GOpOr NoTime $1 $3 }
-     | expr "implies" expr          { GBin GOpImplies NoTime $1 $3 }
-     | expr "until" expr            { GBin GOpUntil NoTime $1 $3 }
-     | expr "until" time_spec expr  { GBin GOpUntil $3 $1 $4 }
-     | expr "<" expr                { GBin GOpLessThan NoTime $1 $3 }
-     | expr "<=" expr               { GBin GOpLessThanEqual NoTime $1 $3 }
-     | expr ">" expr                { GBin GOpGreaterThan NoTime $1 $3 }
-     | expr ">=" expr               { GBin GOpGreaterThanEqual NoTime $1 $3 }
-     | expr "=" expr                { GBin GOpEqual NoTime $1 $3 }
-     | expr ":=" expr               { GBin GOpEqual NoTime (GContext ContextOut $1) (GContext ContextIn $3) }
-     | expr "!=" expr               { GBin GOpNEqual NoTime $1 $3 }
-     | "after" time_spec expr       { GUn GOpAfter $2 $3 }
-     | "not" expr                   { GUn GOpNot NoTime $2 }
-     | "always" expr                { GUn GOpAlways NoTime $2 }
-     | "next" expr                  { GUn GOpNext NoTime $2 }
-     | "next" time_spec expr        { GUn GOpNext $2 $3 }
-     | "finally" expr               { GUn GOpFinally NoTime $2 }
-     | "finally" time_spec expr     { GUn GOpFinally $2 $3 }
-     | expr "in" expr               { GBin GOpIn NoTime $1 $3 }
-     | expr "not" "in" expr         { GBin GOpNotIn NoTime $1 $4 }
-     | "{" ints "}"                 { GSet $2 }
-     | "(" expr_list ")"            { case $2 of
-                                         [x] -> x
-                                         xs -> GTuple xs
-                                    }
-     | "[" expr_list "]"            { GArray $2 }
-     | var                          { GVar (fst $1) (snd $1) }
-     | int                          { GConst $ fromIntegral $1 }
-     | expr "+" expr                { GBin GOpPlus NoTime $1 $3 }
-     | expr "-" expr                { GBin GOpMinus NoTime $1 $3 }
-     | expr "/" expr                { GBin GOpDiv NoTime $1 $3 }
-     | expr "*" expr                { GBin GOpMult NoTime $1 $3 }
-     | "exists" id "=" var ":" expr { GExists $2 (fst $4) (snd $4) $6 }
-     | "automaton" "{" states "}"   { GAutomaton $3 }
-     | expr "[" expr "]"            { GIndex $1 $3 }
-     | enum                         { GEnum $1 }
-     | "true"                       { GConstBool True }
-     | "false"                      { GConstBool False }
-     | id "(" expr_list ")"         { GBuiltIn $1 $3 }
-     | "#in" expr                   { GContext ContextIn $2 }  
-     | "#out" expr                  { GContext ContextOut $2 }
+expr : expr "and" expr                 { GBin GOpAnd NoTime $1 $3 }
+     | expr "or" expr                  { GBin GOpOr NoTime $1 $3 }
+     | expr "implies" expr             { GBin GOpImplies NoTime $1 $3 }
+     | expr "until" expr               { GBin GOpUntil NoTime $1 $3 }
+     | expr "until" time_spec expr     { GBin GOpUntil $3 $1 $4 }
+     | expr "<" expr                   { GBin GOpLessThan NoTime $1 $3 }
+     | expr "<=" expr                  { GBin GOpLessThanEqual NoTime $1 $3 }
+     | expr ">" expr                   { GBin GOpGreaterThan NoTime $1 $3 }
+     | expr ">=" expr                  { GBin GOpGreaterThanEqual NoTime $1 $3 }
+     | expr "=" expr                   { GBin GOpEqual NoTime $1 $3 }
+     | expr ":=" expr                  { GBin GOpEqual NoTime (GContext ContextOut $1) (GContext ContextIn $3) }
+     | expr "!=" expr                  { GBin GOpNEqual NoTime $1 $3 }
+     | "after" time_spec expr          { GUn GOpAfter $2 $3 }
+     | "not" expr                      { GUn GOpNot NoTime $2 }
+     | "always" expr                   { GUn GOpAlways NoTime $2 }
+     | "next" expr                     { GUn GOpNext NoTime $2 }
+     | "next" time_spec expr           { GUn GOpNext $2 $3 }
+     | "finally" expr                  { GUn GOpFinally NoTime $2 }
+     | "finally" time_spec expr        { GUn GOpFinally $2 $3 }
+     | expr "in" expr                  { GBin GOpIn NoTime $1 $3 }
+     | expr "not" "in" expr            { GBin GOpNotIn NoTime $1 $4 }
+     | "{" ints "}"                    { GSet $2 }
+     | "(" expr_list ")"               { case $2 of
+                                            [x] -> x
+                                            xs -> GTuple xs
+                                       }
+     | "[" expr_list "]"               { GArray $2 }
+     | var                             { GVar (fst $1) (snd $1) }
+     | int                             { GConst $ fromIntegral $1 }
+     | expr "+" expr                   { GBin GOpPlus NoTime $1 $3 }
+     | expr "-" expr                   { GBin GOpMinus NoTime $1 $3 }
+     | expr "/" expr                   { GBin GOpDiv NoTime $1 $3 }
+     | expr "*" expr                   { GBin GOpMult NoTime $1 $3 }
+     | "exists" id "=" var ":" expr    { GExists $2 (fst $4) (snd $4) $6 }
+     | "automaton" "{" many(state) "}" { GAutomaton $3 }
+     | expr "[" expr "]"               { GIndex $1 $3 }
+     | enum                            { GEnum $1 }
+     | "true"                          { GConstBool True }
+     | "false"                         { GConstBool False }
+     | id "(" expr_list ")"            { GBuiltIn $1 $3 }
+     | "#in" expr                      { GContext ContextIn $2 }  
+     | "#out" expr                     { GContext ContextOut $2 }
        
-expr_list : expr expr_lists { $1:$2 }
-          |                 { [] }
-
-expr_lists : "," expr expr_lists { $2:$3 }
-           |                     { [] }
+expr_list : list(expr,",") { $1 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
 
-ints : int comma_ints { $1:$2 }
-     |                { [] }
-
-comma_ints : "," int comma_ints { $2:$3 }
-           |                    { [] }
+ints : list(int,",") { $1 }
 
 connect_decl : "connect" id "." id indices id "." id indices ";" { ConnectDecl $2 $4 $5 $6 $8 $9 }
 
@@ -259,44 +256,20 @@ verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 init_decl : "init" id "all" { ($2,InitAll) }
           | "init" id expr  { ($2,InitOne $3) }
 
-states : state states { $1:$2 }
-       |              { [] }
-
-initial : "init" { True }
-        |        { False }
-
-final : "final" { True }
-      |         { False }
-
-state : initial final "state" id "{" state_contents "}" { State $4 $1 $2 $6 }
-
-state_contents : state_content state_contents { $1:$2 }
-               |                              { [] }
+state : bool("init") bool("final") "state" id "{" many(state_content) "}" { State $4 $1 $2 $6 }
 
 state_content : "transition" id ";"              { Right ($2,Nothing) }
               | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
               | expr ";"                         { Left $1 }
 
-type : "int"                    { Fix $ UnResolvedType' $ Right GTLInt }
-     | "bool"                   { Fix $ UnResolvedType' $ Right GTLBool }
-     | "byte"                   { Fix $ UnResolvedType' $ Right GTLByte }
-     | "float"                  { Fix $ UnResolvedType' $ Right GTLFloat }
-     | "enum" "{" enum_list "}" { Fix $ UnResolvedType' $ Right $ GTLEnum $3 }
-     | "(" type_list ")"        { Fix $ UnResolvedType' $ Right $ GTLTuple $2 }
-     | type "^" int             { Fix $ UnResolvedType' $ Right $ GTLArray $3 $1 }
-     | id                       { Fix $ UnResolvedType' $ Left $1 }
-
-enum_list : id enum_lists { $1:$2 }
-          |               { [] }
-
-enum_lists : "," id enum_lists { $2:$3 }
-           |                   { [] }
-
-type_list : type type_lists { $1:$2 }
-          |                 { [] }
-
-type_lists : "," type type_lists { $2:$3 }
-           |                     { [] }
+type : "int"                       { Fix $ UnResolvedType' $ Right GTLInt }
+     | "bool"                      { Fix $ UnResolvedType' $ Right GTLBool }
+     | "byte"                      { Fix $ UnResolvedType' $ Right GTLByte }
+     | "float"                     { Fix $ UnResolvedType' $ Right GTLFloat }
+     | "enum" "{" list(id,",") "}" { Fix $ UnResolvedType' $ Right $ GTLEnum $3 }
+     | "(" list(type,",") ")"      { Fix $ UnResolvedType' $ Right $ GTLTuple $2 }
+     | type "^" int                { Fix $ UnResolvedType' $ Right $ GTLArray $3 $1 }
+     | id                          { Fix $ UnResolvedType' $ Left $1 }
 
 time_spec : "[" int id "]" { case $3 of
                                 "cy" -> TimeSteps $2
