@@ -14,7 +14,8 @@ data Token = Identifier String
            | Binary BinOp
            | CtxIn
            | CtxOut
-           deriving Show
+           | EOF
+           deriving (Show,Eq,Ord)
 
 data KeyWord = KeyAll
              | KeyBool
@@ -41,12 +42,12 @@ data KeyWord = KeyAll
              | KeyTrue
              | KeyType
              | KeyUntil
-             deriving Show
+             deriving (Show,Eq,Ord)
 
 data BracketType = Parentheses
                  | Square
                  | Curly
-                 deriving Show
+                 deriving (Show,Eq,Ord)
 
 data UnOp = GOpAlways
           | GOpNext

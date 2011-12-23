@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances,
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, ScopedTypeVariables,
   ExistentialQuantification #-}
 
 module Language.GTL.DFA (
@@ -15,6 +15,7 @@ import Language.GTL.Buchi
 import Language.GTL.BuchiHistory
 import Data.AtomContainer
 import Data.List (sortBy)
+import Data.Function (on)
 
 -- Models total functions via mapping structures. The instances may not really be total,
 -- this has to be ensured by the user (how should that be checked?).
@@ -86,11 +87,11 @@ mergeInits ba =
 
 -- | Tries to determinize a given B&#xFC;chi automaton. Only possible if all states are final.
 -- If not possible it returns Nothing.
-determinizeBA :: (Eq a, Ord a, Eq st, Ord st,AtomContainer a el,Show a,Show st) => BA a st -> Maybe (DFA a (PowSetSt st))
+determinizeBA :: forall a st el. (Eq a, Ord a, Eq st, Ord st,AtomContainer a el,Show a,Show st) => BA a st -> Maybe (DFA a (PowSetSt st))
 determinizeBA ba
   | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = Nothing
   | otherwise =
-      let initS = baInits ba 
+      let initS = baInits ba
           trans = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) Set.empty [initS] Map.empty
       in Just $ DFA {
           dfaTransitions = MakeTotal trans
@@ -98,11 +99,15 @@ determinizeBA ba
           , dfaHistory = PowerSet $ FromBA $ baHistory ba
         }
       where
+        determinize' :: MakeTotal (Map st (Set (a, st))) -> Set (PowSetSt st) -> [PowSetSt st] -> Map (PowSetSt st)	 [(a, PowSetSt st)] -> Map (PowSetSt st) [(a, PowSetSt st)]
         determinize' _ _ [] trans = trans
         determinize' ba visited (next:remaining) trans
           | Set.member next visited = determinize' ba visited remaining trans
           | otherwise = let trans' = mergeTransitions (concat $ fmap Map.toList $ Set.toList $ getTransitions ba next) []
-                        in determinize' ba (Set.insert next visited) ([ trg | (_,trg) <- trans']++remaining) (Map.insert next trans' trans)
+                            trans'' = trans' `seq` (Map.insert next trans' trans)
+                            newStates = fmap snd trans'
+                            remaining' = newStates `seq` (newStates ++ remaining)
+                        in determinize' ba (Set.insert next visited) remaining' trans''
 
         -- Get the transitions in the BA which origin at the given set of states.
         getTransitions ba = foldl (\trans s -> Set.insert (transform $ (ba !$ s)) trans) Set.empty
@@ -112,17 +117,21 @@ determinizeBA ba
             putTransition trans' (g, ts) = Map.alter (maybe (Just $ Set.singleton ts) (\ts' -> Just $ Set.insert ts ts')) g trans'
 
         -- Given a set of transitions merge these into transitions leading into the power set of states.
-        mergeTransitions trans mp = fmap (\(t,trg,n) -> (t,trg)) $ sortBy (\(_,_,x) (_,_,y) -> compare y x) $ mergeTransitions' atomsTrue Set.empty trans 0 mp
-        
-        mergeTransitions' t trg [] n mp = if n==0
-                                          then mp
-                                          else insertTransition t trg n mp
-        mergeTransitions' t trg ((t',trg'):trans) n mp = case mergeAtoms t t' of
-          Nothing -> mergeTransitions' t trg trans n mp
-          Just nt -> if nt==t
-                     then mergeTransitions' t (Set.union trg trg') trans (n+1) mp
-                     else (let nmp = mergeTransitions' nt (Set.union trg trg') trans (n+1) mp
-                           in mergeTransitions' t trg trans n nmp)
+        mergeTransitions trans = fmap (\(t,trg,n) -> (t,trg))
+                                    . sortBy (flip compare `on` \(_,_,x) -> x)
+                                    . mergeTransitions' atomsTrue Set.empty trans 0
+          where
+            mergeTransitions' t trg [] n mp = if n==0
+                                              then mp
+                                              else insertTransition t trg n mp
+
+            mergeTransitions' t trg ((t',trg'):trans) n mp = case mergeAtoms t t' of
+              Nothing -> mergeTransitions' t trg trans n mp
+              Just nt -> if nt==t
+                         then mergeTransitions' t (Set.union trg trg') trans (n+1) mp
+                         else (let nmp = mergeTransitions' nt (Set.union trg trg') trans (n+1) mp
+                               in mergeTransitions' t trg trans n nmp)
+
         insertTransition t trg n [] = [(t,trg,n)]
         insertTransition t trg n ((t',trg',n'):ts) = case compareAtoms t t' of
           ELT -> (t',Set.union trg trg',max n n'):ts

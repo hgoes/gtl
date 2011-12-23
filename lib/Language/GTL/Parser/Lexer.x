@@ -2,20 +2,24 @@
 {-# LANGUAGE BangPatterns #-}  
 {-| The GTL Lexer  
  -}
-module Language.GTL.Parser.Lexer (lexGTL) where
+module Language.GTL.Parser.Lexer (gtlLexer,lexGTL) where
 
 import Language.GTL.Parser.Token
+import Language.GTL.Parser.Monad
+
+import Control.Monad.State
+import Control.Monad.Error
 }
 
-%wrapper "basic"
+-- %wrapper "monad"
 
 $letter = [a-zA-Z\_]
 $digit10 = [0-9]
 
 tokens:-
-  $white+                        ;
-  "//".*                         ;
-  "/*" ([\x00-\xff] # [\*] | \* [\x00-\xff] # [\/])* "*/" ;
+  $white+                        { skip }
+  "//".*                         { skip }
+  "/*"                           { nestedComment }
   after                          { un GOpAfter }
   all                            { key KeyAll }
   always                         { un GOpAlways }
@@ -50,17 +54,17 @@ tokens:-
   type                           { key KeyType }
   until                          { key KeyUntil }
   verify                         { key KeyVerify }
-  "("                            { const $ Bracket Parentheses False }
-  ")"                            { const $ Bracket Parentheses True }
-  "["                            { const $ Bracket Square False }
-  "]"                            { const $ Bracket Square True }
-  "{"                            { const $ Bracket Curly False }
-  "}"                            { const $ Bracket Curly True }
-  ";"                            { const Semicolon }
+  "("                            { tok $ Bracket Parentheses False }
+  ")"                            { tok $ Bracket Parentheses True }
+  "["                            { tok $ Bracket Square False }
+  "]"                            { tok $ Bracket Square True }
+  "{"                            { tok $ Bracket Curly False }
+  "}"                            { tok $ Bracket Curly True }
+  ";"                            { tok Semicolon }
   ":="                           { bin GOpAssign }
-  ":"                            { const Colon }
-  "."                            { const Dot }
-  ","                            { const Comma }
+  ":"                            { tok Colon }
+  "."                            { tok Dot }
+  ","                            { tok Comma }
   "<="                           { bin GOpLessThanEqual }
   "<"                            { bin GOpLessThan }
   "=>"                           { bin GOpImplies }
@@ -74,25 +78,91 @@ tokens:-
   "*"                            { bin GOpMult }
   "/"                            { bin GOpDiv }
   "^"                            { bin GOpPow }
-  "#in"                          { const $ CtxIn }
-  "#out"                         { const $ CtxOut }
-  "'" $letter ($letter | $digit10)* { \s -> ConstEnum (tail s) }
-  \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { \s -> ConstString (read s) }
-  $letter ($letter | $digit10)*  { Identifier }
-  $digit10+                      { \s -> ConstInt (read s) }
+  "#in"                          { tok CtxIn }
+  "#out"                         { tok CtxOut }
+  "'" $letter ($letter | $digit10)*              { withStr $ \s -> ConstEnum (tail s) }
+  \" ([\x00-\xff] # [\\\"] | \\ [\x00-\xff])* \" { withStr $ \s -> ConstString (read s) }
+  $letter ($letter | $digit10)*                  { withStr Identifier }
+  $digit10+                                      { withStr $ \s -> ConstInt (read s) }
 
 {
--- | Convert GTL code lazily into a list of tokens.
-lexGTL :: String -> [Token]
-lexGTL = alexScanTokens
+type AlexInput = (Posn,Char,String)
   
-key :: KeyWord -> String -> Token
-key w _ = Key w
+alexGetChar :: AlexInput -> Maybe (Char,AlexInput)
+alexGetChar (p,_,c:cs) = Just (c,(movePosn p c,c,cs))
+alexGetChar (_,_,[]) = Nothing
 
-un :: UnOp -> String -> Token
-un o _ = Unary o
+alexInputPrevChar :: AlexInput -> Char
+alexInputPrevChar (_,c,_) = c
 
-bin :: BinOp -> String -> Token
-bin o _ = Binary o
+alexGetInput :: GTLParser AlexInput
+alexGetInput = do
+  st <- get
+  return (parserPos st,parserChr st,parserInp st)
+
+alexGetScd :: GTLParser Int
+alexGetScd = gets parserScd
+
+alexSetInput :: AlexInput -> GTLParser ()
+alexSetInput (pos,c,inp) = modify (\st -> st { parserPos = pos 
+                                             , parserChr = c
+                                             , parserInp = inp })
+
+type Action r = AlexInput -> Int -> GTLParser r
+
+nestedComment :: Action Token
+nestedComment _ _ = do  
+  input <- alexGetInput
+  go 1 input
+  where go 0 input = do
+          alexSetInput input
+          lexGTL
+        go n input = do
+          case alexGetChar input of
+            Nothing -> err input
+            Just (c,input) -> do
+              case c of
+                '*' -> case alexGetChar input of
+                  Nothing -> err input
+                  Just ('/',input) -> go (n-1) input
+                  Just (c,input) -> go n input
+                '/' -> case alexGetChar input of
+                  Nothing -> err input
+                  Just ('*',input) -> go (n+1) input
+                  Just (c,input) -> go n input
+                _ -> go n input
+        err input = do
+          alexSetInput input
+          throwError "error in nested comment"
+
+lexGTL :: GTLParser Token
+lexGTL = do
+  inp <- alexGetInput
+  scd <- alexGetScd
+  case alexScan inp scd of
+    AlexEOF -> return EOF
+    AlexError err -> throwError "lexer error"
+    AlexSkip inp' _ -> alexSetInput inp' >> lexGTL
+    AlexToken inp' len act -> alexSetInput inp' >> act inp len
+
+gtlLexer :: (Token -> GTLParser a) -> GTLParser a
+gtlLexer f = lexGTL >>= f
+
+key :: KeyWord -> Action Token
+key w _ _ = return $ Key w
+
+un :: UnOp -> Action Token
+un o _ _ = return $ Unary o
+
+bin :: BinOp -> Action Token
+bin o _ _ = return $ Binary o
+
+tok :: Token -> Action Token
+tok t _ _ = return t
+
+withStr :: (String -> Token) -> Action Token
+withStr f (_,_,input) i = return $ f (take i input)
+
+skip _ _ = lexGTL
 
 }

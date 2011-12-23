@@ -111,12 +111,12 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls types opFile) cy expr locals constVars opts gtlName
+  backendVerify Scade (ScadeData node decls types opFile) cy expr locals init constVars opts gtlName
     = let name = (intercalate "_" node)
           (inp,outp,kind) = scadeInterface node decls
           buchi = gtl2ba (Just cy) expr
           dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
-          scade = fmap (dfaToScade types name inp outp locals) dfa
+          scade = fmap (dfaToScade types name inp outp locals init) dfa
           --scade = buchiToScade name inp outp ()
       in do
         let outputDir = (outputPath opts)
@@ -297,15 +297,13 @@ readReport reportFile = do
             startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
             readCycleActions =
               getChildren >>>
-              isTag "input" >>> makeSetCommand &&&>
-              getChildren >>> valueSetCommand
+              isTag "input" >>> getVariableName >>>
+              (second getChildren) >>> valueSetCommand
             -- TCL command generation
-            makeSetCommand =
-              getAttrValue "name" >>>
-              changeUserState (\n r -> r {errorTrace = (("SSM::set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
-            valueSetCommand :: IOStateArrow Report XmlTree String
+            getVariableName = getAttrValue "name" &&& returnA
+            valueSetCommand :: IOStateArrow Report (String, XmlTree) (String, String)
             valueSetCommand =
-              (compositeValue `orElse` singleValue) >>> saveValue
+              (second $ compositeValue `orElse` singleValue) >>> saveValue
             compositeValue =
               isTag "composite" >>>
               deep (
@@ -314,7 +312,12 @@ readReport reportFile = do
               (intercalate ",") >>> arr addParens
             singleValue =
               isTag "value" >>> getChildren >>> getText
-            saveValue = changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+            saveValue :: IOStateArrow Report (String, String) (String, String)
+            saveValue = changeUserState (\(n,v) r -> case v of
+                [] -> r -- if value is empty -> ignore set command
+                _ -> r { errorTrace =
+                        (("SSM::set " ++ (node r) ++ "/" ++ n ++ " " ++ v) : (traceHead r)) : (traceTail r)}
+              )
             makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace
@@ -501,10 +504,11 @@ dfaToScade :: ScadeTypeMapping
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
                 -> Map String GTLType -- ^ Local variables of the mode
+                -> Map String (Maybe GTLConstant)
                 -> DFA [TypedExpr String] Integer -- ^ The DFA
                 -> Sc.Declaration
 
-dfaToScade types name ins outs locals dfa
+dfaToScade types name ins outs locals defs dfa
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -520,7 +524,7 @@ dfaToScade types name ins outs locals dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = (declarationsToScade types $ Map.toList locals)
+                              , dataLocals = declarationsToScade types (Map.toList locals) defs
                               , dataEquations = [StateEquation
                                                  (StateMachine Nothing (dfaToStates locals dfa))
                                                  [] True
@@ -665,11 +669,14 @@ constantToScade (Fix (GTLEnumVal v)) = Sc.IdExpr $ Path [v]
 constantToScade (Fix (GTLArrayVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
 constantToScade (Fix (GTLTupleVal xs)) = Sc.ArrayExpr (fmap constantToScade xs)
 
-declarationsToScade :: ScadeTypeMapping -> [(String, GTLType)] -> [Sc.VarDecl]
-declarationsToScade types = concat . map declarationsToScade'
+declarationsToScade :: ScadeTypeMapping -> [(String, GTLType)] -> Map String (Maybe GTLConstant) -> [Sc.VarDecl]
+declarationsToScade types decls defs = concat $ map declarationsToScade' decls
   where
     declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
-    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ ConstIntExpr 0)]
+    declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ case Map.lookup n defs of
+                                                                                                            Nothing -> constantToScade $ defaultConstant t
+                                                                                                            Just (Just c) -> constantToScade c
+                                                                                                        )]
 
     -- Tuples are declared as follows:
     -- for every entry x : (a0, a1, ..., an) there is a variable x_i : ai declared.
