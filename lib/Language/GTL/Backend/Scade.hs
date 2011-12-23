@@ -124,6 +124,7 @@ instance GTLBackend Scade where
             testNodeFile = outputDir </> fileBaseName <.> "scade"
             proofNodeFile = outputDir </> (fileBaseName ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (fileBaseName ++ "-proof-counterex") <.> "sss"
+            observerFile = outputDir </> fileBaseName <.> "obs"
         dump opts fileBaseName buchi
         dumpStatemap opts fileBaseName dfa
         case scade of
@@ -131,6 +132,7 @@ instance GTLBackend Scade where
           Just scade' -> do
             writeFile testNodeFile (show $ prettyScade [scade'])
             writeFile proofNodeFile (show $ prettyScade [generateProver types name node inp outp constVars])
+            writeFile observerFile (intercalate "\n" $ generateObserver scade' (name ++ "_proof"))
             if not (dryRun opts) then
               case scadeRoot opts of
                 Just p -> do
@@ -206,6 +208,22 @@ interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Noth
 
 filterNonConst :: Ord a => Map a b -> [(a,c)] -> [(a,c)]
 filterNonConst constVars = filter (not . (flip Map.member $ constVars) . fst)
+
+-- | Generate names of states, transitions and variables that should be observed while
+--    running the scenario for the given automaton.
+generateObserver :: Sc.Declaration -> String -> [String]
+generateObserver op@(Sc.UserOpDecl {userOpName=name, userOpContent=sm}) proofNode =
+  map ((proofNode ++ "/" ++ name ++ "/") ++ ) $ genStateMachineObs (dataEquations sm)
+  where
+    genStateMachineObs [Sc.StateEquation (Sc.StateMachine _ states) _ _] = genStateTransObs states
+    genStateMachineObs _ = error "Expected state machine"
+
+    genStateTransObs = foldl genObs []
+    genObs obs st =
+      let state = (':' : (stateName st) ++ ":")
+          trans = snd $ foldl (\(num,trs) _ -> (num+1, (state ++ "<" ++ (show num) ++ ">:") : trs)) (1,[]) (stateUnless st)
+      in state : (trans ++ obs)
+generateObserver _ _ = error "Expected operator as top level node for automaton"
 
 -- | List of TCL commands
 type ScadeTick = [String]
