@@ -154,10 +154,7 @@ model_args : "(" list(model_arg,",") ")" { $2 }
            |                             { [] }
 
 model_arg : string          { StrArg $1 }
-          | id ":=" const   { ConstantDecl $1 $3 }
-
-const : int     { GConst $ fromIntegral $1 }
-      | enum    { GEnum $1 }
+          | id ":=" pexpr   { ConstantDecl $1 $3 }
 
 model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
                | ";"                               { id }
@@ -165,9 +162,9 @@ model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
 instance_contract : "{" formulas_or_inits "}" { $2 }
                   | ";"                       { id }
 
-formulas_or_inits_or_vars  : bool("contract") expr ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
-                                                                                            in ndecl { modelContract = $2:(modelContract ndecl)
-                                                                                                     } }
+formulas_or_inits_or_vars  : bool("contract") pexpr ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
+                                                                                             in ndecl { modelContract = $2:(modelContract ndecl)
+                                                                                                      } }
                            | init_decl ";" formulas_or_inits_or_vars           { \decl -> let ndecl = $3 decl
                                                                                           in ndecl { modelInits = $1:(modelInits ndecl)
                                                                                                    } }
@@ -187,59 +184,61 @@ formulas_or_inits_or_vars  : bool("contract") expr ";" formulas_or_inits_or_vars
                                                                                                        "us" -> 1) } }
                            |                                                   { id }
 
-formulas_or_inits : bool("contract") expr ";" formulas_or_inits { \decl -> let ndecl = $4 decl
-                                                                           in ndecl { instanceContract = $2:(instanceContract ndecl) } }
+formulas_or_inits : bool("contract") pexpr ";" formulas_or_inits { \decl -> let ndecl = $4 decl
+                                                                            in ndecl { instanceContract = $2:(instanceContract ndecl) } }
                   | init_decl ";" formulas_or_inits           { \decl -> let ndecl = $3 decl
                                                                          in ndecl { instanceInits = $1:(instanceInits ndecl) } }
                   |                                           { id }
 
 
-formulas : many(fby(expr,";")) { $1 }
+formulas : many(fby(pexpr,";")) { $1 }
 
-expr : expr "and" expr                 { GBin GOpAnd NoTime $1 $3 }
-     | expr "or" expr                  { GBin GOpOr NoTime $1 $3 }
-     | expr "implies" expr             { GBin GOpImplies NoTime $1 $3 }
-     | expr "until" expr               { GBin GOpUntil NoTime $1 $3 }
-     | expr "until" time_spec expr     { GBin GOpUntil $3 $1 $4 }
-     | expr "<" expr                   { GBin GOpLessThan NoTime $1 $3 }
-     | expr "<=" expr                  { GBin GOpLessThanEqual NoTime $1 $3 }
-     | expr ">" expr                   { GBin GOpGreaterThan NoTime $1 $3 }
-     | expr ">=" expr                  { GBin GOpGreaterThanEqual NoTime $1 $3 }
-     | expr "=" expr                   { GBin GOpEqual NoTime $1 $3 }
-     | expr ":=" expr                  { GBin GOpEqual NoTime (GContext ContextOut $1) (GContext ContextIn $3) }
-     | expr "!=" expr                  { GBin GOpNEqual NoTime $1 $3 }
-     | "after" time_spec expr          { GUn GOpAfter $2 $3 }
-     | "not" expr                      { GUn GOpNot NoTime $2 }
-     | "always" expr                   { GUn GOpAlways NoTime $2 }
-     | "next" expr                     { GUn GOpNext NoTime $2 }
-     | "next" time_spec expr           { GUn GOpNext $2 $3 }
-     | "finally" expr                  { GUn GOpFinally NoTime $2 }
-     | "finally" time_spec expr        { GUn GOpFinally $2 $3 }
-     | expr "in" expr                  { GBin GOpIn NoTime $1 $3 }
-     | expr "not" "in" expr            { GBin GOpNotIn NoTime $1 $4 }
+pexpr : expr {% do { pos <- getPos ; return (pos,$1) } }
+
+expr : pexpr "and" pexpr                 { GBin GOpAnd NoTime $1 $3 }
+     | pexpr "or" pexpr                  { GBin GOpOr NoTime $1 $3 }
+     | pexpr "implies" pexpr             { GBin GOpImplies NoTime $1 $3 }
+     | pexpr "until" pexpr               { GBin GOpUntil NoTime $1 $3 }
+     | pexpr "until" time_spec pexpr     { GBin GOpUntil $3 $1 $4 }
+     | pexpr "<" pexpr                   { GBin GOpLessThan NoTime $1 $3 }
+     | pexpr "<=" pexpr                  { GBin GOpLessThanEqual NoTime $1 $3 }
+     | pexpr ">" pexpr                   { GBin GOpGreaterThan NoTime $1 $3 }
+     | pexpr ">=" pexpr                  { GBin GOpGreaterThanEqual NoTime $1 $3 }
+     | pexpr "=" pexpr                   { GBin GOpEqual NoTime $1 $3 }
+     | pexpr ":=" pexpr                  { GBin GOpEqual NoTime (fst $1,GContext ContextOut $1) (fst $3,GContext ContextIn $3) }
+     | pexpr "!=" pexpr                  { GBin GOpNEqual NoTime $1 $3 }
+     | "after" time_spec pexpr          { GUn GOpAfter $2 $3 }
+     | "not" pexpr                      { GUn GOpNot NoTime $2 }
+     | "always" pexpr                   { GUn GOpAlways NoTime $2 }
+     | "next" pexpr                     { GUn GOpNext NoTime $2 }
+     | "next" time_spec pexpr           { GUn GOpNext $2 $3 }
+     | "finally" pexpr                  { GUn GOpFinally NoTime $2 }
+     | "finally" time_spec pexpr        { GUn GOpFinally $2 $3 }
+     | pexpr "in" pexpr                  { GBin GOpIn NoTime $1 $3 }
+     | pexpr "not" "in" pexpr            { GBin GOpNotIn NoTime $1 $4 }
      | "{" ints "}"                    { GSet $2 }
-     | "(" expr_list ")"               { case $2 of
-                                            [x] -> x
+     | "(" pexpr_list ")"               { case $2 of
+                                            [x] -> snd x
                                             xs -> GTuple xs
                                        }
-     | "[" expr_list "]"               { GArray $2 }
+     | "[" pexpr_list "]"               { GArray $2 }
      | var                             { GVar (fst $1) (snd $1) }
      | int                             { GConst $ fromIntegral $1 }
-     | expr "+" expr                   { GBin GOpPlus NoTime $1 $3 }
-     | expr "-" expr                   { GBin GOpMinus NoTime $1 $3 }
-     | expr "/" expr                   { GBin GOpDiv NoTime $1 $3 }
-     | expr "*" expr                   { GBin GOpMult NoTime $1 $3 }
-     | "exists" id "=" var ":" expr    { GExists $2 (fst $4) (snd $4) $6 }
+     | pexpr "+" pexpr                   { GBin GOpPlus NoTime $1 $3 }
+     | pexpr "-" pexpr                   { GBin GOpMinus NoTime $1 $3 }
+     | pexpr "/" pexpr                   { GBin GOpDiv NoTime $1 $3 }
+     | pexpr "*" pexpr                   { GBin GOpMult NoTime $1 $3 }
+     | "exists" id "=" var ":" pexpr    { GExists $2 (fst $4) (snd $4) $6 }
      | "automaton" "{" many(state) "}" { GAutomaton $3 }
-     | expr "[" expr "]"               { GIndex $1 $3 }
+     | pexpr "[" pexpr "]"               { GIndex $1 $3 }
      | enum                            { GEnum $1 }
      | "true"                          { GConstBool True }
      | "false"                         { GConstBool False }
-     | id "(" expr_list ")"            { GBuiltIn $1 $3 }
-     | "#in" expr                      { GContext ContextIn $2 }  
-     | "#out" expr                     { GContext ContextOut $2 }
+     | id "(" pexpr_list ")"            { GBuiltIn $1 $3 }
+     | "#in" pexpr                      { GContext ContextIn $2 }  
+     | "#out" pexpr                     { GContext ContextOut $2 }
        
-expr_list : list(expr,",") { $1 }
+pexpr_list : list(pexpr,",") { $1 }
 
 var : id        { (Nothing,$1) }
     | id "." id { (Just $1,$3) }
@@ -253,14 +252,14 @@ indices : "[" int "]" indices { $2:$4 }
 
 verify_decl : "verify" "{" formulas "}" { VerifyDecl $3 }
 
-init_decl : "init" id "all" { ($2,InitAll) }
-          | "init" id expr  { ($2,InitOne $3) }
+init_decl : "init" id "all"  { ($2,InitAll) }
+          | "init" id pexpr  { ($2,InitOne $3) }
 
 state : bool("init") bool("final") "state" id "{" many(state_content) "}" { State $4 $1 $2 $6 }
 
-state_content : "transition" id ";"              { Right ($2,Nothing) }
-              | "transition" "[" expr "]" id ";" { Right ($5,Just $3) }
-              | expr ";"                         { Left $1 }
+state_content : "transition" id ";"               { Right ($2,Nothing) }
+              | "transition" "[" pexpr "]" id ";" { Right ($5,Just $3) }
+              | pexpr ";"                         { Left $1 }
 
 type : "int"                       { Fix $ UnResolvedType' $ Right GTLInt }
      | "bool"                      { Fix $ UnResolvedType' $ Right GTLBool }
