@@ -11,8 +11,6 @@ import Control.Monad.State
 import Control.Monad.Error
 }
 
--- %wrapper "monad"
-
 $letter = [a-zA-Z\_]
 $digit10 = [0-9]
 
@@ -91,6 +89,11 @@ type AlexInput = (Posn,Char,String)
 alexGetChar :: AlexInput -> Maybe (Char,AlexInput)
 alexGetChar (p,_,c:cs) = Just (c,(movePosn p c,c,cs))
 alexGetChar (_,_,[]) = Nothing
+
+alexGetByte :: AlexInput -> Maybe (Int,AlexInput)
+alexGetByte inp = case alexGetChar inp of
+  Nothing -> Nothing
+  Just (c,inp') -> Just (ord c,inp')
 
 alexInputPrevChar :: AlexInput -> Char
 alexInputPrevChar (_,c,_) = c
