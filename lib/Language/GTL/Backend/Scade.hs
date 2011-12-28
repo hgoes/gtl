@@ -288,15 +288,13 @@ readReport reportFile = do
             startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
             readCycleActions =
               getChildren >>>
-              isTag "input" >>> makeSetCommand &&&>
-              getChildren >>> valueSetCommand
+              isTag "input" >>> getVariableName >>>
+              (second getChildren) >>> valueSetCommand
             -- TCL command generation
-            makeSetCommand =
-              getAttrValue "name" >>>
-              changeUserState (\n r -> r {errorTrace = (("SSM::set " ++ (node r) ++ "/" ++ n) : (traceHead r)) : (traceTail r)})
-            valueSetCommand :: IOStateArrow Report XmlTree String
+            getVariableName = getAttrValue "name" &&& returnA
+            valueSetCommand :: IOStateArrow Report (String, XmlTree) (String, String)
             valueSetCommand =
-              (compositeValue `orElse` singleValue) >>> saveValue
+              (second $ compositeValue `orElse` singleValue) >>> saveValue
             compositeValue =
               isTag "composite" >>>
               deep (
@@ -305,7 +303,12 @@ readReport reportFile = do
               (intercalate ",") >>> arr addParens
             singleValue =
               isTag "value" >>> getChildren >>> getText
-            saveValue = changeUserState (\v r -> r {errorTrace = (((commandHead r) ++ " " ++ v) : (commandTail r)) : (traceTail r)})
+            saveValue :: IOStateArrow Report (String, String) (String, String)
+            saveValue = changeUserState (\(n,v) r -> case v of
+                [] -> r -- if value is empty -> ignore set command
+                _ -> r { errorTrace =
+                        (("SSM::set " ++ (node r) ++ "/" ++ n ++ " " ++ v) : (traceHead r)) : (traceTail r)}
+              )
             makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
             -- trace access
             traceHead = head . errorTrace

@@ -374,7 +374,7 @@ enforceType :: MonadError String m =>
                -> GTLType -- ^ The actual type of the entity
                -> GTLType -- ^ The expected type
                -> m ()
-enforceType expr ac tp = if baseType ac == baseType tp
+enforceType expr ac tp = if isSubtypeOf ac tp || isSubtypeOf tp ac
                          then return ()
                          else throwError $ expr ++ " should have type "++show tp++" but it has type "++show ac
 
@@ -383,7 +383,7 @@ makeTypedExpr :: (Ord v,Show v,MonadError String m) =>
                 (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names from qualified and unqualified variables
                  -> Map v GTLType -- ^ A type mapping for variables
                  -> Set [String] -- ^ All possible enum types
-                 -> GExpr -- ^ The generalized expression to type check
+                 -> PExpr -- ^ The generalized expression to type check
                  -> m (TypedExpr v)
 makeTypedExpr f varmp enums expr = parseTerm f Map.empty Nothing expr >>= typeCheck varmp enums
 
@@ -496,16 +496,16 @@ parseTerm :: (MonadError String m, Ord v) =>
             (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage)) -- ^ A function to create variable names and usage from qualified or unqualified variables
              -> ExistsBinding v -- ^ All existentially bound variables
              -> Maybe ContextInfo -- ^ Information about variable context (input or output)
-             -> GExpr -- ^ The generalized expression
+             -> PExpr -- ^ The generalized expression
              -> m (Expr v)
 parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex' inf' expr) f ex inf e
   where
-    parseTerm' :: (MonadError String m, Ord r) => (ExistsBinding v -> Maybe ContextInfo -> GExpr -> m r)
+    parseTerm' :: (MonadError String m, Ord r) => (ExistsBinding v -> Maybe ContextInfo -> PExpr -> m r)
                   -> (Maybe String -> String -> Maybe ContextInfo -> m (v,VarUsage))
                   -> ExistsBinding v
                   -> Maybe ContextInfo
-                  -> GExpr -> m (Term v r)
-    parseTerm' mu f ex inf (GBin op tspec l r) = do
+                  -> PExpr -> m (Term v r)
+    parseTerm' mu f ex inf (_,GBin op tspec l r) = do
       rec_l <- mu ex inf l
       rec_r <- mu ex inf r
       case toBoolOp op tspec of
@@ -515,7 +515,7 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
           Nothing -> case toIntOp op of
             Just rop -> return $ BinIntExpr rop rec_l rec_r
             Nothing -> throwError $ "Internal error, please implement parseTerm for operator "++show op
-    parseTerm' mu f ex inf (GUn op ts p) = do
+    parseTerm' mu f ex inf (_,GUn op ts p) = do
       rec <- mu (case op of
                     GOpNext -> fmap (\(v,lvl,u) -> (v,lvl+1,u)) ex
                     _ -> ex
@@ -527,16 +527,16 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
                               GOpFinally -> Finally ts
                               GOpAfter -> After ts
                           ) rec
-    parseTerm' mu f ex inf (GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
-    parseTerm' mu f ex inf (GConstBool x) = return $ Value (GTLBoolVal x)
-    parseTerm' mu f ex inf (GEnum x) = return $ Value (GTLEnumVal x)
-    parseTerm' mu f ex inf (GTuple args) = do
+    parseTerm' mu f ex inf (_,GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
+    parseTerm' mu f ex inf (_,GConstBool x) = return $ Value (GTLBoolVal x)
+    parseTerm' mu f ex inf (_,GEnum x) = return $ Value (GTLEnumVal x)
+    parseTerm' mu f ex inf (_,GTuple args) = do
       res <- mapM (mu ex inf) args
       return $ Value (GTLTupleVal res)
-    parseTerm' mu f ex inf (GArray args) = do
+    parseTerm' mu f ex inf (_,GArray args) = do
       res <- mapM (mu ex inf) args
       return $ Value (GTLArrayVal res)
-    parseTerm' mu f ex inf (GVar q n) = case q of
+    parseTerm' mu f ex inf (_,GVar q n) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
           (var,u) <- f q n inf
@@ -545,7 +545,7 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
       Just _ -> do
         (var,u) <- f q n inf
         return $ Var var 0 u
-    parseTerm' mu f ex inf (GExists b q n expr) = case q of
+    parseTerm' mu f ex inf (_,GExists b q n expr) = case q of
       Nothing -> case Map.lookup n ex of
         Nothing -> do
           (var,u) <- f q n inf
@@ -554,7 +554,7 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
       Just _ -> do
         (var,u) <- f q n inf
         parseTerm' mu f (Map.insert b (var,0,u) ex) inf expr
-    parseTerm' mu f ex inf (GAutomaton sts) = do
+    parseTerm' mu f ex inf (_,GAutomaton sts) = do
       stmp <- foldlM (\mp st -> do
                          let (exprs,nexts) = partitionEithers (stateContent st)
                          rexpr <- mapM (mu ex inf) exprs
@@ -577,16 +577,16 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
                               , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
                               , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
                               }
-    parseTerm' mu f ex inf (GIndex expr ind) = do
+    parseTerm' mu f ex inf (_,GIndex expr ind) = do
       rind <- case ind of
-        GConst x -> return x
+        (_,GConst x) -> return x
         _ -> throwError $ "Index must be an integer"
       rexpr <- mu ex inf expr
       return $ IndexExpr rexpr (fromIntegral rind)
-    parseTerm' mu f ex inf (GBuiltIn name args) = do
+    parseTerm' mu f ex inf (_,GBuiltIn name args) = do
       res <- mapM (mu ex inf) args
       return $ BuiltIn name res
-    parseTerm' mu f ex _ (GContext inf expr) = parseTerm' mu f ex (Just inf) expr
+    parseTerm' mu f ex _ (_,GContext inf expr) = parseTerm' mu f ex (Just inf) expr
 
 -- | Distribute a negation as deep as possible into an expression until it only ever occurs in front of variables.
 distributeNot :: TypedExpr v -> TypedExpr v

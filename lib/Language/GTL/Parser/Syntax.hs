@@ -1,6 +1,7 @@
 -- | Data types representing a parsed GTL file.
 module Language.GTL.Parser.Syntax where
 
+import Language.GTL.Parser.Monad
 import Language.GTL.Parser.Token (UnOp(..),BinOp(..))
 import Language.GTL.Types
 import Data.Map as Map
@@ -13,14 +14,14 @@ data Declaration = Model ModelDecl -- ^ Declares a model.
                  | TypeAlias String UnResolvedType
                  deriving Show
 
-data ModelArgs = StrArg String | ConstantDecl String GExpr deriving Show
+data ModelArgs = StrArg String | ConstantDecl String PExpr deriving Show
 
 -- | Declares a synchronous model.
 data ModelDecl = ModelDecl
                  { modelName :: String -- ^ The name of the model in the GTL formalism.
                  , modelType :: String -- ^ The synchronous formalism the model is written in (for example /scade/)
                  , modelArgs :: [ModelArgs] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
-                 , modelContract :: [GExpr] -- ^ A list of contracts that this model fulfills.
+                 , modelContract :: [PExpr] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
                  , modelInputs :: Map String UnResolvedType -- ^ Declared inputs of the model with their corresponding type
                  , modelOutputs :: Map String UnResolvedType -- ^ Declared outputs of a model
@@ -40,14 +41,14 @@ data ConnectDecl = ConnectDecl
 
 -- | A list of formulas to verify.
 data VerifyDecl = VerifyDecl
-                  { verifyFormulas :: [GExpr] -- ^ The formulas to be verified.
+                  { verifyFormulas :: [PExpr] -- ^ The formulas to be verified.
                   } deriving Show
 
 -- | Declares an instance of a specific model.
 data InstanceDecl = InstanceDecl
                     { instanceModel :: String -- ^ The model of which this is an instance
                     , instanceName :: String -- ^ The name of the instance
-                    , instanceContract :: [GExpr] -- ^ Additional contracts to which this instance conforms
+                    , instanceContract :: [PExpr] -- ^ Additional contracts to which this instance conforms
                     , instanceInits :: [(String,InitExpr)] -- ^ Additional initialization values
                     } deriving Show
 
@@ -65,22 +66,24 @@ data ContextInfo = ContextIn
                  | ContextOut
                  deriving (Show,Eq,Ord)
 
+type PExpr = (Posn,GExpr)
+
 -- | An untyped expression type.
 --   Used internally in the parser.
-data GExpr = GBin BinOp TimeSpec GExpr GExpr
-           | GUn UnOp TimeSpec GExpr
+data GExpr = GBin BinOp TimeSpec PExpr PExpr
+           | GUn UnOp TimeSpec PExpr
            | GConst Int
            | GConstBool Bool
            | GVar (Maybe String) String
            | GSet [Integer]
-           | GExists String (Maybe String) String GExpr
+           | GExists String (Maybe String) String PExpr
            | GAutomaton [State]
-           | GTuple [GExpr]
-           | GArray [GExpr]
-           | GIndex GExpr GExpr
+           | GTuple [PExpr]
+           | GArray [PExpr]
+           | GIndex PExpr PExpr
            | GEnum String
-           | GBuiltIn String [GExpr]
-           | GContext ContextInfo GExpr
+           | GBuiltIn String [PExpr]
+           | GContext ContextInfo PExpr
            deriving (Show,Eq,Ord)
 
 -- | A state of a state machine.
@@ -88,10 +91,10 @@ data State = State
              { stateName :: String -- ^ User-given name of the state
              , stateInitial :: Bool -- ^ Whether the state machine can start in this state
              , stateFinal :: Bool -- ^ Is this a final state?
-             , stateContent :: [Either GExpr (String,Maybe GExpr)] -- ^ A list of conditions which must hold in this state and transitions which lead to other states
+             , stateContent :: [Either PExpr (String,Maybe PExpr)] -- ^ A list of conditions which must hold in this state and transitions which lead to other states
              } deriving (Show,Eq,Ord)
 
 -- | Information about the initialization of a variable.
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.
-              | InitOne GExpr -- ^ The variable is initialized with a specific value.
+              | InitOne PExpr -- ^ The variable is initialized with a specific value.
               deriving (Show,Eq)

@@ -6,6 +6,7 @@ module Language.GTL.Model where
 
 import Language.GTL.Parser.Token (BinOp(GOpAnd))
 import Language.GTL.Parser.Syntax
+import Language.GTL.Parser.Monad
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Language.GTL.Types
@@ -62,7 +63,7 @@ getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstanc
       Just tp -> tp
 
 -- | Parse a GTL model from a unchecked model declaration.
-gtlParseModel :: AllBackend -> [(String, GExpr)] -> Map String GTLType ->  Map String UnResolvedType -> ModelDecl -> ErrorIO (String,GTLModel String,Set [String])
+gtlParseModel :: AllBackend -> [(String, PExpr)] -> Map String GTLType ->  Map String UnResolvedType -> ModelDecl -> ErrorIO (String,GTLModel String,Set [String])
 gtlParseModel back constDecls realiases aliases mdl = do
   inps <- mapM (resolveType realiases aliases) (modelInputs mdl)
   outps <- mapM (resolveType realiases aliases) (modelOutputs mdl)
@@ -85,8 +86,8 @@ gtlParseModel back constDecls realiases aliases mdl = do
                                         ))
               _ -> throwError "Contract may not contain qualified variables")
           allType enums (case modelContract mdl of
-                            [] -> GConstBool True
-                            c -> foldl1 (GBin GOpAnd NoTime) c)
+                            [] -> (startPosn,GConstBool True)
+                            c -> foldl1 (\l@(p,_) r -> (p,GBin GOpAnd NoTime l r)) c)
   lst <- mapM (\(var,init) -> case init of
                   InitAll -> return (var,Nothing)
                   InitOne c -> do
@@ -120,17 +121,17 @@ getEnums mp = Set.unions $ fmap getEnums' (Map.elems mp)
     getEnums' (Fix (GTLNamed name tp)) = getEnums' tp
     getEnums' _ = Set.empty
 
-splitArgs :: [ModelArgs] -> ([String], [(String, GExpr)])
+splitArgs :: [ModelArgs] -> ([String], [(String, PExpr)])
 splitArgs = partitionEithers . map mArgsToEither
   where
-    mArgsToEither :: ModelArgs -> Either String (String, GExpr)
+    mArgsToEither :: ModelArgs -> Either String (String, PExpr)
     mArgsToEither (StrArg s) = Left s
     mArgsToEither (ConstantDecl var val) = Right (var, val)
 
-checkConstInputs :: MonadError String m => Map String GTLType -> Set [String] -> [(String, GExpr)] -> m (Map String (GTLType, GTLConstant))
+checkConstInputs :: MonadError String m => Map String GTLType -> Set [String] -> [(String, PExpr)] -> m (Map String (GTLType, GTLConstant))
 checkConstInputs allTypes enums = liftM Map.fromList . mapM (makeTypedConst allTypes enums)
   where
-    makeTypedConst :: MonadError String m => Map String GTLType -> Set [String] -> (String, GExpr) -> m (String, (GTLType, GTLConstant))
+    makeTypedConst :: MonadError String m => Map String GTLType -> Set [String] -> (String, PExpr) -> m (String, (GTLType, GTLConstant))
     makeTypedConst allTypes enums (n, v) = do
       v' <- makeTypedExpr makeVar Map.empty enums v
       case getConstant v' of
@@ -179,7 +180,7 @@ gtlParseSpec opts decls = do
                                                               Just ContextOut -> StateOut
                                                           )))
                            _ -> throwError "Contract may not contain qualified variables") (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums
-                       (foldl1 (GBin GOpAnd NoTime) (instanceContract i)) >>= return.Just
+                       (foldl1 (\l@(p,_) r -> (p,GBin GOpAnd NoTime l r)) (instanceContract i)) >>= return.Just
                 return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
                                                    , gtlInstanceContract = contr
                                                    , gtlInstanceDefaults = Map.empty
@@ -195,8 +196,8 @@ gtlParseSpec opts decls = do
                                Nothing -> throwError "No unqualified variables allowed in verify clause"
                                Just rq -> return ((rq,n),Input)
                            ) alltp enums (case concat [ v | Verify (VerifyDecl v) <- decls ] of
-                                           [] -> GConstBool True
-                                           x -> foldl1 (GBin GOpAnd NoTime) x)
+                                           [] -> (startPosn,GConstBool True)
+                                           x -> foldl1 (\l@(p,_) r -> (p,GBin GOpAnd NoTime l r)) x)
   conns <- sequence [ do
                          finst <- case Map.lookup f inst_mp of
                            Nothing -> throwError $ "Instance "++f++" not found."

@@ -19,6 +19,7 @@ Library
     Language.GTL.Parser.Lexer
     Language.GTL.Parser.Syntax
     Language.GTL.Parser.Token
+    Language.GTL.Parser.Monad
     Language.GTL.Model
     Language.GTL.Translation
     Language.GTL.LTL
