@@ -20,7 +20,7 @@ import Prelude hiding (mapM,sequence)
 import Data.List (genericIndex,intersperse)
 import Data.Word
 import Control.Concurrent
-import Control.Concurrent.Chan
+import Misc.ProgramOptions
 
 -- | An untyped SMT expression
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
@@ -493,8 +493,11 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     nself = (formulaEnc nxt)!expr
 
 -- | Perform bounded model checking of a given GTL specification
-bmc :: Scheduling s => s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc sched spec = do
+bmc :: Scheduling s => s -> Bool -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
+bmc sched compl spec = do
+  setLogic $ T.pack "AUFLIA"
+  setOption $ PrintSuccess False
+  setOption $ ProduceModels True
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                formula = case gtlInstanceContract inst of
@@ -508,7 +511,7 @@ bmc sched spec = do
   loop_exists <- SMT.varNamed $ T.pack $ "loop_exists"
   se <- newState enums spec "e"
   te <- createSchedulingData sched (Map.keysSet $ gtlSpecInstances spec)
-  bmc' sched enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te []
+  bmc' sched compl enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te []
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
@@ -567,6 +570,7 @@ renderPath = unlines . concat . renderPath' 1 Map.empty
         ):renderPath' (n+1) mp xs
 
 bmc' :: Scheduling s => s
+        -> Bool
         -> Map [String] Integer -> GTLSpec String
         -> TypedExpr (String,String)
         -> Map String (BA [TypedExpr String] Integer)
@@ -577,7 +581,7 @@ bmc' :: Scheduling s => s
         -> GlobalState
         -> SchedulingData s
         -> [BMCState s] -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc' sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
+bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
   init <- newState enums spec "0"
   l <- SMT.varNamed $ T.pack "l0"
   inloop <- SMT.varNamed $ T.pack "inloop0"
@@ -633,9 +637,9 @@ bmc' sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
       then getPath sched hist >>= return.Just
       else return Nothing
   case res of
-    Nothing -> bmc' sched enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist
+    Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist
     Just path -> return $ Just path
-bmc' sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) = do
+bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) = do
   let i = length history
       sdata = bmcScheduling last_state
   cur_state <- newState enums spec (show i)
@@ -667,20 +671,21 @@ bmc' sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
   let history' = (BMCState cur_state tmp_cur l inloop nsdata):history
   -- Simple Path restriction
-  simple_path <- return True
-  -- This doesn't work
-  {-mapM_ (\st -> assert $ or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
-                             ,not' $ (bmcInLoop last_state) .==. (bmcInLoop st)
-                             ,not' $ ((formulaEnc (bmcTemporals last_state))!f)
-                              .==. ((formulaEnc (bmcTemporals st))!f)
-                             ,and' [bmcInLoop last_state
-                                   ,bmcInLoop st
-                                   ,or' [not' $ ((formulaEnc (bmcTemporals last_state))!f) 
-                                         .==. ((formulaEnc (bmcTemporals st))!f)]
-                                   ]
-                             ]
-        ) (Prelude.drop 1 history)
-  simple_path <- checkSat-}
+  simple_path <- case compl of
+    False -> return True
+    True -> do
+      mapM_ (\st -> assert $ or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
+                                 ,not' $ (bmcInLoop last_state) .==. (bmcInLoop st)
+                                 ,not' $ ((formulaEnc (bmcTemporals last_state))!f)
+                                  .==. ((formulaEnc (bmcTemporals st))!f)
+                                 ,and' [bmcInLoop last_state
+                                       ,bmcInLoop st
+                                       ,or' [not' $ ((formulaEnc (bmcTemporals last_state))!f) 
+                                             .==. ((formulaEnc (bmcTemporals st))!f)]
+                                       ]
+                                 ]
+            ) (Prelude.drop 1 history)
+      checkSat
   -- This does neither
   {-simple_path <- if i==1 then return True
                  else stack $ do
@@ -709,7 +714,7 @@ bmc' sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_
                  else return Nothing
              case res of  
                Just path -> return $ Just path
-               Nothing -> bmc' sched enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history')
+               Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history')
 
 -- | Verify a given specification using K-Induction
 verifyModelKInduction :: Maybe String -> GTLSpec String -> IO ()
@@ -722,12 +727,12 @@ verifyModelKInduction solver spec = do
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ]
 
-verifyModelBMC :: Maybe String -> GTLSpec String -> IO ()
-verifyModelBMC solver spec = do
-  let solve = case solver of
+verifyModelBMC :: Options -> GTLSpec String -> IO ()
+verifyModelBMC opts spec = do
+  let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc FairScheduling spec
+  res <- solve $ bmc FairScheduling (bmcCompleteness opts) spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
