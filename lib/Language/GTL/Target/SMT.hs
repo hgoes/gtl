@@ -762,12 +762,19 @@ instance ToGTL EnumVal where
 
 instance SMTType EnumVal where
   getSort (EnumVal _ nr _) = L.Symbol (T.pack $ "Enum"++show nr)
-  declareType (EnumVal vals nr _) = [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])])]
+  declareType (EnumVal vals nr _) = let --decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
+                                        decl = do
+                                          let tname = T.pack $ "Enum"++show nr
+                                          declareSort tname 0
+                                          mapM_ (\val -> declareFun (T.pack val) [] (L.Symbol tname)) vals
+                                          assert $ distinct [SMT.Var (T.pack val) :: SMTExpr EnumVal | val <- vals]
+                                    in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
+  additionalConstraints (EnumVal enums _ _) var = [or' [var .==. (SMT.Var $ T.pack val) | val <- enums]]
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
-  unmangle (L.Symbol v) = Just $ EnumVal undefined undefined (T.unpack v)
-  unmangle _ = Nothing
+  unmangle (L.Symbol v) = return $ Just $ EnumVal undefined undefined (T.unpack v)
+  unmangle _ = return Nothing
 
 instance ToGTL Word64 where
   toGTL x = GTLIntVal (fromIntegral x)
