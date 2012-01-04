@@ -38,7 +38,7 @@ class GTLBackend b where
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
   backendVerify :: b -> GTLBackendModel b
                    -> Integer -- ^ Cycle time
-                   -> TypedExpr String -- ^ Contract
+                   -> [TypedExpr String] -- ^ Contract
                    -> Map String GTLType -- ^ Local variables of the model
                    -> Map String (Maybe GTLConstant) -- ^ Initial values
                    -> Map String (GTLType, GTLConstant) -- ^ Variables which get a constant value

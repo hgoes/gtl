@@ -22,7 +22,7 @@ type ErrorIO = ErrorT String IO
 
 -- | A parsed and typechecked GTL model.
 data GTLModel a = GTLModel
-                  { gtlModelContract :: TypedExpr a -- ^ The contract of the model as a boolean formula.
+                  { gtlModelContract :: [TypedExpr a] -- ^ The contract of the model as a boolean formula.
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
@@ -31,6 +31,11 @@ data GTLModel a = GTLModel
                   , gtlModelCycleTime :: Integer -- ^ Cycle time in us
                   , gtlModelConstantInputs :: Map a (GTLType, GTLConstant)
                   }
+
+gtlModelContractExpression :: GTLModel a -> TypedExpr a
+gtlModelContractExpression mdl = case gtlModelContract mdl of
+  [] -> constant True
+  xs -> foldl1 gand xs
 
 -- | Represents the start or end of a connection, by specifying the instance
 --   name, the variable name and a list of indices that refer to the right
@@ -72,22 +77,20 @@ gtlParseModel back constDecls realiases aliases mdl = do
   let allType = Map.unions [inp,outp,locs]
       enums = getEnums allType
   constInputs <- checkConstInputs allType enums constDecls
-  expr <- makeTypedExpr
-          (\q n inf -> case q of
-              Nothing -> return (n,if Map.member n inp
-                                   then Input
-                                   else (if Map.member n outp
-                                         then Output
-                                         else (case inf of
-                                                  Nothing -> StateIn
-                                                  Just ContextIn -> StateIn
-                                                  Just ContextOut -> StateOut
-                                              )
-                                        ))
-              _ -> throwError "Contract may not contain qualified variables")
-          allType enums (case modelContract mdl of
-                            [] -> (startPosn,GConstBool True)
-                            c -> foldl1 (\l@(p,_) r -> (p,GBin GOpAnd NoTime l r)) c)
+  expr <- mapM (makeTypedExpr
+                (\q n inf -> case q of
+                    Nothing -> return (n,if Map.member n inp
+                                         then Input
+                                         else (if Map.member n outp
+                                               then Output
+                                               else (case inf of
+                                                        Nothing -> StateIn
+                                                        Just ContextIn -> StateIn
+                                                        Just ContextOut -> StateOut
+                                                    )
+                                              ))
+                    _ -> throwError "Contract may not contain qualified variables")
+                allType enums) (modelContract mdl)
   lst <- mapM (\(var,init) -> case init of
                   InitAll -> return (var,Nothing)
                   InitOne c -> do

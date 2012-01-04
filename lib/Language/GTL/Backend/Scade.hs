@@ -111,24 +111,24 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls types opFile) cy expr locals init constVars opts gtlName
+  backendVerify Scade (ScadeData node decls types opFile) cy exprs locals init constVars opts gtlName
     = let name = (intercalate "_" node)
           (inp,outp,kind) = scadeInterface node decls
-          buchi = gtl2ba (Just cy) expr
-          dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
-          scade = fmap (dfaToScade types name inp outp locals init) dfa
-          --scade = buchiToScade name inp outp ()
+          expr_names = fmap (\(expr,i) -> (expr,intercalate "_" (node++[show i]))) (zip exprs [0..])
+          scade = sequence $
+                  fmap (\(expr,name) -> fmap (dfaToScade types name inp outp locals init . renameDFAStates) $
+                                        determinizeBA (gtl2ba (Just cy) expr)) expr_names
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
-        dump opts gtlName name buchi
+        --dump opts gtlName name buchi
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
-            writeFile testNodeFile (show $ prettyScade [scade'])
-            writeFile proofNodeFile (show $ prettyScade [generateProver types name node inp outp constVars])
+            writeFile testNodeFile (show $ prettyScade scade')
+            writeFile proofNodeFile (show $ prettyScade [generateProver types name (fmap snd expr_names) node inp outp constVars])
             if not (dryRun opts) then
               case scadeRoot opts of
                 Just p -> do
@@ -163,10 +163,11 @@ dump opts gtlName name buchi =
   else return ()
 
 generateProver :: ScadeTypeMapping
-                -> String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)]
+                -> String
+                -> [String] -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)]
                 -> Map String (GTLType, GTLConstant) -- ^ Constant variables
                 -> Sc.Declaration
-generateProver types name nodePath ins outs constVars =
+generateProver types name names nodePath ins outs constVars =
   let nonConstInp = filterNonConst constVars ins
   in UserOpDecl
     { userOpKind = Sc.Node
@@ -185,9 +186,12 @@ generateProver types name nodePath ins outs constVars =
                               , dataLocals = interfaceToDeclaration outs ++ (declareConstVars types constVars)
                               , dataEquations =
                                 (constAssign constVars) ++
-                                [
-                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
-                                  , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
+                                [SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
+                                ,SimpleEquation [(Named "test_result")]
+                                 (case names of
+                                     [] -> ConstBoolExpr True
+                                     _ -> foldl1 (BinaryExpr BinAnd) $
+                                          fmap (\name -> ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs))) names)
                                 ]
                               }
     }
