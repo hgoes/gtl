@@ -40,6 +40,7 @@ versionString = "This is the GALS Translation Language of version "++version++".
                 ++(case branch of
                       Nothing -> ""
                       Just rbranch -> "\nBuilt from git branch: "++rbranch++".")
+                ++smtExts
   where
 #ifdef BUILD_VERSION
     version = BUILD_VERSION
@@ -60,6 +61,11 @@ versionString = "This is the GALS Translation Language of version "++version++".
     branch = Just BUILD_BRANCH
 #else
     branch = Nothing
+#endif
+#ifdef SMTExts
+    smtExts = ""
+#else
+    smtExts = "\nWARNING: Built with Z3 specific SMT output."
 #endif
 
 main = do

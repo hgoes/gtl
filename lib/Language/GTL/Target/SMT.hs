@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification,TypeFamilies #-}
+{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification,TypeFamilies,CPP #-}
 module Language.GTL.Target.SMT where
 
 import Data.Typeable
@@ -502,7 +502,9 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
 -- | Perform bounded model checking of a given GTL specification
 bmc :: Scheduling s => s -> Bool -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
 bmc sched compl spec = do
+#ifndef SMTExts  
   setLogic $ T.pack "AUFLIA"
+#endif
   setOption $ PrintSuccess False
   setOption $ ProduceModels True
   let enums = enumMap spec
@@ -779,6 +781,11 @@ instance ToGTL EnumVal where
 instance SMTType EnumVal where
   type SMTAnnotation EnumVal = [String]
   getSort (EnumVal _ nr _) = L.Symbol (T.pack $ "Enum"++show nr)
+#ifdef SMTExts
+  declareType (EnumVal vals nr _) = let decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
+                                    in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
+  additionalConstraints (EnumVal enums _ _) var = []
+#else
   declareType (EnumVal vals nr _) = let --decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
                                         decl = do
                                           let tname = T.pack $ "Enum"++show nr
@@ -787,9 +794,13 @@ instance SMTType EnumVal where
                                           assert $ distinct [SMT.Var (T.pack val) Nothing :: SMTExpr EnumVal | val <- vals]
                                     in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
   additionalConstraints (EnumVal enums _ _) var = [or' [var .==. (SMT.Var (T.pack val) (Just enums)) | val <- enums]]
+#endif
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
+#ifdef SMTExts
+  unmangle (L.Symbol v) _ = return $ Just $ EnumVal undefined undefined (T.unpack v)
+#else
   unmangle (L.Symbol v) Nothing = return $ Just $ EnumVal undefined undefined (T.unpack v)
   unmangle v (Just vs) = do
     vs' <- mapM (\e -> do
@@ -797,6 +808,7 @@ instance SMTValue EnumVal where
                     return (e,l)) vs
     case List.find (\(_,l) -> l==v) vs' of
       Just (e,_) -> return $ Just $ EnumVal vs undefined e
+#endif
   unmangle _ _ = return Nothing
 
 instance ToGTL Word64 where

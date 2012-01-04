@@ -8,12 +8,19 @@ Description:
   A tool to verify GALS (globally asynchronous, locally synchronous) models using both
   synchronous and asynchronous model checking formalisms.
 
+Flag SMTExts
+  Description: Enables Z3-specific features of the SMT target
+  Default: False
+
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
     mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue,
     syb,smtlib2,text,atto-lisp
   Hs-Source-Dirs: lib
-  GHC-Options: -fwarn-unused-imports
+  if flag(SMTExts)
+    GHC-Options: -fwarn-unused-imports -DSMTExts
+  else
+    GHC-Options: -fwarn-unused-imports
   Exposed-Modules:
     Language.GTL.Parser
     Language.GTL.Parser.Lexer
