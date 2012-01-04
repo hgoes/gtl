@@ -652,6 +652,7 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
 bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) = do
   let i = length history
       sdata = bmcScheduling last_state
+  liftIO $ putStrLn ("Depth: "++show i)
   cur_state <- newState enums spec (show i)
   tmp_nxt <- newTemporalVars (show $ i+1) f
   l <- SMT.varNamed $ T.pack $ "l"++show i
