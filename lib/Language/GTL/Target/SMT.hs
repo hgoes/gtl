@@ -21,6 +21,7 @@ import Data.List (genericIndex,intersperse)
 import Data.Word
 import Control.Concurrent
 import Misc.ProgramOptions
+import Data.List as List
 
 -- | An untyped SMT expression
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
@@ -80,8 +81,12 @@ newUnrolledVar enums (Fix tp) base = case tp of
     arr <- mapM (\(tp,i) -> newUnrolledVar enums tp (base++"_"++show i)) (zip tps [0..])
     return $ IndexedVar arr
   GTLNamed _ tp' -> newUnrolledVar enums tp' base
+  GTLEnum vals -> do
+    let u = EnumVal vals (enums!vals) undefined
+    v <- SMT.varNamed' u (T.pack base) (Just vals)
+    return $ BasicVar $ USMTExpr $ assertEq u v
   _ -> getUndefined enums (Fix tp) $ \u -> do
-    v <- SMT.varNamed' u $ T.pack base
+    v <- SMT.varNamed' u (T.pack base) Nothing
     return $ BasicVar $ USMTExpr $ assertEq u v
 
 -- | Creates an anonymous existential unrolled variable
@@ -306,7 +311,9 @@ translateExpr f (Fix expr)
       GTLIntVal i -> BasicVar $ USMTExpr $ SMT.constant (fromIntegral i :: Word64)
       GTLByteVal w -> BasicVar $ USMTExpr $ SMT.constant w
       GTLBoolVal b -> BasicVar $ USMTExpr $ SMT.constant b
-      GTLEnumVal v -> BasicVar $ USMTExpr $ SMT.constant (EnumVal undefined undefined v)
+      GTLEnumVal v -> let Fix (GTLEnum vals) = GTL.getType expr
+                          Just i = List.findIndex (==v) vals
+                      in BasicVar $ USMTExpr $ SMT.constant (EnumVal vals (fromIntegral i) v)
       GTLArrayVal vs -> IndexedVar $ fmap (translateExpr f) vs
       GTLTupleVal vs -> IndexedVar $ fmap (translateExpr f) vs
     GTL.BinRelExpr rel l r
@@ -522,6 +529,9 @@ data BMCState s = BMCState { bmcVars :: GlobalState
 
 -- | Once the SMT solver has produced a model, extract the value of a given GTL variable from it
 getGTLValue :: GTLType -> UnrolledVar -> SMT GTLConstant
+getGTLValue (Fix (GTLEnum es)) (BasicVar v) = do
+  r <- SMT.getValue' (Just es) (castUSMT' v)
+  return $ Fix $ toGTL (r::EnumVal)
 getGTLValue _ (BasicVar v) = useUSMT (\rv -> do
                                          r <- SMT.getValue rv
                                          return $ Fix $ toGTL r) v
@@ -766,20 +776,27 @@ instance ToGTL EnumVal where
   gtlTypeOf (EnumVal enums _ _) = Fix $ GTLEnum enums
 
 instance SMTType EnumVal where
+  type SMTAnnotation EnumVal = [String]
   getSort (EnumVal _ nr _) = L.Symbol (T.pack $ "Enum"++show nr)
   declareType (EnumVal vals nr _) = let --decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
                                         decl = do
                                           let tname = T.pack $ "Enum"++show nr
                                           declareSort tname 0
                                           mapM_ (\val -> declareFun (T.pack val) [] (L.Symbol tname)) vals
-                                          assert $ distinct [SMT.Var (T.pack val) :: SMTExpr EnumVal | val <- vals]
+                                          assert $ distinct [SMT.Var (T.pack val) Nothing :: SMTExpr EnumVal | val <- vals]
                                     in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
-  additionalConstraints (EnumVal enums _ _) var = [or' [var .==. (SMT.Var $ T.pack val) | val <- enums]]
+  additionalConstraints (EnumVal enums _ _) var = [or' [var .==. (SMT.Var (T.pack val) (Just enums)) | val <- enums]]
 
 instance SMTValue EnumVal where
   mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
-  unmangle (L.Symbol v) = return $ Just $ EnumVal undefined undefined (T.unpack v)
-  unmangle _ = return Nothing
+  unmangle (L.Symbol v) Nothing = return $ Just $ EnumVal undefined undefined (T.unpack v)
+  unmangle v (Just vs) = do
+    vs' <- mapM (\e -> do
+                    l <- getRawValue (SMT.Var (T.pack e) Nothing :: SMTExpr EnumVal)
+                    return (e,l)) vs
+    case List.find (\(_,l) -> l==v) vs' of
+      Just (e,_) -> return $ Just $ EnumVal vs undefined e
+  unmangle _ _ = return Nothing
 
 instance ToGTL Word64 where
   toGTL x = GTLIntVal (fromIntegral x)
