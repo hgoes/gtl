@@ -69,12 +69,17 @@ neverClaim :: Trace -- ^ The trace
               -> GTLSpec String
               -> Pr.Module
 neverClaim trace spec
-  = let cname q v l = let Just inst = Map.lookup q (gtlSpecInstances spec)
-                          Just mdl = Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec)
-                          iface = allCInterface (gtlModelBackend mdl)
-                      in varName iface q v [] l
+  = let cname q v i l = let Just inst = Map.lookup q (gtlSpecInstances spec)
+                            Just mdl = Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec)
+                        in if Map.member v (gtlModelOutput mdl)
+                           then varName (allCInterface (gtlModelBackend mdl)) q v i l
+                           else (case [ (oq,ov,oidx) | (GTLConnPt oq ov oidx,GTLConnPt iq iv iidx) <- gtlSpecConnections spec, iq==q, iv==v,iidx==i ] of
+                                    [] -> error "FIXME: unconnected inputs can't be part of verification goal"
+                                    ((oq,ov,oidx):_) -> let Just inst' = Map.lookup oq (gtlSpecInstances spec)
+                                                            Just mdl' = Map.lookup (gtlInstanceModel inst') (gtlSpecModels spec)
+                                                        in varName (allCInterface (gtlModelBackend mdl')) oq ov oidx l)
         traceAut = traceToBuchi trace
-        allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname) exprs of
+        allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname []) exprs of
                                    [] -> Nothing
                                    cs -> Just $ Pr.StmtCExpr Nothing $ foldl1 (\x y -> x++"&&"++y) cs
                                ) $ renameStates $ baProduct (gtl2ba Nothing (gnot $ gtlSpecVerify spec)) traceAut
