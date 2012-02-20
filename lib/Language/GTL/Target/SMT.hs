@@ -22,6 +22,11 @@ import Data.Word
 import Control.Concurrent
 import Misc.ProgramOptions
 import Data.List as List
+import Data.Time
+import System.IO (hFlush,stdout)
+
+type GTLSMTPc = Integer
+type GTLSMTInt = Integer
 
 -- | An untyped SMT expression
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
@@ -57,7 +62,7 @@ data GlobalState = GlobalState
 -- | Saves the variables of one instance (including the state variable of the state machine)
 data InstanceState = InstanceState
                      { instanceVars :: Map String (UnrolledVar,GTLType,VarUsage)
-                     , instancePC :: SMTExpr Integer -- ^ Saves the state of the state machine
+                     , instancePC :: SMTExpr GTLSMTPc -- ^ Saves the state of the state machine
                      }
 
 -- | A GTL variable which is (possibly) composed from more than one SMT variable
@@ -520,7 +525,8 @@ bmc sched compl spec = do
   loop_exists <- SMT.varNamed $ T.pack $ "loop_exists"
   se <- newState enums spec "e"
   te <- createSchedulingData sched (Map.keysSet $ gtlSpecInstances spec)
-  bmc' sched compl enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te []
+  start_time <- liftIO getCurrentTime
+  bmc' sched compl enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
@@ -592,8 +598,10 @@ bmc' :: Scheduling s => s
         -> SMTExpr Bool 
         -> GlobalState
         -> SchedulingData s
-        -> [BMCState s] -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
+        -> [BMCState s] 
+        -> UTCTime
+        -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
+bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time = do
   init <- newState enums spec "0"
   l <- SMT.varNamed $ T.pack "l0"
   inloop <- SMT.varNamed $ T.pack "inloop0"
@@ -649,12 +657,15 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] = do
       then getPath sched hist >>= return.Just
       else return Nothing
   case res of
-    Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist
+    Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist start_time
     Just path -> return $ Just path
-bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) = do
+bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) start_time = do
   let i = length history
       sdata = bmcScheduling last_state
-  liftIO $ putStrLn ("Depth: "++show i)
+  ctime <- liftIO $ getCurrentTime
+  liftIO $ do
+    putStrLn ("Depth: "++show i++" ("++show (ctime `diffUTCTime` start_time)++")")
+    hFlush stdout
   cur_state <- newState enums spec (show i)
   tmp_nxt <- newTemporalVars (show $ i+1) f
   l <- SMT.varNamed $ T.pack $ "l"++show i
@@ -727,7 +738,7 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@
                  else return Nothing
              case res of  
                Just path -> return $ Just path
-               Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history')
+               Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history' start_time)
 
 -- | Verify a given specification using K-Induction
 verifyModelKInduction :: Maybe String -> GTLSpec String -> IO ()
@@ -745,7 +756,7 @@ verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc FairScheduling (bmcCompleteness opts) spec
+  res <- solve $ bmc SimpleScheduling (bmcCompleteness opts) spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
@@ -780,7 +791,7 @@ instance ToGTL EnumVal where
 
 instance SMTType EnumVal where
   type SMTAnnotation EnumVal = [String]
-  getSort (EnumVal _ nr _) = L.Symbol (T.pack $ "Enum"++show nr)
+  getSort (EnumVal _ nr _) _ = L.Symbol (T.pack $ "Enum"++show nr)
 #ifdef SMTExts
   declareType (EnumVal vals nr _) = let decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
                                     in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
@@ -797,7 +808,7 @@ instance SMTType EnumVal where
 #endif
 
 instance SMTValue EnumVal where
-  mangle (EnumVal _ _ v) = L.Symbol (T.pack v)
+  mangle (EnumVal _ _ v) _ = L.Symbol (T.pack v)
 #ifdef SMTExts
   unmangle (L.Symbol v) _ = return $ Just $ EnumVal undefined undefined (T.unpack v)
 #else
@@ -821,7 +832,7 @@ getUndefined :: Map [String] Integer -- ^ Map of all enum types
                 -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -- ^ The function to apply the undefined value to
                 -> b
 getUndefined mp rep f = case unfix rep of
-  GTLInt -> f (undefined::Word64)
+  GTLInt -> f (undefined::GTLSMTInt)
   GTLBool -> f (undefined::Bool)
   GTLEnum enums -> f (EnumVal enums (mp!enums) undefined)
   GTLNamed _ r -> getUndefined mp r f
