@@ -514,9 +514,10 @@ bmc sched compl spec = do
   setOption $ ProduceModels True
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                               formula = case gtlInstanceContract inst of
-                                 Nothing -> gtlModelContract mdl
-                                 Just con -> gand con (gtlModelContract mdl)
+                               formula = List.foldl1 gand (case gtlInstanceContract inst of
+                                                              Nothing -> gtlModelContract mdl
+                                                              Just con -> con:(gtlModelContract mdl)
+                                                          )
                            in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
       formula = GTL.distributeNot (gtlSpecVerify spec)
   tmp_cur <- newTemporalVars "0" formula
@@ -867,9 +868,10 @@ kInduction :: Scheduling s => s -> (SMT () -> IO ()) -> GTLSpec String -> IO (Ma
 kInduction sched solver spec = do
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                               formula = case gtlInstanceContract inst of
-                                 Nothing -> gtlModelContract mdl
-                                 Just con -> gand con (gtlModelContract mdl)
+                               formula = List.foldl1 gand (case gtlInstanceContract inst of
+                                                              Nothing -> gtlModelContract mdl
+                                                              Just con -> con:(gtlModelContract mdl)
+                                                          )
                            in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
       Fix (Typed _ (UnBoolExpr Always formula)) = gtlSpecVerify spec
   baseCaseOrders <- newChan
