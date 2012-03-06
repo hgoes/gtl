@@ -7,9 +7,10 @@ import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Buchi
 import Language.GTL.Translation
-import Language.SMTLib2
+import Language.SMTLib2 as SMT
 import Language.SMTLib2.Solver
 import Language.SMTLib2.Internals as SMT
+import Language.SMTLib2.Internals.Translation as SMT
 import Data.Text as T hiding (intersperse,length,concat,unlines,zip)
 import Data.Map as Map
 import Data.Set as Set
@@ -87,11 +88,10 @@ newUnrolledVar enums (Fix tp) base = case tp of
     return $ IndexedVar arr
   GTLNamed _ tp' -> newUnrolledVar enums tp' base
   GTLEnum vals -> do
-    let u = EnumVal vals (enums!vals) undefined
-    v <- SMT.varNamed' u (T.pack base) (Just vals)
-    return $ BasicVar $ USMTExpr $ assertEq u v
+    v <- SMT.varNamedAnn (T.pack base) (vals,enums!vals)
+    return $ BasicVar $ USMTExpr $ assertEq (undefined::EnumVal) v
   _ -> getUndefined enums (Fix tp) $ \u -> do
-    v <- SMT.varNamed' u (T.pack base) Nothing
+    v <- SMT.varNamed (T.pack base)
     return $ BasicVar $ USMTExpr $ assertEq u v
 
 -- | Creates an anonymous existential unrolled variable
@@ -318,7 +318,7 @@ translateExpr f (Fix expr)
       GTLBoolVal b -> BasicVar $ USMTExpr $ SMT.constant b
       GTLEnumVal v -> let Fix (GTLEnum vals) = GTL.getType expr
                           Just i = List.findIndex (==v) vals
-                      in BasicVar $ USMTExpr $ SMT.constant (EnumVal vals (fromIntegral i) v)
+                      in BasicVar $ USMTExpr $ SMT.constantAnn (EnumVal v) (vals,fromIntegral i)
       GTLArrayVal vs -> IndexedVar $ fmap (translateExpr f) vs
       GTLTupleVal vs -> IndexedVar $ fmap (translateExpr f) vs
     GTL.BinRelExpr rel l r
@@ -539,7 +539,7 @@ data BMCState s = BMCState { bmcVars :: GlobalState
 -- | Once the SMT solver has produced a model, extract the value of a given GTL variable from it
 getGTLValue :: GTLType -> UnrolledVar -> SMT GTLConstant
 getGTLValue (Fix (GTLEnum es)) (BasicVar v) = do
-  r <- SMT.getValue' (Just es) (castUSMT' v)
+  r <- SMT.getValue (castUSMT' v)
   return $ Fix $ toGTL (r::EnumVal)
 getGTLValue _ (BasicVar v) = useUSMT (\rv -> do
                                          r <- SMT.getValue rv
@@ -784,42 +784,40 @@ exactlyOne (y:ys) = exactlyOne' y (not' y) ys
     exactlyOne' y n (x:xs) = let' (ite x n y) (\y' -> let' (and' [not' x,n]) (\n' -> exactlyOne' y' n' xs))
 
 -- | Used to represent Enum values. Stores not only the value but also the type and the derived type-number of the enum.
-data EnumVal = EnumVal [String] Integer String deriving Typeable
+data EnumVal = EnumVal String deriving (Typeable,Eq)
 
 instance ToGTL EnumVal where
-  toGTL (EnumVal _ _ name) = GTLEnumVal name
-  gtlTypeOf (EnumVal enums _ _) = Fix $ GTLEnum enums
+  toGTL (EnumVal name) = GTLEnumVal name
+  --gtlTypeOf (EnumVal enums _ _) = Fix $ GTLEnum enums
 
 instance SMTType EnumVal where
-  type SMTAnnotation EnumVal = [String]
-  getSort (EnumVal _ nr _) _ = L.Symbol (T.pack $ "Enum"++show nr)
+  type SMTAnnotation EnumVal = ([String],Integer)
+  getSort _ (_,nr) = L.Symbol (T.pack $ "Enum"++show nr)
 #ifdef SMTExts
-  declareType (EnumVal vals nr _) = let decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
-                                    in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
-  additionalConstraints (EnumVal enums _ _) var = []
+  declareType _ (vals,nr) = let decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
+                            in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
+  additionalConstraints _ _ = []
 #else
-  declareType (EnumVal vals nr _) = let --decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
-                                        decl = do
-                                          let tname = T.pack $ "Enum"++show nr
-                                          declareSort tname 0
-                                          mapM_ (\val -> declareFun (T.pack val) [] (L.Symbol tname)) vals
-                                          assert $ distinct [SMT.Var (T.pack val) Nothing :: SMTExpr EnumVal | val <- vals]
-                                    in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
-  additionalConstraints (EnumVal enums _ _) var = [or' [var .==. (SMT.Var (T.pack val) (Just enums)) | val <- enums]]
+  declareType _ (vals,nr) = let decl = do
+                                  let tname = T.pack $ "Enum"++show nr
+                                  declareSort tname 0
+                                  mapM_ (\val -> declareFun (T.pack val) [] (L.Symbol tname)) vals
+                                  assert $ distinct [SMT.Var (T.pack val) (vals,nr) :: SMTExpr EnumVal | val <- vals]
+                            in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
+  additionalConstraints _ (enums,nr) var = [or' [var .==. (SMT.Var (T.pack val) (enums,nr)) | val <- enums]]
 #endif
 
 instance SMTValue EnumVal where
-  mangle (EnumVal _ _ v) _ = L.Symbol (T.pack v)
+  mangle (EnumVal v) _ = L.Symbol (T.pack v)
 #ifdef SMTExts
-  unmangle (L.Symbol v) _ = return $ Just $ EnumVal undefined undefined (T.unpack v)
+  unmangle (L.Symbol v) (vals,nr) = return $ Just $ EnumVal (T.unpack v)
 #else
-  unmangle (L.Symbol v) Nothing = return $ Just $ EnumVal undefined undefined (T.unpack v)
-  unmangle v (Just vs) = do
+  unmangle v (vs,nr) = do
     vs' <- mapM (\e -> do
-                    l <- getRawValue (SMT.Var (T.pack e) Nothing :: SMTExpr EnumVal)
+                    l <- getRawValue (SMT.Var (T.pack e) (vs,nr) :: SMTExpr EnumVal)
                     return (e,l)) vs
     case List.find (\(_,l) -> l==v) vs' of
-      Just (e,_) -> return $ Just $ EnumVal vs undefined e
+      Just (e,_) -> return $ Just $ EnumVal e
 #endif
   unmangle _ _ = return Nothing
 
@@ -830,12 +828,12 @@ instance ToGTL Word64 where
 -- | Create a undefined value for a given type and apply it to the supplied function.
 getUndefined :: Map [String] Integer -- ^ Map of all enum types
                 -> GTLType -- ^ The type for the undefined value
-                -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a) => a -> b) -- ^ The function to apply the undefined value to
+                -> (forall a. (Typeable a,SMTType a,ToGTL a,SMTValue a,SMTAnnotation a ~ ()) => a -> b) -- ^ The function to apply the undefined value to
                 -> b
 getUndefined mp rep f = case unfix rep of
   GTLInt -> f (undefined::GTLSMTInt)
   GTLBool -> f (undefined::Bool)
-  GTLEnum enums -> f (EnumVal enums (mp!enums) undefined)
+  --GTLEnum enums -> f (EnumVal enums (mp!enums) undefined)
   GTLNamed _ r -> getUndefined mp r f
   _ -> error $ "Please implement getUndefined for "++show rep++" you lazy fuck"
 
