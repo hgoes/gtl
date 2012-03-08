@@ -54,11 +54,11 @@ translateTarget tm
                         | pname <- Map.keys (tmodelProcs tm) ]
          }
     where
-      var_decls = [ VarDecl (Type Nothing (convertType tp))
-                    [(varString var,[ExprArray (ExprNat (lvl+1))],case init of
+      var_decls = [ VarDecl (Type Nothing (fst $ convertType tp))
+                    [(varString var,reverse $ (ExprArray (ExprNat (lvl+1))):[ ExprArray (ExprNat i) | i <- idx ],case init of
                          Nothing -> Nothing
                          Just iset -> Just $ InitArray $ genericReplicate (lvl+1) $ InitExpr $ translateConstant tp $ unfix $ head $ Set.toList iset)]
-                  | (var,lvl,tp,init) <- tmodelVars tm ]
+                  | (var,lvl,tp,init) <- tmodelVars tm, let (rtp,idx) = convertType tp ]
       templates = [Template (noPos $ pname++"_tmpl") Nothing []
                    (start_loc ++ st_locs)
                    (Just "start") (start_trans++st_trans)
@@ -151,7 +151,7 @@ translateUpdate i vars = mempty { tcUpdates = [ ExprAssign Assign
 -- | Translate a single output restriction into a temporary variable that non-deterministically gets assigned the allowed values.
 translateRestriction :: Integer -> Restriction TargetVar -> TransitionContent
 translateRestriction i restr
-  = mempty { tcSelections = [ExprSelect [("tmp"++show i,Type Nothing (convertType (restrictionType restr)))]]
+  = mempty { tcSelections = [ExprSelect [("tmp"++show i,Type Nothing (fst $ convertType (restrictionType restr)))]]
            , tcGuards = [ ExprBinary (if ins then U.BinGTE else U.BinGT) (ExprId ("tmp"++show i)) (translateExpression lower)
                         | (ins,lower) <- lowerLimits restr
                         ] ++
@@ -198,11 +198,15 @@ translateExpression expr = case getValue $ unfix expr of
                                    G.Not -> U.UnNot) (translateExpression e)
 
 -- | Translate a GTL type into a UPPAAL type.
-convertType :: GTLType -> TypeId
-convertType (Fix GTLInt) = TypeInt Nothing
-convertType (Fix GTLByte) = TypeInt (Just (ExprNat 0,ExprNat 255))
-convertType (Fix GTLBool) = TypeInt (Just (ExprNat 0,ExprNat 1))
-convertType (Fix (GTLEnum xs)) = TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1)))
+convertType :: GTLType -> (TypeId,[Integer])
+convertType (Fix GTLInt) = (TypeInt Nothing,[])
+convertType (Fix GTLByte) = (TypeInt (Just (ExprNat 0,ExprNat 255)),[])
+convertType (Fix GTLBool) = (TypeInt (Just (ExprNat 0,ExprNat 1)),[])
+convertType (Fix (GTLEnum xs)) = (TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1))),[])
+convertType (Fix (GTLNamed _ tp)) = convertType tp
+convertType (Fix (GTLArray sz tp)) = let (rtp,idx) = convertType tp
+                                     in (rtp,sz:idx)
+convertType tp = error $ "UPPAAL target doesn't support type "++show tp
 
 -- | Get the UPPAAL name of a variable.
 varString :: TargetVar -> String

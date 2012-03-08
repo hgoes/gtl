@@ -138,7 +138,7 @@ atomsToRestr name mdl outmp inmp atm
                                              ]) outmp
     in TransitionConditions
        [ ([ (tvar,case Map.lookup tvar inmp of
-                Nothing -> error (show (tvar,var,r))
+                Nothing -> error $ "Can't find "++show tvar++" in\n"++unlines (fmap (\(key,val) -> show key ++ ": "++show val) (Map.assocs inmp))
                 Just (p,_) -> p
             )
           | tvar <- Set.toList tvars
@@ -185,8 +185,11 @@ buildInputMap spec
                          in foldl (\mp' (var,u,idx,lvl,tp)
                                    -> if isInput u
                                       then foldl (\mp'' (tp',idx')
-                                                  -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
-                                                     (name,var,idx') (lvl,tp') mp'') mp' (flattenVar tp idx)
+                                                  -> foldl (\mp''' (tp'',idx'') 
+                                                            -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
+                                                               (name,var,idx'') (lvl,tp'') mp'''
+                                                           ) mp'' (allPossibleIdx tp')
+                                                 ) mp' (flattenVar tp idx)
                                       else mp'
                                   ) (Map.union mp (Map.fromList
                                                    [ ((name,var,idx),(0,t))
