@@ -25,8 +25,18 @@ simplePrettyPrint spec
      ["  cycle-time "++renderTime (gtlModelCycleTime mdl)]++
      (fmap ("  "++) (simplePrettyPrintBuchi localTerm (gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl))))
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ] ++
+    ["instance"] ++
+	[
+	"   "++(gtlInstanceModel inst)++" "++name++
+	" "++(instanceContract (gtlInstanceContract inst))
+	| (name,inst) <- Map.toList $ gtlSpecInstances spec ] ++
     ["verify"] ++
     (fmap ("  "++) (simplePrettyPrintBuchi globalTerm (gtl2ba Nothing $ gnot $ gtlSpecVerify spec)))
+
+instanceContract :: (Maybe a) -> String
+instanceContract inst = case inst of
+				Nothing -> "" 
+				n -> "todo"
 
 renderTerm :: (v -> Integer -> ShowS) -> Integer -> TypedExpr v -> ShowS
 renderTerm f p (Fix expr) = showTermWith f (renderTerm f) p (getValue expr)
