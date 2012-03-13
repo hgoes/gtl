@@ -25,9 +25,15 @@ import Misc.ProgramOptions
 import Data.List as List
 import Data.Time
 import System.IO (hFlush,stdout)
+import qualified Data.Bitstream as BitS
 
+#ifdef SMTExts
 type GTLSMTPc = Integer
 type GTLSMTInt = Integer
+#else
+type GTLSMTPc = Word64
+type GTLSMTInt = Word64
+#endif
 
 -- | An untyped SMT expression
 data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
@@ -505,10 +511,10 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     nself = (formulaEnc nxt)!expr
 
 -- | Perform bounded model checking of a given GTL specification
-bmc :: Scheduling s => s -> Bool -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc sched compl spec = do
+bmc :: Scheduling s => BMCConfig a -> s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
+bmc cfg sched spec = do
 #ifndef SMTExts  
-  setLogic $ T.pack "AUFLIA"
+  setLogic $ T.pack "QF_ABV"
 #endif
   setOption $ PrintSuccess False
   setOption $ ProduceModels True
@@ -527,7 +533,7 @@ bmc sched compl spec = do
   se <- newState enums spec "e"
   te <- createSchedulingData sched (Map.keysSet $ gtlSpecInstances spec)
   start_time <- liftIO getCurrentTime
-  bmc' sched compl enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time
+  bmc' cfg sched enums spec formula bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
@@ -588,8 +594,49 @@ renderPath = unlines . concat . renderPath' 1 Map.empty
                                                                                       else Just cur) mp prev ]
         ):renderPath' (n+1) mp xs
 
-bmc' :: Scheduling s => s
-        -> Bool
+incPLTLbase :: SMTExpr Bool -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String) -> SMT ()
+incPLTLbase loop_exists tmp_cur tmp_e tmp_l = mapM_ (\(expr,var) -> do
+                                                       assert $ (not' loop_exists) .=>. (not' $ (formulaEnc tmp_l)!expr)
+                                                       -- Base case for IncPLTL:
+                                                       case GTL.getValue (unfix expr) of
+                                                         GTL.UnBoolExpr (Finally NoTime) e -> do
+                                                                                        let f_e = (auxFEnc tmp_e)!e
+                                                                                        assert $ loop_exists .=>. (var .=>. f_e)
+                                                                                        assert $ not' $ (auxFEnc tmp_cur)!e
+                                                         GTL.UnBoolExpr Always e -> do
+                                                           let g_e = (auxGEnc tmp_e)!e
+                                                           assert $ loop_exists .=>. (g_e .=>. var)
+                                                           assert $ (auxGEnc tmp_cur)!e
+                                                         GTL.BinBoolExpr (Until NoTime) lhs rhs -> do
+                                                                                        let f_e = (auxFEnc tmp_e)!rhs
+                                                                                        assert $ loop_exists .=>. (var .=>. f_e)
+                                                                                        assert $ not' $ (auxFEnc tmp_cur)!rhs
+                                                         GTL.BinBoolExpr (UntilOp NoTime) lhs rhs -> do
+                                                                                        let g_e = (auxGEnc tmp_e)!rhs
+                                                                                        assert $ loop_exists .=>. (g_e .=>. var)
+                                                                                        assert $ not' $ (auxGEnc tmp_cur)!rhs
+                                                         _ -> return ()
+                                                    ) (Map.toList $ formulaEnc tmp_e)
+
+incPLTLvar :: TemporalVars (String,String) -> TemporalVars (String,String) -> SMT ()
+incPLTLvar tmp_cur tmp_e = do
+  mapM_ (\(expr,var) -> assert $ ((auxFEnc tmp_e)!expr) .==. var) (Map.toList $ auxFEnc tmp_cur)
+  mapM_ (\(expr,var) -> assert $ ((auxGEnc tmp_e)!expr) .==. var) (Map.toList $ auxGEnc tmp_cur)
+
+data BMCConfig a = BMCConfig { bmcConfigCur :: a
+                             , bmcConfigNext :: a -> a
+                             , bmcConfigCompleteness :: a -> Bool
+                             , bmcConfigCheckSat :: a -> Bool
+                             , bmcConfigTerminate :: a -> Bool
+                             , bmcConfigDebug :: a -> Bool
+                             , bmcConfigUseStacks :: a -> Bool
+                             }
+
+stack' :: BMCConfig c -> SMT a -> SMT a
+stack' cfg = if bmcConfigUseStacks cfg (bmcConfigCur cfg) then stack else id
+
+bmc' :: Scheduling s => BMCConfig a
+        -> s
         -> Map [String] Integer -> GTLSpec String
         -> TypedExpr (String,String)
         -> Map String (BA [TypedExpr String] Integer)
@@ -602,7 +649,7 @@ bmc' :: Scheduling s => s
         -> [BMCState s] 
         -> UTCTime
         -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time = do
+bmc' cfg sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] start_time = do
   init <- newState enums spec "0"
   l <- SMT.varNamed $ T.pack "l0"
   inloop <- SMT.varNamed $ T.pack "inloop0"
@@ -615,58 +662,40 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te [] start
   tmp_nxt <- newTemporalVars "1" f
   genc <- dependencies (\(iname,var) u h -> getVar iname var [] init) f tmp_cur tmp_nxt
   assert genc
-  mapM_ (\(expr,var) -> do
-            assert $ (not' loop_exists) .=>. (not' $ (formulaEnc tmp_l)!expr)
-            -- Base case for IncPLTL:
-            case GTL.getValue (unfix expr) of
-              GTL.UnBoolExpr (Finally NoTime) e -> do
-                let f_e = (auxFEnc tmp_e)!e
-                assert $ loop_exists .=>. (var .=>. f_e)
-                assert $ not' $ (auxFEnc tmp_cur)!e
-              GTL.UnBoolExpr Always e -> do
-                let g_e = (auxGEnc tmp_e)!e
-                assert $ loop_exists .=>. (g_e .=>. var)
-                assert $ (auxGEnc tmp_cur)!e
-              GTL.BinBoolExpr (Until NoTime) lhs rhs -> do
-                let f_e = (auxFEnc tmp_e)!rhs
-                assert $ loop_exists .=>. (var .=>. f_e)
-                assert $ not' $ (auxFEnc tmp_cur)!rhs
-              GTL.BinBoolExpr (UntilOp NoTime) lhs rhs -> do
-                let g_e = (auxGEnc tmp_e)!rhs
-                assert $ loop_exists .=>. (g_e .=>. var)
-                assert $ not' $ (auxGEnc tmp_cur)!rhs
-              _ -> return ()
-        ) (Map.toList $ formulaEnc tmp_e)
+  incPLTLbase loop_exists tmp_cur tmp_e tmp_l
   let hist = [BMCState init tmp_cur l inloop sdata]
-  res <- stack $ do
-    -- k-variant case for LoopConstraints
-    assert $ eqSt se init
-    assert $ eqScheduling sched te sdata
-    assert $ not' loop_exists
-    -- k-variant case for LastStateFormula
-    mapM_ (\(expr,var) -> do
-              assert $ var .==. ((formulaEnc tmp_cur)!expr)
-              assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
-          ) (Map.toList $ formulaEnc tmp_e)
-    -- k-variant case for IncPLTL
-    mapM_ (\(expr,var) -> assert $ var .==. ((auxFEnc tmp_cur)!expr)
-          ) (Map.toList $ auxFEnc tmp_e)
-    mapM_ (\(expr,var) -> assert $ var .==. ((auxGEnc tmp_cur)!expr)
-          ) (Map.toList $ auxGEnc tmp_e)
-    solvable <- checkSat
-    if solvable
-      then getPath sched hist >>= return.Just
-      else return Nothing
+  res <- if bmcConfigCheckSat cfg (bmcConfigCur cfg) 
+         then stack' cfg (do
+                      -- k-variant case for LoopConstraints
+                      assert $ eqSt se init
+                      assert $ eqScheduling sched te sdata
+                      assert $ not' loop_exists
+                      -- k-variant case for LastStateFormula
+                      mapM_ (\(expr,var) -> do
+                               assert $ var .==. ((formulaEnc tmp_cur)!expr)
+                               assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
+                            ) (Map.toList $ formulaEnc tmp_e)
+                      -- k-variant case for IncPLTL
+                      incPLTLvar tmp_cur tmp_e
+                      solvable <- checkSat
+                      if solvable
+                        then getPath sched hist >>= return.Just
+                        else return Nothing)
+         else return Nothing
   case res of
-    Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist start_time
+    Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
+               then return Nothing
+               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te hist start_time
     Just path -> return $ Just path
-bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) start_time = do
+bmc' cfg sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) start_time = do
   let i = length history
       sdata = bmcScheduling last_state
   ctime <- liftIO $ getCurrentTime
-  liftIO $ do
-    putStrLn ("Depth: "++show i++" ("++show (ctime `diffUTCTime` start_time)++")")
-    hFlush stdout
+  if bmcConfigDebug cfg (bmcConfigCur cfg)
+    then liftIO $ do
+      putStrLn ("Depth: "++show i++" ("++show (ctime `diffUTCTime` start_time)++")")
+      hFlush stdout
+    else return ()
   cur_state <- newState enums spec (show i)
   tmp_nxt <- newTemporalVars (show $ i+1) f
   l <- SMT.varNamed $ T.pack $ "l"++show i
@@ -696,7 +725,7 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
   let history' = (BMCState cur_state tmp_cur l inloop nsdata):history
   -- Simple Path restriction
-  simple_path <- case compl of
+  simple_path <- case bmcConfigCompleteness cfg (bmcConfigCur cfg) of
     False -> return True
     True -> do
       mapM_ (\st -> assert $ or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
@@ -721,25 +750,28 @@ bmc' sched compl enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@
   if not simple_path
     then return Nothing
     else (do
-             res <- stack $ do
-               -- k-variant case for LoopConstraints
-               assert $ loop_exists .==. inloop
-               assert $ eqSt cur_state se
-               assert $ eqScheduling sched nsdata te
-               -- k-variant case for LastStateFormula
-               mapM_ (\(expr,var) -> do
-                         assert $ ((formulaEnc tmp_e)!expr) .==. var
-                         assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
-                     ) (Map.toList $ formulaEnc tmp_cur)
-               -- k-variant case for IncPLTL
-               mapM_ (\(expr,var) -> assert $ ((auxFEnc tmp_e)!expr) .==. var) (Map.toList $ auxFEnc tmp_cur)
-               mapM_ (\(expr,var) -> assert $ ((auxGEnc tmp_e)!expr) .==. var) (Map.toList $ auxGEnc tmp_cur)
-               r <- checkSat
-               if r then getPath sched history' >>= return.Just
-                 else return Nothing
-             case res of  
-               Just path -> return $ Just path
-               Nothing -> bmc' sched compl enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history' start_time)
+           res <- if bmcConfigCheckSat cfg (bmcConfigCur cfg)
+                  then (stack' cfg $ do
+                          -- k-variant case for LoopConstraints
+                          assert $ loop_exists .==. inloop
+                          assert $ eqSt cur_state se
+                          assert $ eqScheduling sched nsdata te
+                          -- k-variant case for LastStateFormula
+                          mapM_ (\(expr,var) -> do
+                                   assert $ ((formulaEnc tmp_e)!expr) .==. var
+                                   assert $ ((formulaEnc tmp_nxt)!expr) .==. ((formulaEnc tmp_l)!expr)
+                                ) (Map.toList $ formulaEnc tmp_cur)
+                          -- k-variant case for IncPLTL
+                          incPLTLvar tmp_cur tmp_e
+                          r <- checkSat
+                          if r then getPath sched history' >>= return.Just
+                               else return Nothing)
+                  else return Nothing
+           case res of  
+             Just path -> return $ Just path
+             Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
+                        then return Nothing
+                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched enums spec f bas tmp_nxt tmp_e tmp_l loop_exists se te history' start_time)
 
 -- | Verify a given specification using K-Induction
 verifyModelKInduction :: Maybe String -> GTLSpec String -> IO ()
@@ -752,12 +784,18 @@ verifyModelKInduction solver spec = do
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ]
 
+normalConfig :: Bool -> BMCConfig ()
+normalConfig compl = BMCConfig () (const ()) (const compl) (const True) (const False) (const True) (const True)
+
+sonolarConfig :: Integer -> Bool -> BMCConfig Integer
+sonolarConfig limit compl = BMCConfig limit (\x -> x - 1) (\x -> x==0) (\x -> x==0) (\x -> x == 0) (\x -> x==0) (const False)
+
 verifyModelBMC :: Options -> GTLSpec String -> IO ()
 verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc SimpleScheduling (bmcCompleteness opts) spec
+  res <- solve $ bmc (normalConfig (bmcCompleteness opts)) SimpleScheduling spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
@@ -792,32 +830,47 @@ instance ToGTL EnumVal where
 
 instance SMTType EnumVal where
   type SMTAnnotation EnumVal = ([String],Integer)
-  getSort _ (_,nr) = L.Symbol (T.pack $ "Enum"++show nr)
 #ifdef SMTExts
+  getSort _ (_,nr) = L.Symbol (T.pack $ "Enum"++show nr)
   declareType _ (vals,nr) = let decl = declareDatatypes [] [(T.pack $ "Enum"++show nr,[(T.pack val,[]) | val <- vals])]
                             in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
-  additionalConstraints _ _ = []
+  additionalConstraints _ _ _ = []
 #else
+  getSort _ (vals,nr) = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
+                        in getSort (undefined::BitS.Bitstream BitS.Left) (BitstreamLen $ fromIntegral bits) --L.List [L.Symbol "_",L.Symbol "BitVec",show bits]
+  declareType _ (vals,nr) = []
+  additionalConstraints _ (enums,nr) var = [BVULE var (SMT.constantAnn (EnumVal $ List.last enums) (enums,nr))]
+  {-
+  getSort _ (_,nr) = L.Symbol (T.pack $ "Enum"++show nr)
   declareType _ (vals,nr) = let decl = do
                                   let tname = T.pack $ "Enum"++show nr
                                   declareSort tname 0
                                   mapM_ (\val -> declareFun (T.pack val) [] (L.Symbol tname)) vals
                                   assert $ distinct [SMT.Var (T.pack val) (vals,nr) :: SMTExpr EnumVal | val <- vals]
                             in [(mkTyConApp (mkTyCon $ "Enum"++show nr) [],decl)]
-  additionalConstraints _ (enums,nr) var = [or' [var .==. (SMT.Var (T.pack val) (enums,nr)) | val <- enums]]
+  additionalConstraints _ (enums,nr) var = [or' [var .==. (SMT.Var (T.pack val) (enums,nr)) | val <- enums]] -}
 #endif
 
 instance SMTValue EnumVal where
-  mangle (EnumVal v) _ = L.Symbol (T.pack v)
 #ifdef SMTExts
+  mangle (EnumVal v) _ = L.Symbol $ T.pack v
   unmangle (L.Symbol v) (vals,nr) = return $ Just $ EnumVal (T.unpack v)
 #else
+  mangle (EnumVal v) (vals,nr) = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
+                                     Just idx = List.elemIndex v vals
+                                 in mangle (BitS.fromNBits bits idx :: BitS.Bitstream BitS.Left) (BitstreamLen $ fromIntegral bits)
   unmangle v (vs,nr) = do
+    let bits = ceiling $ logBase 2 $ fromIntegral (List.length vs)
+    v' <- unmangle v (BitstreamLen $ fromIntegral bits)
+    case v' of
+      Nothing -> return Nothing
+      Just v'' -> return $ Just $ EnumVal $ vs!!(BitS.toBits (v'' :: BitS.Bitstream BitS.Left))
+  {-unmangle v (vs,nr) = do
     vs' <- mapM (\e -> do
                     l <- getRawValue (SMT.Var (T.pack e) (vs,nr) :: SMTExpr EnumVal)
                     return (e,l)) vs
     case List.find (\(_,l) -> l==v) vs' of
-      Just (e,_) -> return $ Just $ EnumVal e
+      Just (e,_) -> return $ Just $ EnumVal e-}
 #endif
   unmangle _ _ = return Nothing
 
