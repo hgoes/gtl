@@ -784,18 +784,28 @@ verifyModelKInduction solver spec = do
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ]
 
-normalConfig :: Bool -> BMCConfig ()
-normalConfig compl = BMCConfig () (const ()) (const compl) (const True) (const False) (const True) (const True)
+normalConfig :: Maybe Integer -> Bool -> BMCConfig Integer
+normalConfig bound compl 
+    = BMCConfig { bmcConfigCur = 0
+                , bmcConfigNext = \x -> x+1
+                , bmcConfigCompleteness = const compl
+                , bmcConfigCheckSat = const True
+                , bmcConfigTerminate = case bound of
+                                         Nothing -> const False
+                                         Just limit -> \x -> x==limit
+                , bmcConfigDebug = const True
+                , bmcConfigUseStacks = const True
+                }
 
-sonolarConfig :: Integer -> Bool -> BMCConfig Integer
-sonolarConfig limit compl = BMCConfig limit (\x -> x - 1) (\x -> x==0) (\x -> x==0) (\x -> x == 0) (\x -> x==0) (const False)
+sonolarConfig :: Maybe Integer -> Bool -> BMCConfig Integer
+sonolarConfig (Just limit) compl = BMCConfig limit (\x -> x - 1) (\x -> x==0) (\x -> x==0) (\x -> x == 0) (\x -> x==0) (const False)
 
 verifyModelBMC :: Options -> GTLSpec String -> IO ()
 verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc (normalConfig (bmcCompleteness opts)) SimpleScheduling spec
+  res <- solve $ bmc (normalConfig (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path

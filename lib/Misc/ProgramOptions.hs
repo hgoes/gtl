@@ -46,6 +46,7 @@ data Options = Options
                , dryRun :: Bool
                , debug :: Set String
                , bmcCompleteness :: Bool
+               , bmcBound :: Maybe Integer
                }
                deriving Show
 
@@ -65,6 +66,7 @@ defaultOptions = Options
   , dryRun = False
   , debug = Set.empty
   , bmcCompleteness = False
+  , bmcBound = Nothing
   }
 
 modes :: [(String,TranslationMode)]
@@ -101,6 +103,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['n'] ["dry-run"] (NoArg (\opt -> opt { dryRun = True })) "Perform a dry run only generating files and not executing anything."
           ,Option ['d'] ["debug"] (ReqArg (\str opt -> opt { debug = Set.insert str $ debug opt }) "option") "Give debugging options (e.g. -ddump-buchi)"
           ,Option ['c'] ["complete"] (NoArg (\opt -> opt { bmcCompleteness = True })) "Makes the bounded model checking procedure complete (WARNING: can increase runtime by a lot)"
+          ,Option ['b'] ["bound"] (ReqArg (\str opt -> opt { bmcBound = Just $ read str }) "num") "Gives an explicit bound where to stop the bounded model checking"
           ]
 
 header :: String
