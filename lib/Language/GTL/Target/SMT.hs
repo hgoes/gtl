@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification,TypeFamilies,CPP #-}
+{-# LANGUAGE RankNTypes,DeriveDataTypeable,ExistentialQuantification,TypeFamilies,CPP,FlexibleContexts #-}
 module Language.GTL.Target.SMT where
 
 import Data.Typeable
@@ -10,7 +10,6 @@ import Language.GTL.Translation
 import Language.SMTLib2 as SMT
 import Language.SMTLib2.Solver
 import Language.SMTLib2.Internals as SMT
-import Language.SMTLib2.Internals.Translation as SMT
 import Data.Text as T hiding (intersperse,length,concat,unlines,zip)
 import Data.Map as Map
 import Data.Set as Set
@@ -36,10 +35,21 @@ type GTLSMTInt = Word64
 #endif
 
 -- | An untyped SMT expression
-data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a) => USMTExpr (SMTExpr a)
+data USMTExpr = forall a. (SMTType a,Typeable a,ToGTL a,SMTValue a,Eq a) => USMTExpr (SMTExpr a) deriving Typeable
 
 instance Show USMTExpr where
   show (USMTExpr e) = show e
+
+instance Eq USMTExpr where
+  (==) (USMTExpr l) (USMTExpr r) = case cast r of
+                                     Nothing -> False
+                                     Just r' -> l == r'
+
+instance Args USMTExpr where
+  type Unpacked USMTExpr = ()
+  type ArgAnnotation USMTExpr = ()
+  foldExprs f s (USMTExpr x) _ = let (s',e') = f s x (extractAnnotation x)
+                                 in (s',USMTExpr e')
 
 -- | Safely cast an untyped SMT expression into a typed one
 castUSMT :: Typeable a => USMTExpr -> Maybe (SMTExpr a)
@@ -64,18 +74,43 @@ useUSMT f (USMTExpr x) = f x
 -- | Saves the variables of all components in the GALS system
 data GlobalState = GlobalState
                    { instanceStates :: Map String InstanceState
-                   }
+                   } deriving (Eq,Typeable)
+
+instance Args GlobalState where
+  type Unpacked GlobalState = ()
+  type ArgAnnotation GlobalState = ()
+  foldExprs f s gl _ = let (s',sts') = List.mapAccumL (\cs (name,is) -> let (cs',is') = foldExprs f cs is ()
+                                                                        in (cs',(name,is'))) s (Map.toAscList (instanceStates gl))
+                       in (s',GlobalState { instanceStates = Map.fromAscList sts' })
 
 -- | Saves the variables of one instance (including the state variable of the state machine)
 data InstanceState = InstanceState
                      { instanceVars :: Map String (UnrolledVar,GTLType,VarUsage)
                      , instancePC :: SMTExpr GTLSMTPc -- ^ Saves the state of the state machine
-                     }
+                     } deriving (Eq,Typeable)
+
+instance Args InstanceState where
+  type Unpacked InstanceState = ()
+  type ArgAnnotation InstanceState = ()
+  foldExprs f s is _ = let (s1,iv') = List.mapAccumL (\cs (name,(var,tp,usage)) -> let (cs',var') = foldExprs f cs var ()
+                                                                                   in (cs',(name,(var',tp,usage)))
+                                                     ) s (Map.toAscList (instanceVars is))
+                           (s2,ipc') = f s1 (instancePC is) ()
+                       in (s2,InstanceState { instanceVars = Map.fromAscList iv'
+                                            , instancePC = ipc' })
 
 -- | A GTL variable which is (possibly) composed from more than one SMT variable
 data UnrolledVar = BasicVar USMTExpr -- ^ Just a simple SMT variable
                  | IndexedVar [UnrolledVar] -- ^ A composed variable
-                 deriving Show
+                 deriving (Show,Eq,Typeable)
+
+instance Args UnrolledVar where
+    type Unpacked UnrolledVar = ()
+    type ArgAnnotation UnrolledVar = ()
+    foldExprs f s (BasicVar var) _ = let (s',var') = foldExprs f s var ()
+                                     in (s',BasicVar var')
+    foldExprs f s (IndexedVar xs) _ = let (s',xs') = List.mapAccumL (\s x -> foldExprs f s x ()) s xs
+                                      in (s',IndexedVar xs')
 
 -- | Saves the variables needed for the encoding of LTL properties
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
@@ -763,7 +798,7 @@ bmc' cfg sched enums spec f bas tmp_cur tmp_e tmp_l loop_exists se te history@(l
                                 ) (Map.toList $ formulaEnc tmp_cur)
                           -- k-variant case for IncPLTL
                           incPLTLvar tmp_cur tmp_e
-                          r <- checkSat
+                          r <- return False --checkSat
                           if r then getPath sched history' >>= return.Just
                                else return Nothing)
                   else return Nothing
@@ -798,14 +833,22 @@ normalConfig bound compl
                 }
 
 sonolarConfig :: Maybe Integer -> Bool -> BMCConfig Integer
-sonolarConfig (Just limit) compl = BMCConfig limit (\x -> x - 1) (\x -> x==0) (\x -> x==0) (\x -> x == 0) (\x -> x==0) (const False)
+sonolarConfig (Just limit) compl
+    = BMCConfig { bmcConfigCur = limit 
+                , bmcConfigNext = \x -> x - 1
+                , bmcConfigCompleteness = const compl
+                , bmcConfigCheckSat = \x -> x == 0
+                , bmcConfigTerminate = \x -> x == 0
+                , bmcConfigDebug = \x -> x==0
+                , bmcConfigUseStacks = const False
+                }
 
 verifyModelBMC :: Options -> GTLSpec String -> IO ()
 verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc (normalConfig (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
+  res <- solve $ bmc (sonolarConfig (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
