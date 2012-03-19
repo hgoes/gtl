@@ -472,7 +472,7 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
 bmc :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) => BMCConfig a -> s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
 bmc cfg sched spec = do
 #ifndef SMTExts  
-  setLogic $ T.pack "QF_ABV"
+  setLogic $ T.pack "QF_BV"
 #endif
   setOption $ PrintSuccess False
   setOption $ ProduceModels True
