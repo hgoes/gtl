@@ -479,18 +479,14 @@ bmc cfg sched spec = do
   let formula = GTL.distributeNot (gtlSpecVerify spec)
       enums = enumMap spec
       (init,step) = schedule sched (Map.keysSet enums) spec
-  init_fun <- if bmcConfigInline cfg
-              then (do 
-                     f <- defFunAnn (spec,spec) () $ \(sdata,st) -> init sdata st
-                     return (app f))
-              else return (\(sdata,st) -> init sdata st)
-  step_fun <- if bmcConfigInline cfg
-              then (do
-                     f <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-                     return (app f))
-              else return (\((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2)
+  init_fun <- (if bmcConfigInline cfg
+               then fmap app . defFunAnn (spec,spec) () 
+               else return) $ \(sdata,st) -> init sdata st
+  step_fun <- (if bmcConfigInline cfg
+               then fmap app . defFunAnn ((spec,spec),(spec,spec)) ()
+               else return) $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
   dep_fun <- (if bmcConfigInline cfg
-              then \f -> defFunAnn (spec,formula,formula) () f >>= return.app
+              then fmap app . defFunAnn (spec,formula,formula) ()
               else return) $ \(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
                                                                                        in case Map.lookup var (instanceInputVars inst) of
                                                                                             Just v -> v
@@ -505,9 +501,9 @@ bmc cfg sched spec = do
   se <- argVarsAnn spec
   te <- argVarsAnn spec
   start_time <- liftIO getCurrentTime
-  conn <- if bmcConfigInline cfg
-          then defFunAnn (spec,spec) () (connectionFun spec) >>= return.app
-          else return $ connectionFun spec
+  conn <- (if bmcConfigInline cfg
+           then fmap app . defFunAnn (spec,spec) ()
+           else return) (connectionFun spec)
   bmc' cfg sched spec conn formula init_fun step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
