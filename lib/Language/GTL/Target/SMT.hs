@@ -761,7 +761,8 @@ verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc (normalConfig (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
+  res <- solve $ bmc ((if useSonolar opts then sonolarConfig
+                       else normalConfig) (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path

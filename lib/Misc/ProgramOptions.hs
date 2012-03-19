@@ -47,6 +47,7 @@ data Options = Options
                , debug :: Set String
                , bmcCompleteness :: Bool
                , bmcBound :: Maybe Integer
+               , useSonolar :: Bool
                }
                deriving Show
 
@@ -67,6 +68,7 @@ defaultOptions = Options
   , debug = Set.empty
   , bmcCompleteness = False
   , bmcBound = Nothing
+  , useSonolar = False
   }
 
 modes :: [(String,TranslationMode)]
@@ -104,6 +106,7 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['d'] ["debug"] (ReqArg (\str opt -> opt { debug = Set.insert str $ debug opt }) "option") "Give debugging options (e.g. -ddump-buchi)"
           ,Option ['c'] ["complete"] (NoArg (\opt -> opt { bmcCompleteness = True })) "Makes the bounded model checking procedure complete (WARNING: can increase runtime by a lot)"
           ,Option ['b'] ["bound"] (ReqArg (\str opt -> opt { bmcBound = Just $ read str }) "num") "Gives an explicit bound where to stop the bounded model checking"
+          ,Option [] ["sonolar"] (NoArg (\opt -> opt { useSonolar = True })) "Restricts the SMT code generator to a tiny subset of SMTLib2 to enable the use of the sonolar solver"
           ]
 
 header :: String
