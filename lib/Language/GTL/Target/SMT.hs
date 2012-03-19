@@ -180,11 +180,11 @@ eqInst l r = and' $ (Map.elems $ Map.intersectionWith eqGTLSMT (instanceInputVar
 eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
 eqSt l r = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates l) (instanceStates r)
 
-connectionFun :: GTLSpec String -> SMT (SMTExpr (SMTFun (GlobalState,GlobalState) Bool))
-connectionFun spec = defFunAnn (spec,spec) () (\(stf,stt) -> and' [ eqGTLSMT (indexGTLSMT ((instanceOutputVars $ (instanceStates stf)!f)!fv) fi)
-                                                                             (indexGTLSMT ((instanceInputVars $ (instanceStates stt)!t)!tv) ti)
-                                                                    | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
-                                                                  ])
+connectionFun :: GTLSpec String -> (GlobalState,GlobalState) -> SMTExpr Bool
+connectionFun spec = \(stf,stt) -> and' [ eqGTLSMT (indexGTLSMT ((instanceOutputVars $ (instanceStates stf)!f)!fv) fi)
+                                                   (indexGTLSMT ((instanceInputVars $ (instanceStates stt)!t)!tv) ti)
+                                          | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
+                                        ]
 
 translateRel :: SMTOrd a => Relation -> SMTExpr a -> SMTExpr a -> SMTExpr Bool
 translateRel BinLT = (.<.)
@@ -235,16 +235,6 @@ translateExpr f (Fix expr)
     GTL.UnBoolExpr GTL.Not arg -> let GSMTBool arg' = translateExpr f arg
                                   in GSMTBool $ not' arg'
     _ -> error $ "Implement translateExpr for " ++ showTermWith (\_ _ -> showString "_") (\_ _ -> showString "_") 0 (GTL.getValue expr) ""
-
-{-stepFun :: GTLSpec String -> SMT (SMTExpr (SMTFun (GlobalState,GlobalState) Bool))
-stepFun spec
-  = defFunAnn (spec,spec) () 
-    (\(stf,stt) -> and' [ stepInstance mdl (gtlInstanceContract inst) 
-                                           ((instanceStates stf)!name)
-                                           ((instanceStates stt)!name)
-                          | (name,inst) <- Map.toList (gtlSpecInstances spec),
-                          let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                        ])-}
 
 -- | Perform a calculation step in a single component
 instanceFuns :: Set [String] -> GTLModel String -> Maybe (TypedExpr String) -> (InstanceState -> SMTExpr Bool,InstanceState -> InstanceState -> SMTExpr Bool)
@@ -435,6 +425,7 @@ data BMCConfig a = BMCConfig { bmcConfigCur :: a
                              , bmcConfigTerminate :: a -> Bool
                              , bmcConfigDebug :: a -> Bool
                              , bmcConfigUseStacks :: a -> Bool
+                             , bmcConfigInline :: Bool
                              }
 
 stack' :: BMCConfig c -> SMT a -> SMT a
@@ -488,15 +479,25 @@ bmc cfg sched spec = do
   let formula = GTL.distributeNot (gtlSpecVerify spec)
       enums = enumMap spec
       (init,step) = schedule sched (Map.keysSet enums) spec
-  init_fun <- defFunAnn (spec,spec) () $ \(sdata,st) -> init sdata st
-  step_fun <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-  dep_fun <- defFunAnn (spec,formula,formula) () $ \(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
-                                                                                                             in case Map.lookup var (instanceInputVars inst) of
-                                                                                                                  Just v -> v
-                                                                                                                  Nothing -> case Map.lookup var (instanceOutputVars inst) of
-                                                                                                                               Just v -> v
-                                                                                                                               Nothing -> (instanceLocalVars inst)!var
-                                                                                        ) formula cur nxt
+  init_fun <- if bmcConfigInline cfg
+              then (do 
+                     f <- defFunAnn (spec,spec) () $ \(sdata,st) -> init sdata st
+                     return (app f))
+              else return (\(sdata,st) -> init sdata st)
+  step_fun <- if bmcConfigInline cfg
+              then (do
+                     f <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
+                     return (app f))
+              else return (\((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2)
+  dep_fun <- (if bmcConfigInline cfg
+              then \f -> defFunAnn (spec,formula,formula) () f >>= return.app
+              else return) $ \(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
+                                                                                       in case Map.lookup var (instanceInputVars inst) of
+                                                                                            Just v -> v
+                                                                                            Nothing -> case Map.lookup var (instanceOutputVars inst) of
+                                                                                                         Just v -> v
+                                                                                                         Nothing -> (instanceLocalVars inst)!var
+                                                                  ) formula cur nxt
   tmp_cur <- argVarsAnn formula
   tmp_e <- argVarsAnn formula
   tmp_l <- argVarsAnn formula
@@ -504,7 +505,9 @@ bmc cfg sched spec = do
   se <- argVarsAnn spec
   te <- argVarsAnn spec
   start_time <- liftIO getCurrentTime
-  conn <- connectionFun spec
+  conn <- if bmcConfigInline cfg
+          then defFunAnn (spec,spec) () (connectionFun spec) >>= return.app
+          else return $ connectionFun spec
   bmc' cfg sched spec conn formula init_fun step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
@@ -515,15 +518,15 @@ data BMCState s = BMCState { bmcVars :: GlobalState
                            }
 
 bmc' :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) => 
-        BMCConfig a -> s -> GTLSpec String -> SMTExpr (SMTFun (GlobalState,GlobalState) Bool)
+        BMCConfig a -> s -> GTLSpec String 
+     -> ((GlobalState,GlobalState) -> SMTExpr Bool)
      -> TypedExpr (String,String) 
-     -> SMTExpr (SMTFun (SchedulingData s,GlobalState) Bool) 
-     -> SMTExpr (SMTFun ((SchedulingData s,GlobalState),(SchedulingData s,GlobalState)) Bool)
-     -> SMTExpr (SMTFun (GlobalState,TemporalVars (String,String),TemporalVars (String,String)) Bool)
+     -> ((SchedulingData s,GlobalState) -> SMTExpr Bool)
+     -> (((SchedulingData s,GlobalState),(SchedulingData s,GlobalState)) -> SMTExpr Bool)
+     -> ((GlobalState,TemporalVars (String,String),TemporalVars (String,String)) -> SMTExpr Bool)
      -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String)
      -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [BMCState s] -> UTCTime
      -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
---bmc' cfg sched spec conn formula init step tmp_cur tmp_e tmp_l loop_exists se te [] start_time = return Nothing
 bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te [] start_time = do
   init_st <- argVarsAnn spec
   l <- SMT.var
@@ -531,12 +534,12 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   comment "Scheduling data"
   sdata <- argVarsAnn spec
   assert $ initializeScheduling sched sdata
-  assert $ init `app` (sdata,init_st)
-  assert $ conn `app` (init_st,init_st)
+  assert $ init (sdata,init_st)
+  assert $ conn (init_st,init_st)
   assert $ not' l
   assert $ not' inloop
   tmp_nxt <- argVarsAnn formula
-  assert $ deps `app` (init_st,tmp_cur,tmp_nxt)
+  assert $ deps (init_st,tmp_cur,tmp_nxt)
   assert $ (formulaEnc tmp_cur)!formula
   incPLTLbase loop_exists tmp_cur tmp_e tmp_l
   let hist = [BMCState init_st tmp_cur l inloop sdata]
@@ -577,8 +580,8 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   l <- SMT.var
   inloop <- SMT.var
   nsdata <- argVarsAnn spec
-  assert $ step `app` ((sdata,bmcVars last_state),(nsdata,cur_state))
-  assert $ conn `app` (cur_state,cur_state)
+  assert $ step ((sdata,bmcVars last_state),(nsdata,cur_state))
+  assert $ conn (cur_state,cur_state)
 
   -- k-invariant case for LoopConstraints:
   assert $ l .=>. (and' [eqSt (bmcVars last_state) se
@@ -587,7 +590,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   assert $ (bmcInLoop last_state) .=>. (not' l)
   
   -- k-invariant case for LastStateFormula
-  assert $ deps `app` (cur_state,tmp_cur,tmp_nxt)
+  assert $ deps (cur_state,tmp_cur,tmp_nxt)
   mapM_ (\(expr,var) -> assert $ l .=>. (var .==. ((formulaEnc tmp_cur)!expr))
         ) (Map.toList $ formulaEnc tmp_l)
   
@@ -742,6 +745,7 @@ normalConfig bound compl
                                          Just limit -> \x -> x==limit
                 , bmcConfigDebug = const True
                 , bmcConfigUseStacks = const True
+                , bmcConfigInline = True
                 }
 
 sonolarConfig :: Maybe Integer -> Bool -> BMCConfig Integer
@@ -753,6 +757,7 @@ sonolarConfig (Just limit) compl
                 , bmcConfigTerminate = \x -> x == 0
                 , bmcConfigDebug = \x -> x==0
                 , bmcConfigUseStacks = const False
+                , bmcConfigInline = False
                 }
 
 verifyModelBMC :: Options -> GTLSpec String -> IO ()
@@ -792,14 +797,14 @@ kInduction sched solver spec = do
   baseCase <- forkIO $ solver $ do
                                  init_fun <- defFunAnn (spec,spec) () $ \(sdata,st) -> init sdata st
                                  step_fun <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-                                 conn <- connectionFun spec
+                                 conn <- defFunAnn (spec,spec) () (connectionFun spec)
                                  sched_data <- argVarsAnn spec
                                  start <- argVarsAnn spec
                                  assert $ init_fun `app` (sched_data,start)
                                  kInductionBase baseCaseOrders baseCaseResults (encodeProperty formula) enums spec conn step_fun sched sched_data [] start 1
   indCase <- forkIO $ solver $ do
                step_fun <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-               conn <- connectionFun spec
+               conn <- defFunAnn (spec,spec) () (connectionFun spec)
                sched_data <- argVarsAnn spec
                start <- argVarsAnn spec
                kInductionInd indCaseOrders indCaseResults (encodeProperty formula) enums spec bas conn step_fun sched sched_data start 1 
