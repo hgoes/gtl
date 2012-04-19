@@ -199,7 +199,7 @@ translateExpression expr = case getValue $ unfix expr of
 
 -- | Translate a GTL type into a UPPAAL type.
 convertType :: GTLType -> (TypeId,[Integer])
-convertType (Fix GTLInt) = (TypeInt Nothing,[])
+convertType (Fix (GTLInt n)) = (TypeInt Nothing,[])
 convertType (Fix GTLByte) = (TypeInt (Just (ExprNat 0,ExprNat 255)),[])
 convertType (Fix GTLBool) = (TypeInt (Just (ExprNat 0,ExprNat 1)),[])
 convertType (Fix (GTLEnum xs)) = (TypeInt (Just (ExprNat 0,ExprNat ((genericLength xs)-1))),[])

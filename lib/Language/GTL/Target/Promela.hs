@@ -341,7 +341,7 @@ buildTGenerator tp upper lower check to
   = let rupper e = case upper of
           [] -> Pr.BinExpr Pr.BinLT e (Pr.ConstExpr $ Pr.ConstInt (case baseType tp of
                                                                       Fix (GTLEnum xs) -> (genericLength xs)-1
-                                                                      Fix GTLInt -> fromIntegral (maxBound::Int32)
+                                                                      Fix (GTLInt n) -> fromIntegral (maxBound::Int32)
                                                                       Fix GTLBool -> 1
                                                                   ))
           _ -> foldl1 (Pr.BinExpr Pr.BinAnd) $
@@ -358,7 +358,7 @@ buildTGenerator tp upper lower check to
         -> let trg = Pr.RefExpr (varName inst var idx 0)
            in [minimumAssignment (Pr.ConstExpr $ Pr.ConstInt (case baseType tp of
                                                                  Fix (GTLEnum _) -> 0
-                                                                 Fix GTLInt -> fromIntegral (minBound::Int32)
+                                                                 Fix (GTLInt n) -> fromIntegral (minBound::Int32)
                                                                  Fix GTLBool -> 0
                                                              )
                                  )
@@ -381,7 +381,7 @@ translateSpec :: GTLSpec String -> [Pr.Module]
 translateSpec spec = translateTarget False (buildTargetModel spec)
 
 convertType :: GTLType -> Pr.Typename
-convertType (Fix GTLInt) = Pr.TypeInt
+convertType (Fix (GTLInt n)) = Pr.TypeInt
 convertType (Fix GTLBool) = Pr.TypeBool
 convertType (Fix (GTLEnum _)) = Pr.TypeInt
 convertType (Fix (GTLNamed _ tp)) = convertType tp

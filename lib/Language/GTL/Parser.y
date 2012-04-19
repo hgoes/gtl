@@ -264,7 +264,8 @@ state_content : "transition" id ";"               { Right ($2,Nothing) }
               | "transition" "[" pexpr "]" id ";" { Right ($5,Just $3) }
               | pexpr ";"                         { Left $1 }
 
-type : "int"                       { Fix $ UnResolvedType' $ Right GTLInt }
+type : "int" 					   { Fix $ UnResolvedType' $ Right $ GTLInt $ Nothing }
+	 | "int" "[" int "]"		   { Fix $ UnResolvedType' $ Right $ GTLInt $ Just $3 }	
      | "bool"                      { Fix $ UnResolvedType' $ Right GTLBool }
      | "byte"                      { Fix $ UnResolvedType' $ Right GTLByte }
      | "float"                     { Fix $ UnResolvedType' $ Right GTLFloat }

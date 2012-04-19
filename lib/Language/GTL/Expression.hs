@@ -396,6 +396,10 @@ getConstant e = case getValue (unfix e) of
     return $ Fix np
   _ -> Nothing
 
+-- | FIX: was mache ich bei einer list mit mehr als einem Element???
+getGTLType :: (Ord v, Show v) => Map v GTLType -> GTLType
+getGTLType varmp = Map.elems varmp !! 0
+
 -- | Type-check an untyped expression.
 typeCheck :: (Ord v,Show v,MonadError String m) =>
             Map v GTLType -- ^ A type mapping for all variables
@@ -413,14 +417,14 @@ typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getTyp
       Nothing -> throwError $ "Unknown variable "++show x
       Just tp -> return $ Typed tp (Var x lvl u)
     typeCheck' mu mutp mus varmp enums (Value val) = case val of
-      GTLIntVal i -> return $ Typed gtlInt (Value $ GTLIntVal i)
-      GTLByteVal i -> return $ Typed gtlByte (Value $ GTLByteVal i)
-      GTLBoolVal i -> return $ Typed gtlBool (Value $ GTLBoolVal i)
-      GTLFloatVal i -> return $ Typed gtlFloat (Value $ GTLFloatVal i)
-      GTLEnumVal x -> case find (elem x) enums of
+      GTLIntVal i 		-> return $ Typed (gtlInt $ (Just $ gtlTypeBits (getGTLType varmp))) (Value $ GTLIntVal i)
+      GTLByteVal i 		-> return $ Typed gtlByte (Value $ GTLByteVal i)
+      GTLBoolVal i 		-> return $ Typed gtlBool (Value $ GTLBoolVal i)
+      GTLFloatVal i 	-> return $ Typed gtlFloat (Value $ GTLFloatVal i)
+      GTLEnumVal x 		-> case find (elem x) enums of
         Nothing -> throwError $ "Unknown enum value "++show x
         Just e -> return $ Typed (gtlEnum e) (Value $ GTLEnumVal x)
-      GTLArrayVal vals -> do
+      GTLArrayVal vals 	-> do
         res <- mapM mu vals
         case res of
           [] -> throwError "Empty arrays not allowed"
@@ -428,7 +432,7 @@ typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getTyp
                                   then return ()
                                   else throwError "Not all array elements have the same type") xs
         return $ Typed (gtlArray (genericLength res) (mutp (head res))) (Value $ GTLArrayVal res)
-      GTLTupleVal vals -> do
+      GTLTupleVal vals 	-> do
         tps <- mapM mu vals
         return $ Typed (gtlTuple (fmap mutp tps)) (Value $ GTLTupleVal tps)
     typeCheck' mu mutp mus varmp enums (BinBoolExpr op l r) = do
@@ -443,16 +447,16 @@ typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getTyp
       if rel==BinEq || rel==BinNEq
         then (do
                  enforceType (mus rr) (mutp rr) (mutp ll))
-        else (do
-                 enforceType (mus ll) (mutp ll) gtlInt
-                 enforceType (mus rr) (mutp rr) gtlInt)
+        else (do 
+				enforceType (mus ll) (mutp ll) (gtlInt $ (Just $ gtlTypeBits (mutp ll)))
+				enforceType (mus rr) (mutp rr) (gtlInt $ (Just $ gtlTypeBits (mutp rr))))
       return $ Typed gtlBool (BinRelExpr rel ll rr)
     typeCheck' mu mutp mus varmp enums (BinIntExpr op l r) = do
       ll <- mu l
       rr <- mu r
-      enforceType (mus ll) (mutp ll) gtlInt
-      enforceType (mus rr) (mutp rr) gtlInt
-      return $ Typed gtlInt (BinIntExpr op ll rr)
+      enforceType (mus ll) (mutp ll) (gtlInt $ (Just $ gtlTypeBits (mutp ll)))
+      enforceType (mus rr) (mutp rr) (gtlInt $ (Just $ gtlTypeBits (mutp rr)))
+      return $ Typed (gtlInt $ (Just $ gtlTypeBits (mutp ll))) (BinIntExpr op ll rr)
     typeCheck' mu mutp mus varmp enums (UnBoolExpr op p) = do
       pp <- mu p
       enforceType (mus pp) (mutp pp) gtlBool
@@ -872,7 +876,7 @@ toLinearExpr e = case getValue (unfix e) of
          OpMult -> Map.fromList [ (Map.unionWith (+) t1 t2,constantOp (*) c1 c2) | (t1,c1) <- Map.toList p1, (t2,c2) <- Map.toList p2 ]
   where
     one = Fix $ case unfix $ getType (unfix e) of
-      GTLInt -> GTLIntVal 1
+      (GTLInt i) -> GTLIntVal 1
       GTLByte -> GTLByteVal 1
       GTLFloat -> GTLFloatVal 1
 
@@ -894,7 +898,7 @@ compareExpr :: Ord v => TypedExpr v -> TypedExpr v -> ExprOrdering
 compareExpr e1 e2
   = assert (getType (unfix e1) == getType (unfix e2)) $
     case unfix $ getType (unfix e1) of
-      GTLInt -> lincomp
+      (GTLInt i) -> lincomp
       GTLByte -> lincomp
       GTLFloat -> lincomp
       GTLBool -> case getValue (unfix e2) of
@@ -1118,7 +1122,7 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
 defaultConstant :: GTLType -> GTLConstant
 defaultConstant (Fix tp)
   = case tp of
-  GTLInt -> Fix $ GTLIntVal 0
+  (GTLInt i) -> Fix $ GTLIntVal 0
   GTLByte -> Fix $ GTLByteVal 0
   GTLBool -> Fix $ GTLBoolVal False
   GTLFloat -> Fix $ GTLFloatVal 0.0
