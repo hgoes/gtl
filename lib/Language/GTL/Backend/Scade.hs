@@ -348,7 +348,7 @@ generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
 scadeTranslateTypeC :: GTLType -> (String,String)
-scadeTranslateTypeC (Fix GTLInt) = ("kcg_int","")
+scadeTranslateTypeC (Fix (GTLInt i)) = ("kcg_int","")
 scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","")
 scadeTranslateTypeC (Fix (GTLNamed n _)) = (n,"")
 scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q) = scadeTranslateTypeC tp
@@ -364,7 +364,7 @@ scadeTranslateValueC d = case unfix d of
   _ -> error $ "Couldn't translate "++show d++" to C-value"
 
 scadeTypeToGTL :: ScadeTypeMapping -> ScadeTypeMapping -> Sc.TypeExpr -> Maybe GTLType
-scadeTypeToGTL _ _ Sc.TypeInt = Just gtlInt
+scadeTypeToGTL _ _ Sc.TypeInt = Just (gtlInt Nothing)
 scadeTypeToGTL _ _ Sc.TypeBool = Just gtlBool
 scadeTypeToGTL _ _ Sc.TypeReal = Just gtlFloat
 scadeTypeToGTL _ _ Sc.TypeChar = Just gtlByte
@@ -693,7 +693,7 @@ enumAlias types enum = Map.foldrWithKey (\n' t n -> n `Syb.orElse` (matchesEnum 
     matchesEnum _ _ _ = Nothing
 
 gtlTypeToScade :: ScadeTypeMapping -> GTLType -> Sc.TypeExpr
-gtlTypeToScade _ (Fix GTLInt) = Sc.TypeInt
+gtlTypeToScade _ (Fix (GTLInt i)) = Sc.TypeInt
 -- gtlTypeToScade GTLByte = ?
 gtlTypeToScade _ (Fix GTLBool) = Sc.TypeBool
 gtlTypeToScade _ (Fix GTLFloat) = Sc.TypeReal

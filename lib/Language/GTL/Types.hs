@@ -8,6 +8,7 @@ module Language.GTL.Types
         UnResolvedType,
         resolveType,baseType,
         gtlInt,gtlByte,gtlBool,gtlFloat,gtlEnum,gtlArray,gtlTuple,
+		gtlTypeBits,
         GTLValue(..),
         ToGTL(..),
         resolveIndices,
@@ -27,7 +28,7 @@ import Data.Set as Set
 import Prelude hiding (mapM)
 
 -- | All types that can occur in a GTL specification
-data GTLType' r = GTLInt -- ^ A 64bit unsigned integer
+data GTLType' r = GTLInt (Maybe Integer) -- ^ A 64bit unsigned integer
                 | GTLByte -- ^ A 8bit unsigned integer
                 | GTLBool -- ^ Either true or false
                 | GTLFloat -- ^ 64bit IEEE double
@@ -37,11 +38,23 @@ data GTLType' r = GTLInt -- ^ A 64bit unsigned integer
                 | GTLNamed String r -- ^ A type alias
                 deriving (Eq,Ord,Show)
 
-gtlInt,gtlByte,gtlBool,gtlFloat :: GTLType
-gtlInt = Fix GTLInt
+--gtlInt,
+gtlByte,gtlBool,gtlFloat :: GTLType
+--gtlInt = Fix GTLInt
 gtlByte = Fix GTLByte
 gtlBool = Fix GTLBool
 gtlFloat = Fix GTLFloat
+
+gtlInt :: Maybe Integer -> GTLType
+gtlInt i =  Fix $ GTLInt i
+
+gtlTypeBits :: GTLType -> Integer
+gtlTypeBits (Fix (GTLInt (Just b)))	= b
+gtlTypeBits (Fix (GTLInt Nothing)) 	= 64	-- default bit size of integer
+gtlTypeBits (Fix GTLByte)			= 8
+gtlTypeBits (Fix GTLBool)			= 1
+gtlTypeBits (Fix GTLFloat)			= 64	-- see GTLType 64bit IEEE double
+gtlTypeBits _ 						= error $ "getBits not supported for primitive type"
 
 gtlEnum :: [String] -> GTLType
 gtlEnum constr = Fix $ GTLEnum constr
@@ -69,7 +82,7 @@ resolveType aliases mp ut = case resolveType' aliases mp Set.empty ut of
 resolveType' :: Map String GTLType -> Map String UnResolvedType -> Set String -> UnResolvedType -> Either String GTLType
 resolveType' aliases mp tried (Fix (UnResolvedType' tp))
   = case tp of
-  Right GTLInt -> Right gtlInt
+  Right (GTLInt i) -> Right $ gtlInt i
   Right GTLByte -> Right gtlByte
   Right GTLBool -> Right gtlBool
   Right GTLFloat -> Right gtlFloat
@@ -115,7 +128,7 @@ class ToGTL t where
 
 instance ToGTL Integer where
   toGTL = GTLIntVal
-  gtlTypeOf _ = Fix GTLInt
+  gtlTypeOf _ = Fix (GTLInt Nothing)
 
 instance ToGTL Word8 where
   toGTL = GTLByteVal
@@ -144,6 +157,7 @@ instance Eq2 GTLType' where
 -- | Check if a type is a subtype of another type
 --   `isSubtypeOf t1 t2` returns true iff t1 can be used where t2 is required
 isSubtypeOf :: GTLType -> GTLType -> Bool
+isSubtypeOf (Fix (GTLInt (Just b))) (Fix (GTLInt Nothing)) = True
 isSubtypeOf (Fix (GTLNamed n1 _)) (Fix (GTLNamed n2 _)) = n1==n2
 isSubtypeOf tp (Fix (GTLNamed n tp2)) = isSubtypeOf tp tp2
 isSubtypeOf (Fix (GTLArray sz1 tp1)) (Fix (GTLArray sz2 tp2)) = sz1==sz2 && isSubtypeOf tp1 tp2
@@ -169,7 +183,7 @@ resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
 -- | Given a type, a function to extract type information from sub-values and a
 --   value, this function checks if the value is in the domain of the given type.
 isInstanceOf :: GTLType -> (r -> GTLType) -> GTLValue r -> Bool
-isInstanceOf (Fix GTLInt) _ (GTLIntVal _) = True
+isInstanceOf (Fix (GTLInt i)) _ (GTLIntVal _) = True				
 isInstanceOf (Fix GTLByte) _ (GTLByteVal _) = True
 isInstanceOf (Fix GTLBool) _ (GTLBoolVal _) = True
 isInstanceOf (Fix GTLFloat) _ (GTLFloatVal _) = True
@@ -184,8 +198,14 @@ intersperseS i [] = id
 intersperseS i [x] = x
 intersperseS i (x:xs) = x . i . (intersperseS i xs)
 
+-- | In case a integer is present you get "[x]", otherwise you get an empty String.
+showGTLIntBits :: Maybe Integer -> String
+showGTLIntBits b =	(case b of 
+						Just n  -> "[" ++ show n ++ "]"
+						Nothing -> "")
+
 instance Show2 GTLType' where
-  showsPrec2 _ GTLInt = showString "int"
+  showsPrec2 _ (GTLInt i) = showString "int" . showString ( showGTLIntBits i )
   showsPrec2 _ GTLByte = showString "byte"
   showsPrec2 _ GTLBool = showString "bool"
   showsPrec2 _ GTLFloat = showString "float"
@@ -251,6 +271,21 @@ lexPunc c = do
                 else pfail
     _ -> pfail
 
+intBrackParser :: ReadPrec GTLType
+intBrackParser = do
+	c <- lexP
+	case c of
+		Punc "[" -> (do
+			b <- lexP
+			case b of 
+				Int x -> (do
+					ch <- lexP
+					case ch of 
+						Punc "]" -> return (Fix $ GTLInt $ Just x)
+						_ -> pfail)
+				_ -> pfail)
+		_ -> pfail
+
 instance Read GTLType where
   readPrec = do
     tp <- readSingle
@@ -268,7 +303,7 @@ instance Read GTLType where
       readSingle = do
         tok <- lexP
         case tok of
-          Ident "int" -> return $ Fix GTLInt
+          Ident "int" -> intBrackParser <++ return (Fix (GTLInt Nothing))
           Ident "byte" -> return $ Fix GTLByte
           Ident "float" -> return $ Fix GTLFloat
           Ident "enum" -> do
@@ -294,7 +329,7 @@ instance Read GTLType where
           _ -> pfail
 
 instance Binary2 GTLType' where
-  put2 GTLInt = put (0::Word8)
+  put2 (GTLInt i) = put (0::Word8) >> put i
   put2 GTLByte = put (1::Word8)
   put2 GTLBool = put (2::Word8)
   put2 GTLFloat = put (3::Word8)
@@ -305,7 +340,9 @@ instance Binary2 GTLType' where
   get2 = do
     i <- get
     case (i::Word8) of
-      0 -> return GTLInt
+      0 -> do 
+		i <- get 
+		return (GTLInt i)
       1 -> return GTLByte
       2 -> return GTLBool
       3 -> return GTLFloat
