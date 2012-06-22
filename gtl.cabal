@@ -17,7 +17,7 @@ Flag SMTExts
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
     mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue,
-    syb,smtlib2,text,atto-lisp,time
+    syb,smtlib2,text,atto-lisp,time,graphviz
   Hs-Source-Dirs: lib
   if flag(SMTExts)
     GHC-Options: -fwarn-unused-imports -DSMTExts
@@ -45,7 +45,7 @@ Library
     --Language.GTL.Target.PromelaCUDD
     Language.GTL.Target.Promela
     Language.GTL.Target.PromelaKCG
-    --Language.GTL.Target.PrettyPrinter
+    Language.GTL.Target.PrettyPrinter
     Language.GTL.Target.Local
     Language.GTL.Target.Common
     Language.GTL.Target.UPPAAL

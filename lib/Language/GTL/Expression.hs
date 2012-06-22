@@ -304,7 +304,7 @@ unPrec (Finally _) = 2
 
 showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
 showTermWith f g p (Var name lvl u) = (if u == StateOut
-                                       then showString "#out " 
+                                       then showString "#out "
                                        else id) . f name lvl
 showTermWith f g p (Value val) = showString $ showGTLValue (\r -> g 0 r "") 0 val ""
 showTermWith f g p (BinBoolExpr op l r)
@@ -327,7 +327,7 @@ showTermWith f g p (BinRelExpr rel l r)
                   BinNEq -> " != "
                   BinAssign -> " := ") . (g 8 r)
 showTermWith f g p (BinIntExpr op l r)
-  = showParen (p > intPrec op) $ 
+  = showParen (p > intPrec op) $
     (g (intPrec op) l) .
     (showString $ case op of
         OpPlus -> " + "
@@ -336,7 +336,7 @@ showTermWith f g p (BinIntExpr op l r)
         OpDiv -> " / ") .
     (g (intPrec op) r)
 showTermWith f g p (UnBoolExpr op arg)
-  = showParen (p > unPrec op) $ 
+  = showParen (p > unPrec op) $
     (showString $ case op of
         Not -> "not "
         Always -> "always "
@@ -348,7 +348,7 @@ showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 c
 showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
 showTermWith f g p (Automaton ba)
   = showString "automaton {"
-    . foldl (.) id [ (if Set.member st (baInits ba) 
+    . foldl (.) id [ (if Set.member st (baInits ba)
                       then showString "init "
                       else id) .
                      (if Set.member st (baFinals ba)
@@ -447,7 +447,7 @@ typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getTyp
       if rel==BinEq || rel==BinNEq
         then (do
                  enforceType (mus rr) (mutp rr) (mutp ll))
-        else (do 
+        else (do
 				enforceType (mus ll) (mutp ll) (gtlInt $ (Just $ gtlTypeBits (mutp ll)))
 				enforceType (mus rr) (mutp rr) (gtlInt $ (Just $ gtlTypeBits (mutp rr))))
       return $ Typed gtlBool (BinRelExpr rel ll rr)

@@ -420,7 +420,7 @@ scadeTypes :: [Sc.Declaration] -> ScadeTypeMapping
 scadeTypes decls = (\types -> resolvePackageOpen types types decls) $ (readScadeTypes decls)
   where
     readScadeTypes [] = Map.empty
-    readScadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont of
+    readScadeTypes ((TypeBlock tps):xs) = Prelude.foldl (\mp (TypeDecl _ name cont) -> case cont of
                                                 Nothing -> mp
                                                 Just expr -> Map.insert name (ScadeType expr) mp
                                             ) (readScadeTypes xs) tps
@@ -583,7 +583,7 @@ stateToTransition locals cond trg =
 -- TODO: is this the correct behaviour and the only case.
 exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 exprToScade locals (Fix expr) = case getValue expr of
-  Var name lvl u -> (foldl (\e _ -> UnaryExpr UnPre e) (case u of
+  Var name lvl u -> (Prelude.foldl (\e _ -> UnaryExpr UnPre e) (case u of
                                                            StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
                                                            _ -> IdExpr (Path [name])
                                                        ) [1..lvl], Nothing)
@@ -684,7 +684,7 @@ declarationsToScade types decls defs = concat $ map declarationsToScade' decls
         makeTupleDecl :: String -> [Int] -> Int -> GTLType -> (Int, [Sc.VarDecl])
         makeTupleDecl n indcs indx (Fix (GTLTuple ts)) = (indx + 1, makeTupleDecls n (indx : indcs) ts)
         makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade types t) Nothing Nothing])
-        expandName = foldl (\n i -> n ++ "_" ++ show i ) ""
+        expandName = Prelude.foldl (\n i -> n ++ "_" ++ show i ) ""
 
 declareConstVars :: ScadeTypeMapping -> Map String (GTLType, GTLConstant) -> [Sc.VarDecl]
 declareConstVars types = foldrWithKey (\n (t,v) l -> (VarDecl [VarId n False False] (gtlTypeToScade types t) Nothing Nothing) : l) []

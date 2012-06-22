@@ -7,8 +7,7 @@ module Language.GTL.Types
         UnResolvedType'(..),
         UnResolvedType,
         resolveType,baseType,
-        gtlInt,gtlByte,gtlBool,gtlFloat,gtlEnum,gtlArray,gtlTuple,
-		gtlTypeBits,
+        gtlInt,gtlByte,gtlBool,gtlFloat,gtlEnum,gtlArray,gtlTuple, gtlTypeBits,
         GTLValue(..),
         ToGTL(..),
         resolveIndices,
@@ -24,9 +23,9 @@ import Data.Foldable (Foldable)
 import Data.Traversable
 import Control.Monad.Error (MonadError(..))
 import Data.Fix
-import Data.Map as Map
-import Data.Set as Set
-import Prelude hiding (mapM)
+import Data.Map as Map hiding (foldl)
+import Data.Set as Set hiding (foldl)
+import Prelude hiding (mapM, foldl)
 
 -- | All types that can occur in a GTL specification
 data GTLType' r = GTLInt (Maybe Integer) -- ^ A 64bit unsigned integer
@@ -209,7 +208,7 @@ intersperseS i (x:xs) = x . i . (intersperseS i xs)
 
 -- | In case a integer is present you get "[x]", otherwise you get an empty String.
 showGTLIntBits :: Maybe Integer -> String
-showGTLIntBits b =	(case b of 
+showGTLIntBits b =	(case b of
 						Just n  -> "[" ++ show n ++ "]"
 						Nothing -> "")
 
@@ -286,10 +285,10 @@ intBrackParser = do
 	case c of
 		Punc "[" -> (do
 			b <- lexP
-			case b of 
+			case b of
 				Int x -> (do
 					ch <- lexP
-					case ch of 
+					case ch of
 						Punc "]" -> return (Fix $ GTLInt $ Just x)
 						_ -> pfail)
 				_ -> pfail)
@@ -313,7 +312,7 @@ instance Read GTLType where
       readSingle = do
         tok <- lexP
         case tok of
-          Ident "int" -> intBrackParser <++ return (Fix (GTLInt Nothing))
+          Ident "int" -> return $ Fix (GTLInt Nothing)
           Ident "byte" -> return $ Fix GTLByte
           Ident "float" -> return $ Fix GTLFloat
           Ident "enum" -> do
@@ -350,8 +349,8 @@ instance Binary2 GTLType' where
   get2 = do
     i <- get
     case (i::Word8) of
-      0 -> do 
-		i <- get 
+      0 -> do
+		i <- get
 		return (GTLInt i)
       1 -> return GTLByte
       2 -> return GTLBool

@@ -23,7 +23,7 @@ import Language.GTL.Target.Local
 import Language.GTL.Translation
 import Language.GTL.Model
 --import Language.GTL.Target.PromelaCUDD as PrBd
---import Language.GTL.Target.PrettyPrinter as PrPr
+import Language.GTL.Target.PrettyPrinter as PrPr
 import Language.GTL.Target.Promela as PrNat
 import Language.GTL.Target.UPPAAL as UPP
 import Language.GTL.Target.Printer
@@ -95,9 +95,9 @@ main = do
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal opts (dropExtension gtl_file) rgtl
     --PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
-    {-Tikz -> do
+    Tikz -> do
       str <- PrPr.gtlToTikz rgtl
-      putStrLn str-}
+      putStrLn str
     Pretty -> putStrLn (simplePrettyPrint rgtl)
     Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
     UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)

@@ -9,81 +9,80 @@ import Language.GTL.Expression as GTL
 import Language.GTL.LTL hiding (And)
 import Language.GTL.Translation
 import Language.GTL.Types
-import Data.GraphViz hiding (Model)
-import qualified Data.GraphViz as GV
+import Data.GraphViz
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
+import Data.GraphViz.Attributes.Complete
+import qualified Data.Text.Lazy as T
+import Data.Int (Int64)
 import Data.Maybe
-import Data.Map as Map hiding (mapMaybe)
-import Data.Set as Set
+import Data.Map as Map hiding (mapMaybe, foldl)
+import Data.Set as Set hiding (foldl)
 import Data.List as List
-import Data.Graph.Inductive.Graph
-import Data.Graph.Inductive.Tree
+import Data.Text.Lazy.Internal
 import System.Process
 import Data.Traversable
 import Prelude hiding (mapM)
+import Language.GTL.Buchi
 
 -- | Get the bounding box of a preprocessed graph.
 getDotBoundingBox :: DotGraph a -> Rect
 getDotBoundingBox gr
   = case concat (fmap (\attr -> case attr of
                           GraphAttrs gattr -> mapMaybe (\rattr -> case rattr of
-                                                           Bb rect -> Just rect
+                                                           BoundingBox rect -> Just rect
                                                            _ -> Nothing) gattr
                           _ -> []
                       ) (attrStmts (graphStatements gr))) of
       [] -> error "No bounding box defined"
       (x:xs) -> x
 
-removeBreaks :: String -> String
-removeBreaks ('\\':'\n':xs) = removeBreaks xs
-removeBreaks (x:xs) = x:removeBreaks xs
-removeBreaks [] = []
+removeBreaks :: Text -> Text
+removeBreaks = T.replace (T.pack "\\\n") Empty
 
 -- | Convert a Buchi automaton into a Dot graph.
-buchiToDot :: GBuchi Integer (Set (TypedExpr String,Bool)) f -> DotGraph String
+buchiToDot :: BA [TypedExpr String] Integer -> DotGraph String
 buchiToDot buchi
   = DotGraph { strictGraph = False
              , directedGraph = True
              , graphID = Nothing
-             , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
+             , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap $ PrismOverlap Nothing
                                                                     ,Splines SplineEdges
                                                                     ]]
                                           , subGraphs = []
                                           , nodeStmts = [ DotNode (nd i) [Shape Ellipse
-                                                                         ,Label $ StrLabel $
-                                                                          unlines [replicate (estimateWidth (if tr
-                                                                                                             then at
-                                                                                                             else distributeNot at)) ' '
-                                                                                  | (at,tr) <- Set.toList (vars st)]
-                                                                         ,Comment $ "\\begin{array}{c}" ++
-                                                                          (concat $ intersperse "\\\\" [ exprToLatex (if tr
-                                                                                                                      then at
-                                                                                                                      else distributeNot at)
-                                                                                                       | (at,tr) <- Set.toList (vars st)]) ++
-                                                                          "\\end{array}"
                                                                          ,Height 0.5,Width 0.5,Margin (DVal 0)
                                                                          ]
-                                                        | (i,st) <- Map.toList buchi
+                                                        | (i,st) <- Map.toList $ baTransitions buchi 
                                                         ] ++
                                                         [ DotNode "start" [Shape PointShape
                                                                           ]
                                                         ]
-                                          ,edgeStmts = [ DotEdge { edgeFromNodeID = nd f
-                                                                 , edgeToNodeID = nd t
-                                                                 , directedEdge = True
-                                                                 , edgeAttributes = []
+                                          ,edgeStmts = [ DotEdge { fromNode = nd st
+                                                                 , toNode = nd trg
+                                                                 , edgeAttributes = [
+                                                                 textLabel $ T.unlines [T.unlines [exprToLatex te | (te) <- at] | (at, _) <- trans]
+                                                                 , Comment $ 
+																  T.append 
+																	(T.append 
+																		(T.pack $ "\\begin{array}{c}")
+																 		(T.concat $ 
+																	 		intersperse (T.pack "\\\\\\") (
+																					concat [[exprToLatex te | te <- at] | (at, _) <- trans])
+																		)
+																	) 
+																	(T.pack $ "\\end{array}")
+                                                                 ]
                                                                  }
-                                                       | (f,st) <- Map.toList buchi
-                                                       , t <- Set.toList (successors st)
+                                                       | (st,trans) <- Map.toList $ baTransitions buchi
+                                                       , (cond,trg) <- trans
                                                        ] ++
-                                                       [ DotEdge { edgeFromNodeID = "start"
-                                                                 , edgeToNodeID = nd t
-                                                                 , directedEdge = True
+                                                       [ DotEdge { fromNode = "start"
+                                                                 , toNode = nd st
                                                                  , edgeAttributes = []
                                                                  }
-                                                       | (t,st) <- Map.toList buchi
-                                                       , isStart st
+                                                       | (st,trans) <- Map.toList $ baTransitions buchi
+                                                       , Set.member st (baInits buchi)
                                                        ]
                                           }
              }
@@ -98,24 +97,24 @@ generatePorts left mp
                 ]
     where
       generateTypePorts :: String -> [Integer] -> GTLType -> RecordField
-      generateTypePorts name pos (GTLArray sz tp) 
+      generateTypePorts name pos (Fix (GTLArray sz tp))
         = let f1 = FieldLabel (case pos of
-                                  [] -> name
-                                  x:xs -> show x)
+                                  [] -> T.pack name
+                                  x:xs -> T.pack $ show x)
               f2 = FlipFields [ generateTypePorts name (p:pos) tp
                               | p <- [0..(sz-1)] ]
           in FlipFields $ if left then [f2,f1] else [f1,f2]
-      generateTypePorts name pos (GTLTuple tps)
+      generateTypePorts name pos (Fix (GTLTuple tps))
         = let f1 = FieldLabel (case pos of
-                                  [] -> name
-                                  x:xs -> show x)
+                                  [] -> T.pack name
+                                  x:xs -> T.pack $ show x)
               f2 = FlipFields [ generateTypePorts name (p:pos) tp
                               | (p,tp) <- zip [0..] tps ]
           in FlipFields $ if left then [f2,f1] else [f1,f2]
       generateTypePorts name pos _ = LabelledTarget (PN $ genPortName name (reverse pos))
                                      (case pos of
-                                         [] -> name
-                                         x:xs -> show x)
+                                         [] -> T.pack name
+                                         x:xs -> T.pack $ show x)
 
 -- | Convert a GTL specification to Tikz drawing commands.
 --   This needs to be IO because it calls graphviz programs to preprocess the picture.
@@ -129,9 +128,9 @@ gtlToTikz spec = do
   let gr = DotGraph { strictGraph = False
                     , directedGraph = True
                     , graphID = Nothing
-                    , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap RemoveOverlaps
+                    , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap $ PrismOverlap Nothing
                                                                            ,Splines SplineEdges
-                                                                           ,GV.Model Circuit
+                                                                           ,Model Circuit
                                                                            ,Epsilon 0.0000001
                                                                            ,ESep (DVal 0.1)
                                                                            ,MaxIter 10000
@@ -142,17 +141,15 @@ gtlToTikz spec = do
                                                  , nodeStmts = [ DotNode name [Shape Record
                                                                               ,FontSize 10.0
                                                                               ,Label $ RecordLabel $ (generatePorts True inp)++
-                                                                               [FieldLabel (unlines $
-                                                                                            replicate (ceiling $ h / 12)
-                                                                                            (replicate (ceiling $ w / 5.8) 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+                                                                               [FieldLabel $ T.replicate (ceiling $ h / 12)
+                                                                                            (T.replicate (ceiling $ w / 5.8) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (generatePorts False outp)
                                                                               ]
                                                                | (name,(inp,outp,repr,w,h)) <- Map.toList mp
                                                                ]
-                                                 , edgeStmts = [DotEdge { edgeFromNodeID = f
-                                                                        , edgeToNodeID = t
-                                                                        , directedEdge = True
+                                                 , edgeStmts = [DotEdge { fromNode = f
+                                                                        , toNode = t
                                                                         , edgeAttributes = [TailPort (LabelledPort (PN $ genPortName fv fi) (Just East))
                                                                                            ,HeadPort (LabelledPort (PN $ genPortName tv ti) (Just West))
                                                                                            ]
@@ -161,20 +158,20 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  outp <- readProcess "fdp" ["-Tdot"] (printIt gr)
+  outp <- fmap (\i -> T.pack i) (readProcess "fdp" ["-Tdot"] (show $ printIt gr))
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
-genPortName :: String -> [Integer] -> String
-genPortName var ind = var ++ concat (fmap (\i -> "_"++show i) ind)
+genPortName :: String -> [Integer] -> Text
+genPortName var ind = T.append (T.pack var) (T.concat (fmap (\i -> T.pack ("_"++show i)) ind))
 
 -- | Convert a single model into Tikz drawing commands.
 --   Also returns the width and height of the bounding box for the rendered picture.
 modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
-  let ltl = gtlToLTL (gtlModelContract m)
-      buchi = ltlToBuchi distributeNot ltl
-  outp <- readProcess "sfdp" ["-Tdot"] (printIt $ buchiToDot buchi)
+  let ltl = gtlToLTL Nothing (gtlModelContract m)
+      buchi = ltl2ba ltl
+  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (show $ printIt $ buchiToDot buchi))
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
@@ -192,19 +189,19 @@ layoutRects left rects ((name,tp):rest) = let (out,rbox) = layoutRectsType rects
   where
     drawLabel :: Rect -> String -> String
     drawLabel (Rect p1 p2) lbl = "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++lbl++"};"
-    
+
     layoutRectsType :: [Rect] -> String -> [Integer] -> GTLType -> ([String],[Rect])
-    layoutRectsType (r1:rest) name pos (GTLArray sz tp)
+    layoutRectsType (r1:rest) name pos (Fix (GTLArray sz tp))
       = let f q = foldl (\(strs,(r:rs)) i -> ((drawBox r):(drawLabel r (show i)):strs,rs)) q [0..(sz-1)]
-            (mbox,(out,rects')) = if left 
+            (mbox,(out,rects')) = if left
                                   then (let (o,r2:r3) = f ([],(r1:rest)) in (r2,(o,r3)))
                                   else (r1,f ([],rest))
         in ((drawBox mbox):(drawLabel mbox (case pos of
                                                [] -> name
                                                x:xs -> show x)):out,rects')
-    layoutRectsType (r1:rest) name pos (GTLTuple tps)
+    layoutRectsType (r1:rest) name pos (Fix (GTLTuple tps))
       = let f q = foldl (\(strs,(r:rs)) (i,tp) -> ((drawBox r):(drawLabel r (show i)):strs,rs)) q (zip [0..] tps)
-            (mbox,(out,rects')) = if left 
+            (mbox,(out,rects')) = if left
                                   then (let (o,r2:r3) = f ([],(r1:rest)) in (r2,(o,r3)))
                                   else (r1,f ([],rest))
         in ((drawBox mbox):(drawLabel mbox (case pos of
@@ -228,7 +225,7 @@ dotToTikz mtp gr
   = unlines
     ([case shape of
          Ellipse -> "\\draw [color=blue!50,very thick,fill=blue!20]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
-                    "\\draw "++pointToTikz pos++" node {$"++lbl++"$};"
+                    "\\draw "++pointToTikz pos++" node {$"++(T.unpack lbl)++"$};"
          Record -> let (out1,mrect@(Rect m1 m2):rect1) = layoutRects True rects (Map.toList inp)
                        (out2,rect2) = layoutRects False rect1 (Map.toList outp)
                    in unlines ([drawBox mrect]++out1++out2
@@ -257,7 +254,7 @@ dotToTikz mtp gr
                                   Comment _ -> True
                                   _ -> False) (nodeAttributes nd) of
                  Just (Comment x) -> removeBreaks x
-                 _ -> "none" --error "No label given"
+                 _ -> T.pack "none" --error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
@@ -307,44 +304,52 @@ splinePoints (x:xs) = splinePoints' x xs
     splinePoints' p (x:y:z:xs) = (p,x,y,z):splinePoints' z xs
 
 -- | Render a GTL atom to LaTeX.
-exprToLatex :: TypedExpr String -> String
-exprToLatex expr = case getValue expr of
-  BinRelExpr rel l r -> (exprToLatex $ unfix l)
-                        ++(case rel of
+exprToLatex :: TypedExpr String -> T.Text
+exprToLatex expr = case getValue $ unfix expr of
+	BinRelExpr rel l r -> T.append (exprToLatex l)
+                         (T.append
+						  (T.pack (case rel of
                               BinLT -> "<"
                               BinLTEq -> "\\leq "
                               BinGT -> ">"
                               BinGTEq -> "\\geq "
                               BinEq -> "="
-                              BinNEq -> "\neq ")
-                        ++(exprToLatex $ unfix r)
-  Var v h -> v++(if h==0 then "" else "["++show h++"]")
-  Value v -> case v of
-    GTLIntVal x -> show x
-    GTLBoolVal x -> show x
-    GTLEnumVal x -> "\\textrm{"++x++"}"
-  BinIntExpr rel lhs rhs -> (exprToLatex $ unfix lhs)
-                            ++(case rel of
-                                  OpPlus -> "+"
-                                  OpMinus -> "-"
-                                  OpMult -> "\\cdot "
-                                  OpDiv -> "/")
-                            ++(exprToLatex $ unfix rhs)
-  UnBoolExpr GTL.Not p -> "\\lnot "++(exprToLatex $ unfix p)
-  IndexExpr expr idx -> exprToLatex (unfix expr) ++ "_{"++show idx++"}"
+                              BinNEq -> "\neq "))
+                          (exprToLatex r)
+						 )
+	Var v h _ -> T.pack (v++(if h==0 then "" else "["++show h++"]"))
+	Value v -> T.pack (case v of
+		GTLIntVal x -> show x
+		GTLBoolVal x -> show x
+		GTLEnumVal x -> "\\textrm{"++x++"}")
+	BinIntExpr rel lhs rhs -> T.append (exprToLatex lhs)
+							(T.append 
+							  (T.pack (case rel of
+								OpPlus -> "+"
+								OpMinus -> "-"
+								OpMult -> "\\cdot "
+								OpDiv -> "/"))
+							 (exprToLatex rhs)
+							)
+	UnBoolExpr GTL.Not p -> T.append (T.pack "\\lnot ") (exprToLatex p)
+	IndexExpr expr idx -> T.append (exprToLatex expr) (T.pack $ "_{"++show idx++"}")
+
+-- | convert int to int64
+int2Int64 :: Int -> Int64
+int2Int64 i = fromInteger $ toInteger i
 
 -- | Estimate the visible width of a LaTeX rendering of a GTL atom in characters.
-estimateWidth :: TypedExpr String -> Int
-estimateWidth expr = case getValue expr of
-  BinRelExpr _ lhs rhs -> 3+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
-  Var v h -> (length v)+(if h==0 then 0 else 2+(length (show h)))
-  Value (GTLBoolVal x) -> length (show x)
-  Value (GTLIntVal x) -> length (show x)
-  Value (GTLEnumVal x) -> 1+(length x)
-  Value (GTLArrayVal xs) -> 1+(length xs)+sum (fmap (estimateWidth.unfix) xs)
-  Value (GTLTupleVal xs) -> 1+(length xs)+sum (fmap (estimateWidth.unfix) xs)
-  BinIntExpr _ lhs rhs -> 1+(estimateWidth $ unfix lhs)+(estimateWidth $ unfix rhs)
-  IndexExpr expr idx -> estimateWidth (unfix expr) + ((length (show idx) + 1) `div` 2)
-  UnBoolExpr GTL.Not e -> 1 + (estimateWidth (unfix e))
-  _ -> error $ "Internal error: Can't estimate width of expression "++show expr
+estimateWidth :: TypedExpr String -> Int64
+estimateWidth expr = case getValue $ unfix expr of
+  BinRelExpr _ lhs rhs -> 3+(estimateWidth lhs)+(estimateWidth rhs)
+  Var v h _ -> int2Int64 $ (length v)+(if h==0 then 0 else 2+(length $ show h))
+  Value (GTLBoolVal x) -> int2Int64 $ length (show x)
+  Value (GTLIntVal x) -> int2Int64 $ length (show x)
+  Value (GTLEnumVal x) -> 1+(int2Int64 $ length x)
+  Value (GTLArrayVal xs) -> 1+(int2Int64 $ length xs)+sum (fmap (estimateWidth) xs)
+  Value (GTLTupleVal xs) -> 1+(int2Int64 $ length xs)+sum (fmap (estimateWidth) xs)
+  BinIntExpr _ lhs rhs -> 1+(estimateWidth lhs)+(estimateWidth rhs)
+  IndexExpr expr idx -> (estimateWidth expr) + ((int2Int64 $ length (show idx) + 1) `div` 2)
+  UnBoolExpr GTL.Not e -> 1 + (estimateWidth e)
+  _ -> error $ "Internal error: Can't estimate width of expression " ++ show expr
 

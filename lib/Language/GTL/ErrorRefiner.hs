@@ -13,7 +13,7 @@ import Data.Binary.Put
 import Data.Binary.Get
 import qualified Data.ByteString.Lazy as LBS
 --import Codec.Compression.BZip
-import Data.List (genericLength,elemIndex)
+import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
@@ -72,7 +72,7 @@ atomToC f idx (Fix expr) = case getValue expr of
   IndexExpr e i -> atomToC f (i:idx) e
 
 -- | Convert a GTL value to a C value
-valueToC :: GTLType -> GTLValue a -> String      
+valueToC :: GTLType -> GTLValue a -> String
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
