@@ -52,6 +52,8 @@ buchiToDot buchi
                                           , subGraphs = []
                                           , nodeStmts = [ DotNode (nd i) [Shape Ellipse
                                                                          ,Height 0.5,Width 0.5,Margin (DVal 0)
+																		 , textLabel $ T.pack (nd i)
+																		 , Comment $ T.pack (nd i)
                                                                          ]
                                                         | (i,st) <- Map.toList $ baTransitions buchi 
                                                         ] ++
@@ -76,7 +78,8 @@ buchiToDot buchi
                                                                  }
                                                        | (st,trans) <- Map.toList $ baTransitions buchi
                                                        , (cond,trg) <- trans
-                                                       ] ++
+                                                       ] 
+													   ++
                                                        [ DotEdge { fromNode = "start"
                                                                  , toNode = nd st
                                                                  , edgeAttributes = []
@@ -158,7 +161,7 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  outp <- fmap (\i -> T.pack i) (readProcess "fdp" ["-Tdot"] (show $ printIt gr))
+  outp <- fmap (\i -> T.pack i) (readProcess "neato" ["-Tdot"] (T.unpack $ printIt gr))
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
@@ -171,7 +174,7 @@ modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL Nothing (gtlModelContract m)
       buchi = ltl2ba ltl
-  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (show $ printIt $ buchiToDot buchi))
+  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
@@ -243,23 +246,23 @@ dotToTikz mtp gr
            h = case List.find (\attr -> case attr of
                                   Height _ -> True
                                   _ -> False) (nodeAttributes nd) of
-                 Just (Height x) -> 36.0*x
+                 Just (Height x) -> 16.0*x
                  _ -> error "No height given"
            w = case List.find (\attr -> case attr of
                                   Width _ -> True
                                   _ -> False) (nodeAttributes nd) of
-                 Just (Width x) -> 36.0*x
+                 Just (Width x) -> 16.0*x
                  _ -> error "No width given"
            lbl = case List.find (\attr -> case attr of
                                   Comment _ -> True
                                   _ -> False) (nodeAttributes nd) of
                  Just (Comment x) -> removeBreaks x
-                 _ -> T.pack "none" --error "No label given"
+                 _ -> error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
                      Just (Shape x) -> x
-                     _ -> Ellipse --error "No shape given"
+                     _ -> error "No shape given"
            rlbl = case List.find (\attr -> case attr of
                                   Label _ -> True
                                   _ -> False) (nodeAttributes nd) of
