@@ -56,8 +56,8 @@ import Data.AtomContainer
 
 import Data.Binary
 import Data.Maybe
-import Data.Map as Map
-import Data.Set as Set
+import Data.Map as Map hiding (foldl)
+import Data.Set as Set hiding (foldl)
 import Data.List as List (genericLength,genericIndex,genericReplicate)
 import Data.Either
 import Data.Foldable

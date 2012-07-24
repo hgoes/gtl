@@ -50,14 +50,13 @@ instance SMTType EnumVal where
   type SMTAnnotation EnumVal = [String]
 #ifdef SMTExts
   getSort _ vals = L.Symbol (T.pack $ "Enum"++concat [ "_"++val | val <- vals ])
-  declareType _ vals = let name = "Enum"++concat [ "_"++val | val <- vals ]
-                           decl = declareDatatypes [] [(T.pack $ name,[(T.pack val,[]) | val <- vals])]
-                       in [(mkTyConApp (mkTyCon name) [],decl)]
+  declareType u vals = let name = "Enum"++concat [ "_"++val | val <- vals ] 
+                       in declareType' (typeOf u) (declareDatatypes [] [(T.pack $ name,[(T.pack val,[]) | val <- vals])]) (return ())
   additionalConstraints _ _ _ = []
 #else
   getSort _ vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
                    in getSort (undefined::BitS.Bitstream BitS.Left) (BitstreamLen $ fromIntegral bits) --L.List [L.Symbol "_",L.Symbol "BitVec",show bits]
-  declareType _ vals = []
+  declareType _ vals = return ()
   additionalConstraints _ enums var = [BVULE var (SMT.constantAnn (EnumVal $ List.last enums) enums)]
 #endif
 

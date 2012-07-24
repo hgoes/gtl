@@ -18,8 +18,8 @@ import Language.GTL.Translation
 import Language.GTL.Buchi
 import Language.GTL.Restriction
 
-import Data.Set as Set
-import Data.Map as Map
+import Data.Set as Set hiding (foldl)
+import Data.Map as Map hiding (foldl)
 import Data.List (genericIndex)
 import Control.Monad.Identity
 import Data.Foldable

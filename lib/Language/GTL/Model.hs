@@ -10,8 +10,8 @@ import Language.GTL.Parser.Monad
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Language.GTL.Types
-import Data.Map as Map hiding (map)
-import Data.Set as Set hiding (map)
+import Data.Map as Map hiding (map,foldl)
+import Data.Set as Set hiding (map,foldl)
 import Data.Either (partitionEithers)
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)

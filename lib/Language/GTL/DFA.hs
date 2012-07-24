@@ -6,8 +6,8 @@ module Language.GTL.DFA (
   where
 
 import Prelude hiding (foldl)
-import Data.Set as Set
-import Data.Map as Map
+import Data.Set as Set hiding (foldl)
+import Data.Map as Map hiding (foldl)
 import Data.Maybe
 import Data.Foldable (foldl, find)
 import Language.GTL.Buchi

@@ -14,7 +14,7 @@ import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat,mapM)
-import Data.Set as Set
+import Data.Set as Set hiding (foldl)
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be

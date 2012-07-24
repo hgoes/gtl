@@ -14,7 +14,7 @@ import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.DFA
-import Data.Map as Map hiding (map, filter)
+import Data.Map as Map hiding (map, filter, foldl)
 import Control.Monad.Identity
 import Data.List as List (intercalate, mapAccumL, intersperse, findIndex)
 import Data.Maybe (isJust)
@@ -226,6 +226,7 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
                       , cwd = Nothing, env = Nothing
                       , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
                       , close_fds = False
+                      , create_group = False
                     }
     exitCode <- Proc.waitForProcess p
     case exitCode of

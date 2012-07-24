@@ -8,7 +8,7 @@ module Language.GTL.Restriction
 import Language.GTL.Expression
 import Language.GTL.Types
 
-import Data.Set as Set
+import Data.Set as Set hiding (foldl)
 
 {-| Represents a value space for a single variable. -}
 data Restriction v = Restriction

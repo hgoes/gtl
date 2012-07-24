@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts,FlexibleInstances #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
