@@ -1,0 +1,63 @@
+\documentclass{article}
+
+\usepackage{xparse}
+\usepackage{tikz}
+\usepackage{ifthen}
+\usetikzlibrary{calc,positioning}
+\usetikzlibrary{automata,arrows} 
+\usetikzlibrary{fit,chains}
+\input{box_sty}
+\input{record_sty}
+
+
+\usepackage{verbatim}
+\usepackage[paperwidth=1500pt,paperheight=250pt]{geometry}
+
+
+\begin{document}
+
+\begin{tikzpicture}[node distance=2.5cm,auto,>=latex']
+\node (autom"c") at ((579.0bp,29.0bp)) {
+\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm,scale = 1, transform shape]
+  \begin{scope}[shift={(480.0bp,-33.225bp)}]
+buechi2dot
+\draw [color=blue!50,very thick,fill=blue!20](18.0bp,51.445bp) ellipse (16.0bp and 16.0bp);
+\draw (18.0bp,51.445bp);
+\draw [fill](18.0bp,122.45bp) ellipse (1.244448bp and 1.6bp);
+\draw [-,thick] (35.782bp,55.939bp) .. controls (45.315bp,56.703bp) and (54.0bp,55.205bp) .. (54.0bp,51.445bp) {$\begin{array}{c}p\\\ix\geq 10\end{array}$}; %v1
+\draw [-,thick] (54.0bp,51.445bp) .. controls (54.0bp,49.154bp) and (50.775bp,47.703bp) .. (46.098bp,47.091bp) {$\begin{array}{c}p\\\ix\geq 10\end{array}$}; %v1
+\draw [-,thick] (24.533bp,68.515bp) .. controls (50.889bp,119.12bp) and (121.0bp,113.43bp) .. (121.0bp,51.445bp) {$\begin{array}{c}p\\\ix\geq 10\end{array}$}; %v1
+\draw [-,thick] (121.0bp,51.445bp) .. controls (121.0bp,-6.7867bp) and (59.122bp,-15.334bp) .. (29.776bp,25.802bp) {$\begin{array}{c}p\\\ix\geq 10\end{array}$}; %v1
+\draw [-,thick] (18.0bp,120.47bp) .. controls (18.0bp,115.97bp) and (18.0bp,96.684bp) .. (18.0bp,79.794bp) {$$}; %v1
+\draw [-latex,thick] (46.098bp,47.091bp) -- (35.782bp,46.951bp); %v2
+\draw [-latex,thick] (29.776bp,25.802bp) -- (24.533bp,34.375bp); %v2
+\draw [-latex,thick] (18.0bp,79.794bp) -- (18.0bp,69.74bp); %v2
+end buechi2dot
+  \end{scope}
+\end{tikzpicture}
+};
+\drawrecord((579.0bp,29.0bp)){"c"}{ {ix,ix2,ix3} }{ {p} }{autom"c"}
+
+\node (autom"p") at ((124.0bp,113.0bp)) {
+\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm,scale = 1, transform shape]
+  \begin{scope}[shift={(59.5bp,69.0bp)}]
+buechi2dot
+\draw [color=blue!50,very thick,fill=blue!20](18.0bp,23.0bp) ellipse (16.0bp and 16.0bp);
+\draw (18.0bp,23.0bp);
+\draw [fill](18.0bp,86.0bp) ellipse (1.244448bp and 1.6bp);
+\draw [-,thick] (34.664bp,30.383bp) .. controls (44.625bp,32.023bp) and (54.0bp,29.562bp) .. (54.0bp,23.0bp) {$\begin{array}{c}x\geq 0\\\x<10\end{array}$}; %v1
+\draw [-,thick] (54.0bp,23.0bp) .. controls (54.0bp,18.796bp) and (50.152bp,16.275bp) .. (44.768bp,15.438bp) {$\begin{array}{c}x\geq 0\\\x<10\end{array}$}; %v1
+\draw [-,thick] (18.0bp,83.941bp) .. controls (18.0bp,79.932bp) and (18.0bp,65.208bp) .. (18.0bp,51.358bp) {$$}; %v1
+\draw [-latex,thick] (44.768bp,15.438bp) -- (34.664bp,15.617bp); %v2
+\draw [-latex,thick] (18.0bp,51.358bp) -- (18.0bp,41.129bp); %v2
+end buechi2dot
+  \end{scope}
+\end{tikzpicture}
+};
+\drawrecord((124.0bp,113.0bp)){"p"}{ {} }{ {x} }{autom"p"}
+
+%"p" --> "c"
+
+\end{tikzpicture}
+
+\end{document}

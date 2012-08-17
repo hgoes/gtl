@@ -1,0 +1,42 @@
+
+\newcounter{image}
+\setcounter{image}{0}
+\pgfmathtruncatemacro{\recordwidth}{4}
+\pgfmathtruncatemacro{\recordheight}{2}
+
+\newcommand{\setrecordwidth}[1]{\pgfmathtruncatemacro{\recordwidth}{#1}}
+\newcommand{\setrecordheight}[1]{\pgfmathtruncatemacro{\recordheight}{#1}}
+
+\tikzset{drawinside/.code n args={3}{%
+		%
+		%% input box
+		\RecordBox{ #2 }{1}{#1}
+%
+		%% output box
+		\RecordBox{ #3 }{2}{#1}
+    }
+}
+
+\tikzset{record/.style args={#1 and #2}{
+        rectangle,draw,minimum width=#1, minimum height=#2
+    }
+}
+
+\NewDocumentCommand{\drawrecord}{d() m m m m}{ %1. coord. [optional], recname, input var., output var., automat name
+\stepcounter{image}
+\IfNoValueTF{#1}{%true
+\node[record=\recordwidth cm and \recordheight cm,name=a#2,
+fit=(#5)]{};
+}
+{%false
+\node[record=\recordwidth cm and \recordheight cm,name=a#2, inner
+sep =\recordwidth * 0.15cm,
+fit=(#5)] at (#1){};
+}
+\node[drawinside={a#2}{#3}{#4}] (A) at (a#2.center)
+{};
+}
+
+\NewDocumentCommand{\connect}{m m}{
+\draw[->] (#1) -- (#2);
+}
