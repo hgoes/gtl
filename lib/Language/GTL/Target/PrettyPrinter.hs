@@ -192,7 +192,6 @@ getrecnames vars = "{" ++ (list vars) ++ "}"
 		list [] = ""
 		list ((name,tp):[]) = name
 		list ((name,tp):rest) = name ++ "," ++ (list rest)
-		--list ((name, _):xs) = name ++ "," ++ (list xs)
 
 layoutRects :: Bool -> [Rect] -> [(String,GTLType)] -> ([String],[Rect])
 layoutRects left rects [] = ([],rects)
@@ -229,7 +228,7 @@ drawBox (Rect p1 p2) = "\\draw[color=red!50,fill=red!20,thick] "++pointToTikz p1
                        " -- "++pointToTikz p1++"; %drawBox"
 
 -- | Convert gtl graphviz graph to Tikz drawing commands.
-gtlDotToTikz :: (Show a,Ord a)
+gtlDotToTikz :: (Show a,Ord a, PrintDot a)
              => Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
              -> DotGraph a
              -> String
@@ -239,7 +238,7 @@ gtlDotToTikz mtp gr
          Record -> let (out1,mrect@(Rect m1 m2):rect1) = layoutRects True rects (Map.toList inp)
                        (out2,rect2) = layoutRects False rect1 (Map.toList outp)
                    in unlines ([ 
-							   "\\node (autom" ++ show (nodeID nd) ++ ") at (" ++ pointToTikz pos ++ ") {\n" ++
+							   "\\node (autom" ++ genNodeID (nodeID nd) ++ ") at " ++ pointToTikz pos ++ " {\n" ++
 							   "\\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm," ++
 							   "scale = 1, transform shape]\n" ++
 							   "  \\begin{scope}[shift={("++
@@ -251,11 +250,11 @@ gtlDotToTikz mtp gr
 							   "};"
                                ]
 							   ++
-							   ["\\drawrecord(" ++ pointToTikz pos ++ ")" ++  
-							   "{" ++ show (nodeID nd) ++ "}" ++
+							   ["\\drawrecord" ++ pointToTikz pos ++   
+							   "{" ++ genNodeID (nodeID nd) ++ "}" ++
 							   "{ " ++(getrecnames (Map.toList inp) ) ++ " }" ++
 							   "{ " ++(getrecnames (Map.toList outp)) ++ " }" ++ 
-							   "{autom"++ show (nodeID nd) ++"}"]
+							   "{autom"++ genNodeID (nodeID nd) ++"}"]
 							  )
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
@@ -263,31 +262,11 @@ gtlDotToTikz mtp gr
                                     _ -> False) (nodeAttributes nd) of
                    Just (Pos (PointPos p)) -> p
                    Nothing -> error $ "No position defined for node "++show (nodeID nd)
-           h = case List.find (\attr -> case attr of
-                                  Height _ -> True
-                                  _ -> False) (nodeAttributes nd) of
-                 Just (Height x) -> 32.0*x
-                 _ -> error "No height given"
-           w = case List.find (\attr -> case attr of
-                                  Width _ -> True
-                                  _ -> False) (nodeAttributes nd) of
-                 Just (Width x) -> 32.0*x
-                 _ -> error "No width given"
-           --lbl = case List.find (\attr -> case attr of
-           --                       Comment _ -> True
-           --                       _ -> False) (nodeAttributes nd) of
-           --      Just (Comment x) -> removeBreaks x
-           --      _ -> error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
                      Just (Shape x) -> x
                      _ -> error "No shape given"
-           --rlbl = case List.find (\attr -> case attr of
-           --                       Label _ -> True
-           --                       _ -> False) (nodeAttributes nd) of
-           --       Just (Label (RecordLabel x)) -> x
-           --       _ -> error "No record label given"
            rects = case List.find (\attr -> case attr of
                                   Rects _ -> True
                                   _ -> False) (nodeAttributes nd) of
@@ -297,54 +276,38 @@ gtlDotToTikz mtp gr
            (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
      ]
 	 ++
-     [ "%" ++ show (fromNode (ed)) ++ " --> " ++ show ( toNode (ed))
+     [ "\\connect{" ++ (genConnectPortName (fromNode ed) tailPort ) ++ "}{" ++ (genConnectPortName (toNode ed) headPort) ++ "}"
      | ed <- edgeStmts (graphStatements gr)
-     , let Spline sp ep pts = case List.find (\attr -> case attr of
-	                                                    TailPort _ -> True
-			   											_ -> False) (edgeAttributes ed) of
-                                      Just (Pos (SplinePos [spl])) -> spl
-								      Nothing -> error "Edge has no position"
-									  ... //find Head and TailPort like above
+     , let tailPort = case List.find (\attr -> case attr of
+                                     TailPort _ -> True
+                                     _ -> False) (edgeAttributes ed) of
+		               Just (TailPort (LabelledPort tPort _)) -> portName tPort
+		               Nothing -> error "Edge has no tailport"
+           headPort = case List.find (\attr -> case attr of
+                                     HeadPort _ -> True
+                                     _ -> False) (edgeAttributes ed) of
+		               Just (HeadPort (LabelledPort tPort _)) -> portName tPort
+		               Nothing -> error "Edge has no headport"
      ]
      )
 
+genConnectPortName:: (PrintDot a) => a -> Text -> String
+genConnectPortName rec port = (genNodeID rec) ++ (T.unpack port)
+
+genNodeID:: (PrintDot a) => a -> String
+genNodeID nd = (T.unpack $ printIt nd)
+
 -- | Convert a graphviz graph to Tikz drawing commands.
-dotToTikz :: (Show a,Ord a)
+dotToTikz :: (Show a,Ord a,PrintDot a)
              => Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
              -> DotGraph a
              -> String
 dotToTikz mtp gr
   = unlines
-    ([
-	 case mtp of
-	   Just _ -> "gtl2dot"
-	   Nothing -> "buechi2dot"
-	 ]++
-	 [case shape of
+    ([case shape of
          Ellipse -> "\\draw [color=blue!50,very thick,fill=blue!20]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
                     "\\draw "++pointToTikz pos++";"-- node {$"++(T.unpack lbl)++"$};"
-         Record -> let (out1,mrect@(Rect m1 m2):rect1) = layoutRects True rects (Map.toList inp)
-                       (out2,rect2) = layoutRects False rect1 (Map.toList outp)
-                   in unlines ([ 
-							   "\\node (autom" ++ show (nodeID nd) ++ ") at (" ++ pointToTikz pos ++ ") {\n" ++
-							   "\\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm," ++
-							   "scale = 1, transform shape]\n" ++
-							   "  \\begin{scope}[shift={("++
-							              show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++
-										  show ((yCoord m1 + yCoord m2 - rh)/2)++"bp)}]\n"
-                                   ++repr++
-                               "  \\end{scope}\n" ++
-							   "\\end{tikzpicture}\n" ++
-							   "};"
-                               ]
-							   ++
-							   ["\\drawrecord(" ++ pointToTikz pos ++ ")" ++  
-							   "{" ++ show (nodeID nd) ++ "}" ++
-							   "{ " ++(getrecnames (Map.toList inp) ) ++ " }" ++
-							   "{ " ++(getrecnames (Map.toList outp)) ++ " }" ++ 
-							   "{autom"++ show (nodeID nd) ++"}"]
-							  )
-         PointShape -> "\\draw [fill]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);"
+         PointShape -> "\\draw [fill]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n"
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
                                     Pos _ -> True
@@ -361,21 +324,11 @@ dotToTikz mtp gr
                                   _ -> False) (nodeAttributes nd) of
                  Just (Width x) -> 32.0*x
                  _ -> error "No width given"
-           --lbl = case List.find (\attr -> case attr of
-           --                       Comment _ -> True
-           --                       _ -> False) (nodeAttributes nd) of
-           --      Just (Comment x) -> removeBreaks x
-           --      _ -> error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
                      Just (Shape x) -> x
                      _ -> error "No shape given"
-           --rlbl = case List.find (\attr -> case attr of
-           --                       Label _ -> True
-           --                       _ -> False) (nodeAttributes nd) of
-           --       Just (Label (RecordLabel x)) -> x
-           --       _ -> error "No record label given"
            rects = case List.find (\attr -> case attr of
                                   Rects _ -> True
                                   _ -> False) (nodeAttributes nd) of
@@ -384,10 +337,13 @@ dotToTikz mtp gr
            Just reprs = mtp
            (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
      ]
-	 ++
+	 ++ 
+	 --TODO: 1. edges are not unique
+	 --      2. edge has a label postion lp (instead of ''pos and right'')
+	 --
      [ "\\draw [-,thick] "++pointToTikz spl1++" .. controls "
        ++pointToTikz spl2++" and "++pointToTikz spl3
-       ++" .. "++pointToTikz spl4++" {$" ++ (T.unpack lbl) ++ "$}; %v1"
+       ++" .. "++pointToTikz spl4++" node[pos=0.5,right]{$" ++ (T.unpack lbl) ++ "$}; %" ++ (T.unpack $printIt ed)
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
@@ -411,12 +367,7 @@ dotToTikz mtp gr
      , rep <- case ep of
        Nothing -> []
        Just p -> [p]
-     ]++
-	 [
-	 case mtp of
-	   Just _ -> "end gtl2dot"
-	   Nothing -> "end buechi2dot"
-	 ]
+     ]
      )
 
 -- | Convert a list of points into a spline by grouping them.

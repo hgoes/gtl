@@ -30,7 +30,7 @@ fit=(#5)]{};
 }
 {%false
 \node[record=\recordwidth cm and \recordheight cm,name=a#2, inner
-sep =\recordwidth * 0.15cm,
+sep =\recordwidth * 0.33cm,
 fit=(#5)] at (#1){};
 }
 \node[drawinside={a#2}{#3}{#4}] (A) at (a#2.center)
@@ -38,5 +38,5 @@ fit=(#5)] at (#1){};
 }
 
 \NewDocumentCommand{\connect}{m m}{
-\draw[->] (#1) -- (#2);
+\draw[-latex,thick] (a#1) -- (a#2);
 }
