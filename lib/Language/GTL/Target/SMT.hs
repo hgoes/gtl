@@ -24,7 +24,6 @@ import Misc.ProgramOptions
 import Data.List as List
 import Data.Time
 import System.IO (hFlush,stdout)
-import qualified Data.Bitstream as BitS
 
 #ifdef SMTExts
 type GTLSMTPc = Integer
@@ -55,7 +54,7 @@ instance SMTType EnumVal where
   additionalConstraints _ _ _ = []
 #else
   getSort _ vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
-                   in getSort (undefined::BitS.Bitstream BitS.Left) (BitstreamLen $ fromIntegral bits) --L.List [L.Symbol "_",L.Symbol "BitVec",show bits]
+                   in getSort (undefined::BitVector) (fromIntegral bits) --L.List [L.Symbol "_",L.Symbol "BitVec",show bits]
   declareType _ vals = return ()
   additionalConstraints _ enums var = [BVULE var (SMT.constantAnn (EnumVal $ List.last enums) enums)]
 #endif
@@ -68,13 +67,13 @@ instance SMTValue EnumVal where
 #else
   mangle (EnumVal v) vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
                                 Just idx = List.elemIndex v vals
-                            in mangle (BitS.fromNBits bits idx :: BitS.Bitstream BitS.Left) (BitstreamLen $ fromIntegral bits)
+                            in mangle (BitVector $ fromIntegral idx) (fromIntegral bits)
   unmangle v vs = do
     let bits = ceiling $ logBase 2 $ fromIntegral (List.length vs)
-    v' <- unmangle v (BitstreamLen $ fromIntegral bits)
+    v' <- unmangle v (fromIntegral bits)
     case v' of
       Nothing -> return Nothing
-      Just v'' -> return $ Just $ EnumVal $ vs!!(BitS.toBits (v'' :: BitS.Bitstream BitS.Left))
+      Just (BitVector v'') -> return $ Just $ EnumVal $ vs!!(fromIntegral v'')
 #endif
 
 data GTLSMTExpr = GSMTInt { asSMTInt :: SMTExpr GTLSMTInt }
