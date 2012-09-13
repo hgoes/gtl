@@ -38,7 +38,7 @@ getDotBoundingBox gr
       (x:xs) -> x
 
 removeBreaks :: Text -> Text
-removeBreaks = T.replace (T.pack "\\\n") Empty
+removeBreaks = T.replace (T.pack "\\n") Empty
 
 -- | Convert a Buchi automaton into a Dot graph.
 buchiToDot :: BA [TypedExpr String] Integer -> DotGraph String
@@ -64,14 +64,14 @@ buchiToDot buchi
                                           ,edgeStmts = [ DotEdge { fromNode = nd st
                                                                  , toNode = nd trg
                                                                  , edgeAttributes = [
-                                                                 textLabel $ T.unlines [T.unlines [exprToLatex te | (te) <- at] | (at, _) <- trans]
+                                                                 textLabel $ T.unlines [exprToLatex te | (te) <- cond]
                                                                  , Comment $ 
 																  T.append 
 																	(T.append 
 																		(T.pack $ "\\begin{array}{c}")
 																 		(T.concat $ 
-																	 		intersperse (T.pack "\\\\\\") (
-																					concat [[exprToLatex te | te <- at] | (at, _) <- trans])
+																	 		intersperse (T.pack "\\\\") (
+																					[exprToLatex te | te <- cond])
 																		)
 																	) 
 																	(T.pack $ "\\end{array}")
@@ -145,8 +145,8 @@ gtlToTikz spec = do
                                                  , nodeStmts = [ DotNode name [Shape Record
                                                                               ,FontSize 10.0
                                                                               ,Label $ RecordLabel $ (generatePorts True inp)++
-                                                                               [FieldLabel $ T.replicate (ceiling $ h / 18)
-                                                                                            (T.replicate (ceiling $ w / 15.8) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+																			   [FieldLabel $ T.replicate (ceiling $ h / 18)
+                                                                                            (T.replicate (ceiling $ w / 16) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
                                                                                ]++
                                                                                (generatePorts False outp)
                                                                               ]
@@ -200,7 +200,7 @@ layoutRects left rects ((name,tp):rest) = let (out,rbox) = layoutRectsType rects
                                           in (out++outs,res)
   where
     drawLabel :: Rect -> String -> String
-    drawLabel (Rect p1 p2) lbl = "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++lbl++"}; %layoutbox"
+    drawLabel (Rect p1 p2) lbl = "\\draw ("++show ((xCoord p1 + xCoord p2)/2)++"bp,"++show ((yCoord p1 + yCoord p2)/2)++"bp) node {"++lbl++"}; "
     layoutRectsType :: [Rect] -> String -> [Integer] -> GTLType -> ([String],[Rect])
     layoutRectsType (r1:rest) name pos (Fix (GTLArray sz tp))
       = let f q = foldl (\(strs,(r:rs)) i -> ((drawBox r):(drawLabel r (show i)):strs,rs)) q [0..(sz-1)]
@@ -225,7 +225,7 @@ layoutRects left rects ((name,tp):rest) = let (out,rbox) = layoutRectsType rects
 drawBox :: Rect -> String
 drawBox (Rect p1 p2) = "\\draw[color=red!50,fill=red!20,thick] "++pointToTikz p1++" -- "++pointToTikz (p1 { xCoord = xCoord p2 })++
                        " -- "++pointToTikz p2++" -- "++pointToTikz (p1 { yCoord = yCoord p2 })++
-                       " -- "++pointToTikz p1++"; %drawBox"
+                       " -- "++pointToTikz p1++"; "
 
 -- | Convert gtl graphviz graph to Tikz drawing commands.
 gtlDotToTikz :: (Show a,Ord a, PrintDot a)
@@ -239,7 +239,7 @@ gtlDotToTikz mtp gr
                        (out2,rect2) = layoutRects False rect1 (Map.toList outp)
                    in unlines ([ 
 							   "\\node (autom" ++ genNodeID (nodeID nd) ++ ") at " ++ pointToTikz pos ++ " {\n" ++
-							   "\\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm," ++
+							   "\\begin{tikzpicture}[>=stealth',auto," ++
 							   "scale = 1, transform shape]\n" ++
 							   "  \\begin{scope}[shift={("++
 							              show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++
@@ -338,12 +338,10 @@ dotToTikz mtp gr
            (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
      ]
 	 ++ 
-	 --TODO: 1. edges are not unique
-	 --      2. edge has a label postion lp (instead of ''pos and right'')
-	 --
-     [ "\\draw [-,thick] "++pointToTikz spl1++" .. controls "
-       ++pointToTikz spl2++" and "++pointToTikz spl3
-       ++" .. "++pointToTikz spl4++" node[pos=0.5,right]{$" ++ (T.unpack lbl) ++ "$}; %" ++ (T.unpack $printIt ed)
+     [ unlines ["\\draw [-,thick] "++pointToTikz spl1++ ".. controls "++pointToTikz spl2++
+	 " and "++pointToTikz spl3 ++" .. "++pointToTikz spl4++";"
+	 | (spl1,spl2,spl3,spl4) <- splinePoints pts
+	 ] ++ label
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
@@ -355,9 +353,13 @@ dotToTikz mtp gr
                                   _ -> False) (edgeAttributes ed) of
                  Just (Comment x) -> removeBreaks x
                  _ -> Empty
-     , (spl1,spl2,spl3,spl4) <- splinePoints pts
+           label = case List.find (\attr -> case attr of
+                                  LPos _ -> True
+                                  _ -> False) (edgeAttributes ed) of
+                 Just (LPos p) -> "\\draw "++pointToTikz p++" node {$"++(T.unpack lbl)++"$};"
+                 Nothing -> ""
      ]++
-     [ "\\draw [-latex,thick] "++pointToTikz (last pts)++" -- "++pointToTikz rep++"; %v2" 
+     [ "\\draw [-latex,thick] "++pointToTikz (last pts)++" -- "++pointToTikz rep++"; " 
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
