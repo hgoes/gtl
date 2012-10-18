@@ -10,19 +10,20 @@ import Language.GTL.Parser.Monad
 import Language.GTL.Backend.All
 import Language.GTL.Expression
 import Language.GTL.Types
-import Data.Map as Map hiding (map,foldl)
+import Data.Map as Map hiding (map,foldl,mapMaybe)
 import Data.Set as Set hiding (map,foldl)
 import Data.Either (partitionEithers)
 import Prelude hiding (mapM)
 import Data.Traversable (mapM)
 import Misc.ProgramOptions
 import Control.Monad.Error hiding (mapM)
+import Data.Maybe (mapMaybe)
 
 type ErrorIO = ErrorT String IO
 
 -- | A parsed and typechecked GTL model.
 data GTLModel a = GTLModel
-                  { gtlModelContract :: [TypedExpr a] -- ^ The contract of the model as a boolean formula.
+                  { gtlModelContract :: [GTLContract a] -- ^ The contract of the model as a boolean formula.
                   , gtlModelBackend :: AllBackend -- ^ An abstract model in a synchronous specification language.
                   , gtlModelInput :: Map a GTLType -- ^ The input variables with types of the model.
                   , gtlModelOutput :: Map a GTLType -- ^ The output variables with types of the model.
@@ -32,8 +33,15 @@ data GTLModel a = GTLModel
                   , gtlModelConstantInputs :: Map a (GTLType, GTLConstant)
                   }
 
-gtlModelContractExpression :: GTLModel a -> TypedExpr a
-gtlModelContractExpression mdl = case gtlModelContract mdl of
+data GTLContract a = GTLContract
+                     { gtlContractIsGuaranteed :: Bool
+                     , gtlContractFormula :: TypedExpr a
+                     }
+
+gtlContractExpression :: [GTLContract a] -> TypedExpr a
+gtlContractExpression cons = case mapMaybe (\con -> if gtlContractIsGuaranteed con
+                                                    then Nothing
+                                                    else Just $ gtlContractFormula con) cons of
   [] -> constant True
   xs -> foldl1 gand xs
 
@@ -53,7 +61,7 @@ data GTLSpec a = GTLSpec
 -- | A GTL instance is a concrete manifestation of a model.
 data GTLInstance a = GTLInstance
                      { gtlInstanceModel :: String -- ^ The model of which this is an instance
-                     , gtlInstanceContract :: Maybe (TypedExpr a) -- ^ Additional contract
+                     , gtlInstanceContract :: [GTLContract a] -- ^ Additional contract
                      , gtlInstanceDefaults :: Map a (Maybe GTLConstant) -- ^ Additional default values
                      }
 
@@ -77,20 +85,7 @@ gtlParseModel back constDecls realiases aliases mdl = do
   let allType = Map.unions [inp,outp,locs]
       enums = getEnums allType
   constInputs <- checkConstInputs allType enums constDecls
-  expr <- mapM (makeTypedExpr
-                (\q n inf -> case q of
-                    Nothing -> return (n,if Map.member n inp
-                                         then Input
-                                         else (if Map.member n outp
-                                               then Output
-                                               else (case inf of
-                                                        Nothing -> StateIn
-                                                        Just ContextIn -> StateIn
-                                                        Just ContextOut -> StateOut
-                                                    )
-                                              ))
-                    _ -> throwError "Contract may not contain qualified variables")
-                allType enums) (modelContract mdl)
+  expr <- mapM (gtlParseContract inp outp allType enums) (modelContract mdl)
   lst <- mapM (\(var,init) -> case init of
                   InitAll -> return (var,Nothing)
                   InitOne c -> do
@@ -112,6 +107,25 @@ gtlParseModel back constDecls realiases aliases mdl = do
                                  , gtlModelCycleTime = modelCycleTime mdl
                                  , gtlModelConstantInputs = constInputs
                                  },enums)
+
+gtlParseContract :: Map String GTLType -> Map String GTLType -> Map String GTLType -> Set [String] -> Contract -> ErrorT String IO (GTLContract String)
+gtlParseContract inp outp allTypes enums con = do
+  con' <- makeTypedExpr
+          (\q n inf -> case q of
+              Nothing -> return (n,if Map.member n inp
+                                   then Input
+                                   else (if Map.member n outp
+                                         then Output
+                                         else (case inf of
+                                                  Nothing -> StateIn
+                                                  Just ContextIn -> StateIn
+                                                  Just ContextOut -> StateOut
+                                              )
+                                        ))
+              _ -> throwError "Contract may not contain qualified variables")
+          allTypes enums (contractFormula con)
+  return (GTLContract { gtlContractIsGuaranteed = contractIsGuaranteed con
+                      , gtlContractFormula = con'})
 
 -- | Get all possible enum types.
 getEnums :: Map a GTLType -> Set [String]
@@ -170,20 +184,7 @@ gtlParseSpec opts decls = do
                 mdl <- case Map.lookup (instanceModel i) mdl_mp of
                   Nothing -> throwError $ "Model "++(instanceModel i)++" not found."
                   Just m -> return m
-                contr <- case instanceContract i of
-                  [] -> return Nothing
-                  _ -> makeTypedExpr (\q n inf -> case q of
-                           Nothing -> return (n,if Map.member n (gtlModelInput mdl)
-                                               then Input
-                                               else (if Map.member n (gtlModelOutput mdl)
-                                                     then Output
-                                                     else (case inf of
-                                                              Nothing -> StateIn
-                                                              Just ContextIn -> StateIn
-                                                              Just ContextOut -> StateOut
-                                                          )))
-                           _ -> throwError "Contract may not contain qualified variables") (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums
-                       (foldl1 (\l@(p,_) r -> (p,GBin GOpAnd NoTime l r)) (instanceContract i)) >>= return.Just
+                contr <- mapM (gtlParseContract (gtlModelInput mdl) (gtlModelOutput mdl) (Map.union (gtlModelInput mdl) (gtlModelOutput mdl)) enums) (instanceContract i)
                 return (instanceName i,GTLInstance { gtlInstanceModel = instanceModel i
                                                    , gtlInstanceContract = contr
                                                    , gtlInstanceDefaults = Map.empty

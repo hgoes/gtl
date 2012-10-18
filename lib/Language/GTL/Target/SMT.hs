@@ -235,15 +235,12 @@ translateExpr f (Fix expr)
     _ -> error $ "Implement translateExpr for " ++ showTermWith (\_ _ -> showString "_") (\_ _ -> showString "_") 0 (GTL.getValue expr) ""
 
 -- | Perform a calculation step in a single component
-instanceFuns :: Set [String] -> GTLModel String -> Maybe (TypedExpr String) -> (InstanceState -> SMTExpr Bool,InstanceState -> InstanceState -> SMTExpr Bool)
+instanceFuns :: Set [String] -> GTLModel String -> [GTLContract String] -> (InstanceState -> SMTExpr Bool,InstanceState -> InstanceState -> SMTExpr Bool)
 instanceFuns enums mdl contr
   = (init,step)
     where
       ba = gtl2ba (Just (gtlModelCycleTime mdl)) formula
-      formula = List.foldl1 gand (case contr of
-                                    Nothing -> gtlModelContract mdl
-                                    Just con -> con:(gtlModelContract mdl)
-                                 )
+      formula = List.foldl1 gand $ fmap gtlContractFormula $ contr++(gtlModelContract mdl)
       init inst = and' $ (or' [ (instancePC inst) .==. SMT.constant (fromIntegral f)
                               | f <- Set.toList (baInits ba) ]):
                 [ eqGTLSMT
@@ -779,10 +776,7 @@ kInduction :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingDat
 kInduction sched solver spec = do
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                               formula = List.foldl1 gand (case gtlInstanceContract inst of
-                                                              Nothing -> gtlModelContract mdl
-                                                              Just con -> con:(gtlModelContract mdl)
-                                                          )
+                               formula = List.foldl1 gand $ fmap gtlContractFormula $ (gtlInstanceContract inst)++(gtlModelContract mdl)
                            in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
       Fix (Typed _ (UnBoolExpr Always formula)) = gtlSpecVerify spec
       (init,step) = schedule sched (Map.keysSet enums) spec

@@ -23,13 +23,14 @@ simplePrettyPrint spec
      ["  locals"]++
      ["    "++show tp++" "++vname | (vname,tp) <- Map.toList (gtlModelLocals mdl) ]++
      ["  cycle-time "++renderTime (gtlModelCycleTime mdl)]++
-     (fmap ("  "++) (simplePrettyPrintBuchi localTerm (gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContractExpression mdl))))
+     (fmap ("  "++) (simplePrettyPrintBuchi localTerm (gtl2ba (Just $ gtlModelCycleTime mdl) (gtlContractExpression (gtlModelContract mdl)))))
   | (name,mdl) <- Map.toList $ gtlSpecModels spec ] ++
-    ["instance"] ++
-	[
-	"   "++(gtlInstanceModel inst)++" "++name++
-	" "++(instanceContract (gtlInstanceContract inst))
-	| (name,inst) <- Map.toList $ gtlSpecInstances spec ] ++
+    concat [
+      ["instance"] ++
+      ["   "++(gtlInstanceModel inst)++" "++name]++
+      (fmap ("  "++) (simplePrettyPrintBuchi localTerm (gtl2ba (Just $ gtlModelCycleTime mdl) (gtlContractExpression (gtlInstanceContract inst)))))
+      | (name,inst) <- Map.toList $ gtlSpecInstances spec
+      , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)] ++
     ["verify"] ++
     (fmap ("  "++) (simplePrettyPrintBuchi globalTerm (gtl2ba Nothing $ gnot $ gtlSpecVerify spec)))
 

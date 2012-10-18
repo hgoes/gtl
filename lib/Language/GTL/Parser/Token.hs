@@ -24,6 +24,7 @@ data KeyWord = KeyAll
              | KeyContract
              | KeyCycleTime
              | KeyEnum
+             | KeyGuaranteed
              | KeyLocal
              | KeyModel
              | KeyOutput

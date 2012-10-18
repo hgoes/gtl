@@ -31,6 +31,7 @@ tokens:-
   enum                           { key KeyEnum }
   false                          { key KeyFalse }
   float                          { key KeyFloat }
+  guaranteed                     { key KeyGuaranteed }
   implies                        { bin GOpImplies }
   init                           { key KeyInit }
   int                            { key KeyInt }

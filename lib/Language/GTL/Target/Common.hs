@@ -120,7 +120,7 @@ buildModelProcs spec outmp inmp = Map.mapWithKey instanceToProc (gtlSpecInstance
     instanceToProc :: String -> GTLInstance String -> TargetProc
     instanceToProc name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                 in TargetProc
-                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContractExpression mdl)
+                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlContractExpression (gtlModelContract mdl))
                                    , tprocCycleTime = gtlModelCycleTime mdl
                                    }
 
@@ -196,7 +196,7 @@ buildInputMap spec
                                                    | (var,tp) <- Map.toList $ gtlModelInput mdl,
                                                      (t,idx) <- allPossibleIdx tp
                                                    ]
-                                                  )) (getVars $ gtlModelContractExpression mdl)
+                                                  )) (getVars $ gtlContractExpression $ gtlModelContract mdl)
                      ) Map.empty (gtlSpecInstances spec)
 
 lookupType :: GTLSpec String -> String -> String -> [Integer] -> Bool -> GTLType
