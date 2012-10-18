@@ -452,6 +452,7 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
                                 in case op of
                                      GTL.And -> (self .==. and' [l,r]):ls++rs
                                      GTL.Or -> (self .==. or' [l,r]):ls++rs
+                                     GTL.Implies -> (self .==. (l .=>. r)):ls++rs
                                      GTL.Until NoTime -> (self .==. or' [r,and' [l,nself]]):ls++rs
                                      GTL.UntilOp NoTime -> (self .==. and' [r,or' [l,nself]]):ls++rs
   GTL.UnBoolExpr op e -> let es = dependencies f e cur nxt
