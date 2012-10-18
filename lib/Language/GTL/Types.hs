@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts,FlexibleInstances #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
@@ -11,6 +11,7 @@ module Language.GTL.Types
         GTLValue(..),
         ToGTL(..),
         resolveIndices,
+        allPossibleIdx,
         isInstanceOf,
         isSubtypeOf,
         showGTLValue) where
@@ -165,6 +166,14 @@ resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
                                              else throwError $ "Index "++show x++" is out of array bounds ("++show (genericLength tps)++")"
 resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
 resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
+
+allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
+allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
+                                               | (t,idx) <- allPossibleIdx tp ]
+allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] 
+                                             | (i,tp) <- zip [0..] tps ]
+allPossibleIdx (Fix (GTLNamed _ tp)) = allPossibleIdx tp
+allPossibleIdx tp = [(tp,[])]
 
 -- | Given a type, a function to extract type information from sub-values and a
 --   value, this function checks if the value is in the domain of the given type.

@@ -14,7 +14,7 @@ import Language.GTL.LTL as LTL
 import Language.GTL.Buchi
 import Data.Foldable
 import Prelude hiding (foldl,foldl1,concat,mapM)
-import Data.Set as Set
+import Data.Set as Set hiding (foldl)
 
 -- | Translates a GTL expression into a buchi automaton.
 --   Needs a user supplied function that converts a list of atoms that have to be
@@ -107,7 +107,7 @@ gtlToLTL' clk cycle_time (Fix expr)
         (_,Value (GTLTupleVal ys)) -> zipWith (\i y -> Fix $ Typed gtlBool (BinRelExpr rel (Fix $ Typed (getType $ unfix y) (IndexExpr (Fix lhs) i)) y)) [0..] ys
         _ -> [Fix $ Typed gtlBool (BinRelExpr rel (Fix lhs) (Fix rhs))]
 
-expandAutomaton :: (Ord t,Ord v) => BA [TypedExpr v] t -> BA [TypedExpr v] t
+expandAutomaton :: (Ord t,Ord v,Show v) => BA [TypedExpr v] t -> BA [TypedExpr v] t
 expandAutomaton ba = ba { baTransitions = fmap (\ts -> [ (Set.toList cond,trg)
                                                        | (cs,trg) <- ts,
                                                          let cs_expr = case cs of
@@ -117,9 +117,9 @@ expandAutomaton ba = ba { baTransitions = fmap (\ts -> [ (Set.toList cond,trg)
                                                          cond <- expandExpr cs_expr
                                                        ]) (baTransitions ba) }
 
-expandExpr :: Ord v => TypedExpr v -> [Set (TypedExpr v)]
+expandExpr :: (Ord v,Show v) => TypedExpr v -> [Set (TypedExpr v)]
 expandExpr expr
-  | getType (unfix expr) == gtlBool = case getValue (unfix expr) of
+  | baseType (getType $ unfix expr) == gtlBool = case getValue (unfix expr) of
     Var _ _ _ -> [Set.singleton expr]
     Value (GTLBoolVal False) -> []
     Value (GTLBoolVal True) -> [Set.empty]
@@ -146,4 +146,4 @@ expandExpr expr
     ClockReset _ _ -> error "Can't use clock reset in state formulas yet"
     ClockRef _ -> error "Can't use clock ref in state formulas yet"
     BuiltIn _ _ -> error "Can't use builtin in state formulas yet"
-  | otherwise = error "Passed non-boolean expression as state formular"
+  | otherwise = error $ "Passed non-boolean ("++show (getType $ unfix expr)++") expression "++show expr++" as state formula"

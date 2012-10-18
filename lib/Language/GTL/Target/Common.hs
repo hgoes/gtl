@@ -18,8 +18,8 @@ import Language.GTL.Translation
 import Language.GTL.Buchi
 import Language.GTL.Restriction
 
-import Data.Set as Set
-import Data.Map as Map
+import Data.Set as Set hiding (foldl)
+import Data.Map as Map hiding (foldl)
 import Data.List (genericIndex)
 import Control.Monad.Identity
 import Data.Foldable
@@ -120,7 +120,7 @@ buildModelProcs spec outmp inmp = Map.mapWithKey instanceToProc (gtlSpecInstance
     instanceToProc :: String -> GTLInstance String -> TargetProc
     instanceToProc name inst = let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                 in TargetProc
-                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContract mdl)
+                                   { tprocAutomaton = baMapAlphabet (atomsToRestr name mdl outmp inmp) $ gtl2ba (Just $ gtlModelCycleTime mdl) (gtlModelContractExpression mdl)
                                    , tprocCycleTime = gtlModelCycleTime mdl
                                    }
 
@@ -138,7 +138,7 @@ atomsToRestr name mdl outmp inmp atm
                                              ]) outmp
     in TransitionConditions
        [ ([ (tvar,case Map.lookup tvar inmp of
-                Nothing -> error (show (tvar,var,r))
+                Nothing -> error $ "Can't find "++show tvar++" in\n"++unlines (fmap (\(key,val) -> show key ++ ": "++show val) (Map.assocs inmp))
                 Just (p,_) -> p
             )
           | tvar <- Set.toList tvars
@@ -185,15 +185,18 @@ buildInputMap spec
                          in foldl (\mp' (var,u,idx,lvl,tp)
                                    -> if isInput u
                                       then foldl (\mp'' (tp',idx')
-                                                  -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
-                                                     (name,var,idx') (lvl,tp') mp'') mp' (flattenVar tp idx)
+                                                  -> foldl (\mp''' (tp'',idx'') 
+                                                            -> Map.insertWith (\(i1,tp1) (i2,_) -> (max i1 i2,tp1))
+                                                               (name,var,idx'') (lvl,tp'') mp'''
+                                                           ) mp'' (allPossibleIdx tp')
+                                                 ) mp' (flattenVar tp idx)
                                       else mp'
                                   ) (Map.union mp (Map.fromList
                                                    [ ((name,var,idx),(0,t))
                                                    | (var,tp) <- Map.toList $ gtlModelInput mdl,
                                                      (t,idx) <- allPossibleIdx tp
                                                    ]
-                                                  )) (getVars $ gtlModelContract mdl)
+                                                  )) (getVars $ gtlModelContractExpression mdl)
                      ) Map.empty (gtlSpecInstances spec)
 
 lookupType :: GTLSpec String -> String -> String -> [Integer] -> Bool -> GTLType
@@ -212,42 +215,6 @@ lookupType spec inst var idx inp
           Right p -> p
           _ -> error $ "Internal error: Unable to resolve type "++show ttp
     in tp
-
-flattenVar :: GTLType -> [Integer] -> [(GTLType,[Integer])]
-flattenVar (Fix (GTLArray sz tp)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp is)
-flattenVar (Fix (GTLArray sz tp)) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
-flattenVar (Fix (GTLTuple tps)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
-flattenVar (Fix (GTLTuple tps)) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
-flattenVar (Fix (GTLNamed _ tp)) idx = flattenVar tp idx
-flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
-
-flattenConstant :: GTLConstant -> [GTLConstant]
-flattenConstant c = case unfix c of
-  GTLArrayVal vs -> concat $ fmap flattenConstant vs
-  GTLTupleVal vs -> concat $ fmap flattenConstant vs
-  _ -> [c]
-
-allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
-allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] | (t,idx) <- allPossibleIdx tp ]
-allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] | (i,tp) <- zip [0..] tps ]
-allPossibleIdx (Fix (GTLNamed _ tp)) = allPossibleIdx tp
-allPossibleIdx tp = [(tp,[])]
-
-flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
-flattenExpr f idx (Fix e) = Fix $ Typed (getType e) $ case getValue e of
-  Var v i u -> Var (f v idx) i u
-  Value v -> case idx of
-    [] -> Value (fmap (flattenExpr f []) v)
-    (i:is) -> case v of
-      GTLArrayVal vs -> getValue $ unfix $ flattenExpr f is (vs `genericIndex` i)
-      GTLTupleVal vs -> getValue $ unfix $ flattenExpr f is (vs `genericIndex` i)
-  BinBoolExpr op l r -> BinBoolExpr op (flattenExpr f idx l) (flattenExpr f idx r)
-  BinRelExpr rel l r -> getValue $ unfix $ foldl1 gand [ Fix $ Typed gtlBool (BinRelExpr rel el er)
-                                                       | (el,er) <- zip (unpackExpr f idx l) (unpackExpr f idx r) ]
-  BinIntExpr op l r -> BinIntExpr op (flattenExpr f idx l) (flattenExpr f idx r)
-  UnBoolExpr op ne -> UnBoolExpr op (flattenExpr f idx ne)
-  IndexExpr e i -> getValue $ unfix $ flattenExpr f (i:idx) e
-  Automaton buchi -> Automaton (baMapAlphabet (fmap $ flattenExpr f idx) buchi)
 
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i (Fix e) = case getValue e of

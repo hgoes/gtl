@@ -21,8 +21,8 @@ module Language.GTL.LTL(
   extractAutomata
   ) where
 
-import Data.Set as Set
-import Data.Map as Map
+import Data.Set as Set hiding (foldl)
+import Data.Map as Map hiding (foldl)
 import qualified Data.List as List
 import Data.Foldable
 import Prelude hiding (foldl,mapM,foldl1,concat,foldr)

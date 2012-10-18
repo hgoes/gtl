@@ -18,8 +18,8 @@ import Language.GTL.Restriction
 
 import Control.Monad.Identity
 
-import Data.Set as Set
-import Data.Map as Map
+import Data.Set as Set hiding (foldl)
+import Data.Map as Map hiding (foldl)
 import Data.List (elemIndex,genericLength,genericIndex)
 import Data.Foldable
 import Prelude hiding (foldl,concat,foldl1,mapM)

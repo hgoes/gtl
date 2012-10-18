@@ -25,6 +25,8 @@ data TranslationMode
      | Pretty -- ^ Pretty print the resulting GALS model
      | Native -- ^ Translate the system to promela using the contracts as specifications for the component behaviour
      | UPPAAL -- ^ Generate a UPPAAL model to check the GALS model
+     | SMTBMC -- ^ Use a SMT solver to check the GALS model
+     | SMTInduction
      deriving (Show,Eq)
 
 -- | Options that the user can pass to the GTL executable
@@ -39,9 +41,13 @@ data Options = Options
                , ccFlags :: [String] -- ^ Flags to pass to the C-compiler
                , ldFlags :: [String] -- ^ Flags to pass to the linker
                , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
+               , smtBinary :: Maybe FilePath
                , verbosity :: Int -- ^ Verbosity level
                , dryRun :: Bool
                , debug :: Set String
+               , bmcCompleteness :: Bool
+               , bmcBound :: Maybe Integer
+               , useSonolar :: Bool
                }
                deriving Show
 
@@ -56,13 +62,17 @@ defaultOptions = Options
   , ccFlags = []
   , ldFlags = []
   , scadeRoot = Nothing
+  , smtBinary = Nothing
   , verbosity = 0
   , dryRun = False
   , debug = Set.empty
+  , bmcCompleteness = False
+  , bmcBound = Nothing
+  , useSonolar = False
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL),("smt_bmc",SMTBMC),("smt_ind",SMTInduction)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
@@ -94,6 +104,9 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['V'] ["verbosity"] (OptArg (\str opt -> opt { verbosity = maybe 1 read str }) "verbosity level") "How much additional information is printed? (default 1)"
           ,Option ['n'] ["dry-run"] (NoArg (\opt -> opt { dryRun = True })) "Perform a dry run only generating files and not executing anything."
           ,Option ['d'] ["debug"] (ReqArg (\str opt -> opt { debug = Set.insert str $ debug opt }) "option") "Give debugging options (e.g. -ddump-buchi)"
+          ,Option ['c'] ["complete"] (NoArg (\opt -> opt { bmcCompleteness = True })) "Makes the bounded model checking procedure complete (WARNING: can increase runtime by a lot)"
+          ,Option ['b'] ["bound"] (ReqArg (\str opt -> opt { bmcBound = Just $ read str }) "num") "Gives an explicit bound where to stop the bounded model checking"
+          ,Option [] ["sonolar"] (NoArg (\opt -> opt { useSonolar = True })) "Restricts the SMT code generator to a tiny subset of SMTLib2 to enable the use of the sonolar solver"
           ]
 
 header :: String
@@ -104,6 +117,7 @@ header = unlines $ [
     , " * CFLAGS - Additional flags to be passed to compiler"
     , " * LDFLAGS - Additional flags to be passed to linker"
     , " * SCADE_ROOT - Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
+    , " * SMT_BINARY - Path to the SMT solver binary"
     , " All environment variables may be passed in the form <Variable>=<Value> as option."
   ]
 
@@ -118,10 +132,12 @@ getOptions = do
   gcc <- catch (getEnv "CC") (\e -> const (return "gcc") (e::SomeException))
   cflags <- catch (fmap splitOptions $ getEnv "CFLAGS") (\e -> const (return []) (e::SomeException))
   ldflags <- catch (fmap splitOptions $ getEnv "LDFLAGS") (\e -> const (return []) (e::SomeException))
+  smtbin <- catch (fmap Just $ getEnv "SMT_BINARY") (\e -> const (return Nothing) (e::SomeException))
   scadeRoot <- guessScadeRoot
   let start_opts = defaultOptions { ccBinary = gcc
                                   , ccFlags = cflags
                                   , ldFlags = ldflags
+                                  , smtBinary = smtbin
                                   , scadeRoot = scadeRoot
                                   }
   case getOpt (ReturnInOrder parseFreeOptions) options args of
@@ -140,6 +156,7 @@ parseFreeOptions o =
     "CFLAGS" -> \opts -> opts { ccFlags = ccFlags opts ++ (splitOptions $ value) }
     "LDFLAGS" -> \opts -> opts { ldFlags = ldFlags opts ++ (splitOptions $ value) }
     "SCADE_ROOT" -> \opts -> opts { scadeRoot = Just value }
+    "SMT_BINARY" -> \opts -> opts { smtBinary = Just value }
     otherwise -> if null value
       then (\opts -> if null $ gtlFile opts then opts { gtlFile = optName } else error "Only one file allowed")
       else error $ "Unknown option " ++ optName
