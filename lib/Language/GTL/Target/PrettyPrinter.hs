@@ -142,13 +142,9 @@ gtlToTikz spec = do
                                                                            ,Start (StartStyle RandomStyle)
                                                                            ]]
                                                  , subGraphs = []
-                                                 , nodeStmts = [ DotNode name [Shape Record
+                                                 , nodeStmts = [ DotNode name [Shape PlainText
                                                                               ,FontSize 10.0
-                                                                              ,Label $ RecordLabel $ (generatePorts True inp)++
-																			   [FieldLabel $ T.replicate (ceiling $ h / 18)
-                                                                                            (T.replicate (ceiling $ w / 16) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
-                                                                               ]++
-                                                                               (generatePorts False outp)
+                                                                              ,Label $ genRecordShape inp
                                                                               ]
                                                                | (name,(inp,outp,repr,w,h)) <- Map.toList mp
                                                                ]
@@ -166,6 +162,16 @@ gtlToTikz spec = do
   putStrLn $ T.unpack outp
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
+
+-- | Creates the hole record object with its ports
+--   2nd and 3rd parameters are height and width
+genRecordShape :: (RealFrac a) => Map String GTLType -> a -> a -> HtmlLabel
+genRecordShape inp h w = HtmlLabel $
+                       RecordLabel $ (generatePorts True inp)++
+                              [FieldLabel $ T.replicate (ceiling $ h / 28)
+                                            (T.replicate (ceiling $ w / 16) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
+							  ]++
+						      (generatePorts False outp)
 
 genPortName :: String -> [Integer] -> Text
 genPortName var ind = T.append (T.pack var) (T.concat (fmap (\i -> T.pack ("_"++show i)) ind))
