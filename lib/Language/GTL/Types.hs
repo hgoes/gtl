@@ -269,10 +269,11 @@ instance Read GTLType where
         tok <- lexP
         case tok of
           Symbol "^" -> do
-            n <- lexP
-            case n of
-              Int n' -> readPow (Fix $ GTLArray n' tp)
-              _ -> pfail
+            n <- readPrec
+            if n <= 0
+              then pfail
+              else return ()
+            readPow (Fix $ GTLArray n tp)
           _ -> pfail) <++ (return tp)
       readSingle = do
         tok <- lexP
