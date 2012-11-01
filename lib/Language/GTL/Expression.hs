@@ -954,6 +954,13 @@ compareExpr e1 e2
                     _ -> EUNK
                   _ -> EUNK
                 _ -> EUNK
+              BinLT -> case op2 of
+                BinLT -> case compareExpr l1 l2 of
+                  EEQ -> case compareExpr r1 r2 of
+                    EEQ -> EEQ
+                    _ -> EUNK
+                  _ -> EUNK
+                _ -> EUNK
               _ -> EUNK
             _ -> EUNK
           UnBoolExpr Not p -> case getValue (unfix e2) of
