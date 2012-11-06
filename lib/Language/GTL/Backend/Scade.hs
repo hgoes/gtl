@@ -130,20 +130,18 @@ instance GTLBackend Scade where
             writeFile testNodeFile (show $ prettyScade scade')
             writeFile proofNodeFile (show $ prettyScade [generateProver types name (fmap snd expr_names) node inp outp constVars])
             if not (dryRun opts) then
-              case scadeRoot opts of
-                Just p -> do
-                  reportFile' <- verifyScadeNodes opts p gtlName name opFile testNodeFile proofNodeFile
-                  case reportFile' of
-                    Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
-                    Just reportFile -> do
-                      report' <- readReport reportFile
-                      case report' of
-                        Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
-                        Just report -> do
-                          when (not (verified report))
-                            (generateScenario scenarioFile report)
-                          return $ Just $ verified report
-                Nothing -> putStrLn "Could not run Scade prover: SCADE_ROOT not given" >> return Nothing
+              do
+                reportFile' <- verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile
+                case reportFile' of
+                  Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
+                  Just reportFile -> do
+                    report' <- readReport reportFile
+                    case report' of
+                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
+                      Just report -> do
+                        when (not (verified report))
+                          (generateScenario scenarioFile report)
+                        return $ Just $ verified report
               else return Nothing
 
 splitScadeName :: String -> [String]
@@ -213,25 +211,35 @@ data Report = Report {
 } deriving Show
 
 -- | Runs the Scade design verifier and reads back its report.
-verifyScadeNodes :: Options -> FilePath -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe FilePath)
-verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
-  let dv = scadeRoot </> "SCADE Suite" </> "bin" </> "dv.exe"
-      reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
-      verifOpts = ["-node", name ++ "_proof", opFile, testNodeFile, proofNodeFile, "-po", "test_result", "-xml", reportFile]
+verifyScadeNodes :: Options -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe FilePath)
+verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile =
+  let reportFile = (outputPath opts) </> (gtlName ++ "-" ++ name ++ "_proof_report") <.> "xml"
+      verifOpts = ["-node", name ++ "_proof"
+                  ,opFile
+                  ,testNodeFile
+                  ,proofNodeFile
+                  ,"-po","test_result"
+                  ,"-xml",reportFile]++(case bmcBound opts of
+                                           Nothing -> []
+                                           Just l -> ["-strategy","debug"
+                                                     ,"-stop-depth",show l])
       outputStream = if (verbosity opts) > 0 then Inherit else CreatePipe
-  in do
-    (_, _, _, p) <- Proc.createProcess $
-                    Proc.CreateProcess {
-                      cmdspec = Proc.RawCommand dv verifOpts
-                      , cwd = Nothing, env = Nothing
-                      , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
-                      , close_fds = False
-                      , create_group = False
-                    }
-    exitCode <- Proc.waitForProcess p
-    case exitCode of
-      ExitFailure _ -> return Nothing
-      ExitSuccess -> return $ Just reportFile
+  in case scadeRoot opts of
+    Nothing -> putStrLn "No SCADE_ROOT environment variable set" >> return Nothing
+    Just root -> do
+      let dv = root </> "SCADE Suite" </> "bin" </> "dv.exe"
+      (_, _, _, p) <- Proc.createProcess $
+                      Proc.CreateProcess {
+                        cmdspec = Proc.RawCommand dv verifOpts
+                        , cwd = Nothing, env = Nothing
+                        , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
+                        , close_fds = False
+                        , create_group = False
+                        }
+      exitCode <- Proc.waitForProcess p
+      case exitCode of
+        ExitFailure _ -> return Nothing
+        ExitSuccess -> return $ Just reportFile
 
 -- | Read the XML output of the design verifier.
 -- The structure is something like:
@@ -254,7 +262,7 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
 -- input there will be a set command in that tick. Each tick will be finalized by a cycle command.
 readReport :: FilePath -> IO (Maybe Report)
 readReport reportFile = do
-  let defaultReport = Report False "" []
+  let defaultReport = Report True "" []
       reader =
         configSysVars [] >>>
         readDocument [withShowTree yes] reportFile >>>
@@ -275,12 +283,12 @@ readReport reportFile = do
       getAttrValue "node" >>> changeUserState (\name r -> r {node = name})
     isVerified :: IOStateArrow Report XmlTree XmlTree
     isVerified =
-      hasAttrValue "status" isVerified' >>>
-      changeUserState (\_ r -> r { verified = True })
+      hasAttrValue "status" isntVerified' >>>
+      changeUserState (\_ r -> r { verified = False })
       where
-        isVerified' status
-          | status == "Valid" = True
-          | status == "Falsifiable" = False
+        isntVerified' status
+          | status == "Valid" = False
+          | status == "Falsifiable" = True
           | otherwise = False
     generateTrace :: IOStateArrow Report XmlTree XmlTree
     generateTrace = deep readTick
