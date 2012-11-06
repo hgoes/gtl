@@ -26,7 +26,7 @@ import Control.Monad.Error.Class (MonadError(..))
 import System.FilePath
 import System.Process as Proc
 import System.Exit (ExitCode(..))
-import System.IO (hGetContents)
+import System.IO (hGetLine,hIsEOF)
 
 import Text.XML.HXT.Core hiding (when)
 import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
@@ -225,6 +225,11 @@ verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile =
                                            Just l -> ["-strategy","debug"
                                                      ,"-stop-depth",show l])
       outputStream = if (verbosity opts) > 0 then Inherit else CreatePipe
+      readAll h = do
+        r <- hIsEOF h
+        if r
+          then return ()
+          else hGetLine h >> readAll h
   in case scadeRoot opts of
     Nothing -> putStrLn "No SCADE_ROOT environment variable set" >> return Nothing
     Just root -> do
@@ -240,7 +245,7 @@ verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile =
       if (verbosity opts) > 0 then return () else (case hout of
                                                       Nothing -> return ()
                                                       Just hout' -> do 
-                                                        str <- hGetContents hout'
+                                                        str <- readAll hout'
                                                         return ())
       exitCode <- Proc.waitForProcess p
       case exitCode of
