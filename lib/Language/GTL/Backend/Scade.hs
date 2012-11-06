@@ -26,6 +26,7 @@ import Control.Monad.Error.Class (MonadError(..))
 import System.FilePath
 import System.Process as Proc
 import System.Exit (ExitCode(..))
+import System.IO (hGetContents)
 
 import Text.XML.HXT.Core hiding (when)
 import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
@@ -228,14 +229,19 @@ verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile =
     Nothing -> putStrLn "No SCADE_ROOT environment variable set" >> return Nothing
     Just root -> do
       let dv = root </> "SCADE Suite" </> "bin" </> "dv.exe"
-      (_, _, _, p) <- Proc.createProcess $
-                      Proc.CreateProcess {
-                        cmdspec = Proc.RawCommand dv verifOpts
-                        , cwd = Nothing, env = Nothing
-                        , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
-                        , close_fds = False
-                        , create_group = False
-                        }
+      (_, hout, _, p) <- Proc.createProcess $
+                         Proc.CreateProcess {
+                           cmdspec = Proc.RawCommand dv verifOpts
+                           , cwd = Nothing, env = Nothing
+                           , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
+                           , close_fds = False
+                           , create_group = False
+                           }
+      if (verbosity opts) > 0 then return () else (case hout of
+                                                      Nothing -> return ()
+                                                      Just hout' -> do 
+                                                        str <- hGetContents hout'
+                                                        return ())
       exitCode <- Proc.waitForProcess p
       case exitCode of
         ExitFailure _ -> return Nothing
