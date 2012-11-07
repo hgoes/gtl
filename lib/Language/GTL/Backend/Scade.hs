@@ -15,7 +15,6 @@ import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.DFA
 import Data.Map as Map hiding (map, filter, foldl)
-import Control.Monad.Identity
 import Data.List as List (intercalate, mapAccumL, intersperse, findIndex)
 import Data.Maybe (isJust)
 import Data.Set as Set (member)
@@ -29,8 +28,6 @@ import System.Exit (ExitCode(..))
 import System.IO (hGetLine,hIsEOF)
 
 import Text.XML.HXT.Core hiding (when)
-import Text.XML.HXT.Arrow.XmlState.RunIOStateArrow (initialState)
-import Text.XML.HXT.Arrow.XmlState.TypeDefs (xioUserState)
 import Text.XML.HXT.DOM.TypeDefs ()
 
 import Misc.ProgramOptions
@@ -123,7 +120,7 @@ instance GTLBackend Scade where
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
-            scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
+            --scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
         --dump opts gtlName name buchi
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
@@ -136,13 +133,13 @@ instance GTLBackend Scade where
                 case reportFile' of
                   Nothing -> putStrLn "Error while running Scade verifier" >> return Nothing
                   Just reportFile -> do
-                    report' <- readReport reportFile
-                    case report' of
-                      Nothing -> putStrLn "Error reading back Scade verifier report" >> return Nothing
-                      Just report -> do
-                        when (not (verified report))
-                          (generateScenario scenarioFile report)
-                        return $ Just $ verified report
+                    report <- readReport reportFile
+                    mapM (\prop -> if propStatus prop
+                                   then return ()
+                                   else (writeFile (outputDir </> (gtlName++"-"++name++"-"++(propName prop)++"-counterex") <.> "sss")
+                                         (propertyToReport prop))
+                         ) (properties report)
+                    return $ Just $ all propStatus (properties report)
               else return Nothing
 
 splitScadeName :: String -> [String]
@@ -201,15 +198,102 @@ interfaceToDeclaration vars = [ VarDecl [VarId (fst v) False False] (snd v) Noth
 filterNonConst :: Ord a => Map a b -> [(a,c)] -> [(a,c)]
 filterNonConst constVars = filter (not . (flip Map.member $ constVars) . fst)
 
--- | List of TCL commands
-type ScadeTick = [String]
-type ScadeTrace = [ScadeTick]
+data Prover = Prover
+              { proverResult :: Bool
+              , strategy :: String 
+              , properties :: [Property]
+              } deriving Show
 
-data Report = Report {
-  verified :: Bool -- ^ Could expected contract be fulfilled?
-  , node :: String -- ^ The node in test
-  , errorTrace :: ScadeTrace -- ^ In case /verified == True/ contains a list of TCL commands to reproduce the error.
-} deriving Show
+data Property = Property
+                { propName :: String
+                , propStatus :: Bool
+                , propNode :: String
+                , propTrace :: [ScadeTick]
+                } deriving Show
+
+data ScadeTick = ScadeTick
+                 { tickCycle :: Int
+                 , tickContent :: [ScadeTickAssignment]
+                 } deriving Show
+
+data ScadeTickAssignment = InputAssignment String ScadeTickValue
+                         | OutputAssignment String ScadeTickValue
+                         deriving Show
+
+data ScadeTickValue = SingleData String String
+                    | CompositeData [ScadeTickValue]
+                    deriving Show
+
+renderTickValue :: ScadeTickValue -> String
+renderTickValue (SingleData _ v) = v
+renderTickValue (CompositeData vs) = "("++intercalate "," (fmap renderTickValue vs)++")"
+
+propertyToReport :: Property -> String
+propertyToReport prop = unlines $ concat
+                        [ [ "SSM::set "++propNode prop++"/"++name++" "++renderTickValue val
+                          | InputAssignment name val <- tickContent tick ]
+                          ++ ["SSM::cycle"]
+                        | tick <- propTrace prop ]
+
+instance XmlPickler Prover where
+  xpickle = xpElem "prover" $
+            xpWrap (\(res,strat,props) -> Prover res strat props,
+                    \prov -> (proverResult prov,strategy prov,properties prov)) $
+            xpTriple (xpWrap (\txt -> case txt of
+                                 "Ok" -> True
+                                 _ -> False,
+                              \res -> if res then "Ok" else "Failed") $ xpTextAttr "result")
+            (xpTextAttr "strategy")
+            (xpList xpickle)
+
+instance XmlPickler Property where
+  xpickle = xpElem "property" $
+            xpWrap (\(name,st,node,len,cont) -> Property name st node cont,
+                    \p -> (propName p,propStatus p,propNode p,Just $ length $ propTrace p,propTrace p)) $
+            xp5Tuple (xpTextAttr "name") 
+            (xpWrap (\txt -> case txt of
+                        "Falsifiable" -> False
+                        "Valid" -> True
+                        _ -> False,
+                     \p -> if p then "Valid"
+                           else "Falsifiable") $ xpTextAttr "status")
+            (xpTextAttr "node")
+            (xpAttrImplied "length" $ xpInt)
+            (xpList xpickle)
+
+instance XmlPickler ScadeTick where
+  xpickle = xpElem "tick" $
+            xpWrap (\(cyc,inps) -> ScadeTick cyc inps,
+                    \tick -> (tickCycle tick,tickContent tick)) $
+            xpPair (xpAttr "cycle" xpInt)
+            (xpList xpickle)
+
+instance XmlPickler ScadeTickAssignment where
+  xpickle = xpAlt (\x -> case x of
+                      InputAssignment _ _ -> 0
+                      OutputAssignment _ _ -> 1)
+            [xpElem "input" $
+             xpWrap (\(name,val) -> InputAssignment name val,
+                     \(InputAssignment name val) -> (name,val)) $
+             xpPair (xpTextAttr "name") xpickle
+            ,xpElem "output" $
+             xpWrap (\(name,val) -> OutputAssignment name val,
+                     \(OutputAssignment name val) -> (name,val)) $
+             xpPair (xpTextAttr "name") xpickle
+            ]
+
+instance XmlPickler ScadeTickValue where
+  xpickle = xpAlt (\x -> case x of
+                      SingleData _ _ -> 0
+                      CompositeData _ -> 1)
+            [xpElem "value" $
+             xpWrap (\(tp,val) -> SingleData tp val,
+                     \(SingleData tp val) -> (tp,val)) $ 
+             xpPair (xpTextAttr "type") xpText
+            ,xpElem "composite" $
+             xpWrap (CompositeData,\(CompositeData x) -> x) $ 
+             xpList xpickle
+            ]
 
 -- | Runs the Scade design verifier and reads back its report.
 verifyScadeNodes :: Options -> String -> String -> FilePath -> FilePath -> FilePath -> IO (Maybe FilePath)
@@ -271,105 +355,18 @@ verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile =
 -- n is the name of the tested node (will be in Report.node).
 -- For each tick there will be a ScadeTick in Report.errorTrace and for each
 -- input there will be a set command in that tick. Each tick will be finalized by a cycle command.
-readReport :: FilePath -> IO (Maybe Report)
+readReport :: FilePath -> IO Prover
 readReport reportFile = do
-  let defaultReport = Report True "" []
-      reader =
-        configSysVars [] >>>
-        readDocument [withShowTree yes] reportFile >>>
-        getChildren >>>
-        makeReport
-  (r, _) <- runXIOSState (initialState defaultReport) reader
-  return $ Just $ reverseTrace $ xioUserState r
-  where
-    makeReport :: IOStateArrow Report XmlTree XmlTree -- (XIOState Report) -> XMLTree -> IO (Report, [(XmlTree, Report)]
-    makeReport =
-      isTag "prover" >>>
-      getChildren >>>
-      isTag "property" >>>
-      getNodeName &&&>
-      isVerified `orElse` generateTrace
-    getNodeName :: IOStateArrow Report XmlTree String
-    getNodeName =
-      getAttrValue "node" >>> changeUserState (\name r -> r {node = name})
-    isVerified :: IOStateArrow Report XmlTree XmlTree
-    isVerified =
-      hasAttrValue "status" isntVerified' >>>
-      changeUserState (\_ r -> r { verified = False })
-      where
-        isntVerified' status
-          | status == "Valid" = False
-          | status == "Falsifiable" = True
-          | otherwise = False
-    generateTrace :: IOStateArrow Report XmlTree XmlTree
-    generateTrace = deep readTick
-      where
-        readTick =
-          isTag "tick" >>>
-          startCycle >>>
-          readCycleActions &&&> makeCycleCommand
-          where
-            startCycle = changeUserState (\_ r -> r {errorTrace = [] : (errorTrace r)})
-            readCycleActions =
-              getChildren >>>
-              isTag "input" >>> getVariableName >>>
-              (second getChildren) >>> valueSetCommand
-            -- TCL command generation
-            getVariableName = getAttrValue "name" &&& returnA
-            valueSetCommand :: IOStateArrow Report (String, XmlTree) (String, String)
-            valueSetCommand =
-              (second $ compositeValue `orElse` singleValue) >>> saveValue
-            compositeValue =
-              isTag "composite" >>>
-              deep (
-                singleValue
-              ) >.
-              (intercalate ",") >>> arr addParens
-            singleValue =
-              isTag "value" >>> getChildren >>> getText
-            saveValue :: IOStateArrow Report (String, String) (String, String)
-            saveValue = changeUserState (\(n,v) r -> case v of
-                [] -> r -- if value is empty -> ignore set command
-                _ -> r { errorTrace =
-                        (("SSM::set " ++ (node r) ++ "/" ++ n ++ " " ++ v) : (traceHead r)) : (traceTail r)}
-              )
-            makeCycleCommand = changeUserState (\_ r -> r {errorTrace = ("SSM::cycle" : (traceHead r)) : (traceTail r)})
-            -- trace access
-            traceHead = head . errorTrace
-            traceTail = tail . errorTrace
-            commandHead = head . traceHead
-            commandTail = tail . traceHead
-            addParens s = "(" ++ s ++ ")"
-    -- After parsing the ticks and the commands in there are in reverse order -> correct that.
-    reverseTrace :: Report -> Report
-    reverseTrace r = r { errorTrace = reverse . (map reverse) . errorTrace $ r }
+  res <- runX (xunpickleDocument xpickle [withValidate no,withRemoveWS yes,withPreserveComment no] reportFile)
+  case res of
+    [p] -> return p
+    _ -> error "Couldn't parse report"
 
-runXIOSState :: XIOState s -> IOStateArrow s XmlTree c -> IO (XIOState s, [c])
-runXIOSState s0 f = runIOSLA (emptyRoot >>> f) s0 undefined
-  where
-    emptyRoot = root [] []
-
--- | Tests if we are at a node of type
--- </name/ ...>...
-isTag name = isElem >>> hasName name
-
--- | Execute f and g on input, use output state of f for g and return
--- the result only of g.
--- Equivalent to f &&& g >>> arr snd.
-(&&&>) :: IOStateArrow s a b -> IOStateArrow s a c -> IOStateArrow s a c
-f &&&> g = f &&& g >>> arr snd
 {-
--- For efficiency
-IOSLA f &&&> IOSLA g = IOSLA $ \ s x -> do
-                   (s', _) <- f s  x
-                   (s'', y) <- g s' x
-                   return (s'', y)
--}
-
 --- | Generate the scenario file for the report.
-generateScenario :: FilePath -> Report -> IO()
-generateScenario scenarioFile report =
-  writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
+generateScenario :: FilePath -> Report -> IO ()
+generateScenario scenarioFile report = 
+  writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report) -}
 
 scadeTranslateTypeC :: GTLType -> (String,String,Bool)
 scadeTranslateTypeC (Fix GTLInt) = ("kcg_int","",False)
