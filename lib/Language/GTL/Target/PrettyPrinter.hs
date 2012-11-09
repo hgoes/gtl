@@ -13,6 +13,7 @@ import Data.GraphViz
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
 import Data.GraphViz.Attributes.Complete
+import qualified Data.GraphViz.Attributes.HTML as GH
 import qualified Data.Text.Lazy as T
 import Data.Int (Int64)
 import Data.Maybe
@@ -52,13 +53,13 @@ buchiToDot buchi
                                           , subGraphs = []
                                           , nodeStmts = [ DotNode (nd i) [Shape Ellipse
                                                                          ,Height 0.5,Width 0.5,Margin (DVal 0)
-																		 , textLabel $ T.pack (nd i)
-																		 , Comment $ T.pack (nd i)
+									                                              , textLabel $ Empty
+									                                              , Comment $ T.pack (nd i)
                                                                          ]
                                                         | (i,st) <- Map.toList $ baTransitions buchi 
                                                         ] ++
                                                         [ DotNode "start" [Shape PointShape
-																			, textLabel $ Empty
+										                                            , textLabel $ Empty
                                                                           ]
                                                         ]
                                           ,edgeStmts = [ DotEdge { fromNode = nd st
@@ -66,21 +67,21 @@ buchiToDot buchi
                                                                  , edgeAttributes = [
                                                                  textLabel $ T.unlines [exprToLatex te | (te) <- cond]
                                                                  , Comment $ 
-																  T.append 
-																	(T.append 
-																		(T.pack $ "\\begin{array}{c}")
-																 		(T.concat $ 
-																	 		intersperse (T.pack "\\\\") (
-																					[exprToLatex te | te <- cond])
-																		)
-																	) 
-																	(T.pack $ "\\end{array}")
+									                                          T.append 
+										                                          (T.append 
+											                                          (T.pack $ "\\begin{array}{c}")
+									 		                                          (T.concat $ 
+										 		                                          intersperse (T.pack "\\\\") (
+													                                       [exprToLatex te | te <- cond])
+											                                          )
+										                                          ) 
+										                                          (T.pack $ "\\end{array}")
                                                                  ]
                                                                  }
                                                        | (st,trans) <- Map.toList $ baTransitions buchi
                                                        , (cond,trg) <- trans
                                                        ] 
-													   ++
+													                ++
                                                        [ DotEdge { fromNode = "start"
                                                                  , toNode = nd st
                                                                  , edgeAttributes = []
@@ -144,7 +145,7 @@ gtlToTikz spec = do
                                                  , subGraphs = []
                                                  , nodeStmts = [ DotNode name [Shape PlainText
                                                                               ,FontSize 10.0
-                                                                              ,Label $ genRecordShape inp
+                                                                              , Label $ HtmlLabel (genHRecordShape inp outp w h)
                                                                               ]
                                                                | (name,(inp,outp,repr,w,h)) <- Map.toList mp
                                                                ]
@@ -159,19 +160,54 @@ gtlToTikz spec = do
                                                  }
                     }
   outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt gr))
-  putStrLn $ T.unpack outp
   let dot = parseIt' outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
 -- | Creates the hole record object with its ports
 --   2nd and 3rd parameters are height and width
-genRecordShape :: (RealFrac a) => Map String GTLType -> a -> a -> HtmlLabel
-genRecordShape inp h w = HtmlLabel $
-                       RecordLabel $ (generatePorts True inp)++
-                              [FieldLabel $ T.replicate (ceiling $ h / 28)
-                                            (T.replicate (ceiling $ w / 16) (T.singleton 'a')) -- XXX: There doesn't seem to be a way to specify the width of a nested field so we have to resort to this ugly hack
-							  ]++
-						      (generatePorts False outp)
+genHRecordShape :: (RealFrac a) => Map String GTLType -> Map String GTLType -> a -> a -> GH.Label
+genHRecordShape inp outp w h = GH.Table $ GH.HTable { GH.tableFontAttrs = Nothing
+  , GH.tableAttrs = [GH.Border 0, GH.CellBorder 1, GH.CellSpacing 0, GH.CellPadding 0]
+  , GH.tableRows = [
+    GH.Cells $ concat [
+	   firstcell++
+		[GH.LabelCell [GH.Border 1, 
+                     GH.RowSpan $ fromIntegral rows, 
+							GH.Height $ round h, 
+							GH.Width $ round w] (GH.Text [GH.Str $ T.pack ""])]++
+		[GH.LabelCell [GH.RowSpan $ fromIntegral rows] (
+			if (Map.size outp) > 0 then 
+			GH.Table GH.HTable {
+			  GH.tableFontAttrs = Nothing
+			, GH.tableAttrs = [GH.Border 0, GH.CellBorder 1, GH.CellSpacing 0, GH.CellPadding 0]
+			, GH.tableRows = [
+             GH.Cells [
+	            GH.LabelCell [GH.Border 0, GH.Port $ PN {portName = T.pack name}] (GH.Text [GH.Str $ T.pack name])
+	          ]
+           | (name,_) <- Map.toList outp
+           ]
+			}
+			else
+			(GH.Text [GH.Str Empty])
+		)]
+	 ]
+  ]++
+  [
+    GH.Cells [
+	   GH.LabelCell [GH.Border 1, GH.Port $ PN {portName = T.pack name}] (GH.Text [GH.Str $ T.pack name])
+	 ]
+  | (name,_) <- Map.toList inpnd
+  ]
+  }
+  where 
+    rows = Map.size inp
+    fel = if rows > 0 then fst $ Map.elemAt 0 inp else ""
+    inpnd = Map.delete fel inp --  get list of inp without first el
+    firstcell = if rows > 0 
+	               then
+	 	              [GH.LabelCell [GH.Border 1, GH.Port $ PN {portName = T.pack fel}] (GH.Text [GH.Str $ T.pack fel])]
+                  else
+						  []
 
 genPortName :: String -> [Integer] -> Text
 genPortName var ind = T.append (T.pack var) (T.concat (fmap (\i -> T.pack ("_"++show i)) ind))
@@ -180,17 +216,20 @@ genPortName var ind = T.append (T.pack var) (T.concat (fmap (\i -> T.pack ("_"++
 --   Also returns the width and height of the bounding box for the rendered picture.
 modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
-  let ltl = gtlToLTL Nothing (gtlModelContract m)
+  let ltl = gtlToLTL Nothing (gtlContractExpression $ gtlModelContract m)
       buchi = ltl2ba ltl
   outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
-  return (res,px,py)
+  return (res,px*2.0,py*2.0)
 
 -- | Helper function to render a graphviz point in Tikz.
 pointToTikz :: Point -> String
 pointToTikz pt = "("++show (xCoord pt)++"bp,"++show (yCoord pt)++"bp)"
+
+pointToTikzAdd :: Point -> Double -> Double -> String
+pointToTikzAdd pt x y = "("++show ((xCoord pt) + x)++"bp,"++show ((yCoord pt) +y)++"bp)"
 
 getrecnames :: [(String, GTLType)] -> String
 getrecnames vars = "{" ++ (list vars) ++ "}"
@@ -240,6 +279,55 @@ genConnectPortName rec port = (genNodeID rec) ++ (T.unpack port)
 genNodeID:: (PrintDot a) => a -> String
 genNodeID nd = (T.unpack $ printIt nd)
 
+ndToTikz :: (Show a,Ord a) => DotNode a ->
+             Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
+             -> String
+ndToTikz nd mtp = concat [
+                           "\\node at "++ (pointToTikzAdd pos (-1 * ((w/2.0))) ((-inph * (idx name inp))+(h/2.0)))  ++
+                           " [draw,anchor=north west,name="++ name ++",rectangle, minimum width="++ 
+                           (show inpw) ++"bp,minimum height="++ (show inph) ++"bp,transform shape] {"++name++"};"
+                        | (name,_) <- Map.toList inp
+                        ]++
+                        concat [
+                           "\\node at "++ (pointToTikzAdd pos ((w/2.0)-outpw) ((-outph * (idx name outp))+(h/2.0)))  ++
+                           " [draw,anchor=north west,name="++ name ++",rectangle, minimum width="++ 
+                           (show outpw) ++"bp,minimum height="++ (show outph) ++"bp,transform shape] {"++name++"};"
+                        | (name,_) <- Map.toList outp
+                        ]++
+                        "\\node at "++ (pointToTikz pos)  ++" [draw,name="++ (show $ nodeID nd) ++",rectangle, minimum width="++ 
+                        (show w) ++"bp,minimum height="++ (show h) ++"bp,transform shape] {};"
+                        ++ unlines (
+                              [ "\\node at " ++ pointToTikzAdd pos inpw 0.0 ++ " [name=auto"++(show $ nodeID nd)++"] {" ++
+                              "\\begin{tikzpicture}\n"
+                              ++repr++
+                              "\\end{tikzpicture}"
+                              ]) ++ "};"
+  where 
+      pos = case List.find (\attr -> case attr of
+                            Pos _ -> True
+                            _ -> False) (nodeAttributes nd) of
+               Just (Pos (PointPos p)) -> p
+               Nothing -> error $ "No position defined for node "++show (nodeID nd)
+      h = case List.find (\attr -> case attr of
+                          Height _ -> True
+                          _ -> False) (nodeAttributes nd) of
+               Just (Height x) -> 64.0*x
+               _ -> error "No height given"
+      w = case List.find (\attr -> case attr of
+                          Width _ -> True
+                          _ -> False) (nodeAttributes nd) of
+               Just (Width x) -> 64.0*x
+               _ -> error "No width given"
+      outpEmpty = Map.null outp
+      inpEmpty = Map.null inp
+      inph = if inpEmpty then 0.0 else (h / fromIntegral (Map.size inp))
+      outph = if outpEmpty then 0.0 else h / fromIntegral (Map.size outp)
+      inpw = if inpEmpty then 0.0 else fromIntegral (maximum $ Prelude.map length (Map.keys inp))*15.0
+      outpw = if outpEmpty then 0.0 else fromIntegral (maximum $ Prelude.map length (Map.keys outp))*15.0
+      idx k l = fromIntegral $ Map.findIndex k l 
+      Just reprs = mtp
+      (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
+
 -- | Convert a graphviz graph to Tikz drawing commands.
 dotToTikz :: (Show a,Ord a)
              => Maybe (Map a (Map String GTLType,Map String GTLType,String,Double,Double)) -- ^ Can provide interfaces for the contained models if needed.
@@ -249,14 +337,8 @@ dotToTikz mtp gr
   = unlines
     ([case shape of
          Ellipse -> "\\draw [color=blue!50,very thick,fill=blue!20]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);\n" ++
-                    "\\draw "++pointToTikz pos++" node {$"++(T.unpack lbl)++"$};"
-         Record -> let (out1,mrect@(Rect m1 m2):rect1) = layoutRects True rects (Map.toList inp)
-                       (out2,rect2) = layoutRects False rect1 (Map.toList outp)
-                   in unlines ([drawBox mrect]++out1++out2
-                               ++[ "\\begin{scope}[shift={("++show ((xCoord m1 + xCoord m2 - rw)/2)++"bp,"++show ((yCoord m1 + yCoord m2 - rh)/2)++"bp)}]\n"
-                                   ++repr++
-                                   "\\end{scope}"
-                                 ])
+                    "\\draw "++pointToTikz pos++" node {};"
+         PlainText -> (ndToTikz nd mtp) 
          PointShape -> "\\draw [fill]"++pointToTikz pos++" ellipse ("++show w++"bp and "++show h++"bp);"
      | nd <- nodeStmts (graphStatements gr)
      , let pos = case List.find (\attr -> case attr of
@@ -274,28 +356,11 @@ dotToTikz mtp gr
                                   _ -> False) (nodeAttributes nd) of
                  Just (Width x) -> 32.0*x
                  _ -> error "No width given"
-           lbl = case List.find (\attr -> case attr of
-                                  Comment _ -> True
-                                  _ -> False) (nodeAttributes nd) of
-                 Just (Comment x) -> removeBreaks x
-                 _ -> error "No label given"
            shape = case List.find (\attr -> case attr of
                          Shape _ -> True
                          _ -> False) (nodeAttributes nd) of
                      Just (Shape x) -> x
                      _ -> error "No shape given"
-           rlbl = case List.find (\attr -> case attr of
-                                  Label _ -> True
-                                  _ -> False) (nodeAttributes nd) of
-                    Just (Label (RecordLabel x)) -> x
-                    _ -> error "No record label given"
-           rects = case List.find (\attr -> case attr of
-                                  Rects _ -> True
-                                  _ -> False) (nodeAttributes nd) of
-                    Just (Rects x) -> x
-                    _ -> error "No rects given"
-           Just reprs = mtp
-           (inp,outp,repr,rw,rh) = reprs!(nodeID nd)
      ] ++
      [ unlines ["\\draw [-,thick] "++pointToTikz spl1++ ".. controls "++pointToTikz spl2++
 	 " and "++pointToTikz spl3 ++" .. "++pointToTikz spl4++";"
