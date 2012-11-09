@@ -1048,7 +1048,7 @@ unpackExpr f i (Fix e) = case getValue e of
 
 defaultValue :: GTLType -> GTLConstant
 defaultValue tp = case unfix tp of
-  GTLInt -> Fix $ GTLIntVal 0
+  GTLInt _ -> Fix $ GTLIntVal 0
   GTLByte -> Fix $ GTLByteVal 0
   GTLBool -> Fix $ GTLBoolVal False
   GTLFloat -> Fix $ GTLFloatVal 0
@@ -1058,7 +1058,7 @@ defaultValue tp = case unfix tp of
 
 constantToExpr :: Set [String] -> GTLConstant -> TypedExpr v
 constantToExpr enums c = case unfix c of
-  GTLIntVal v -> Fix $ Typed gtlInt (Value (GTLIntVal v))
+  GTLIntVal v -> Fix $ Typed (gtlInt Nothing) (Value (GTLIntVal v))
   GTLByteVal v -> Fix $ Typed gtlByte (Value (GTLByteVal v))
   GTLBoolVal v -> Fix $ Typed gtlBool (Value (GTLBoolVal v))
   GTLFloatVal v -> Fix $ Typed gtlBool (Value (GTLFloatVal v))

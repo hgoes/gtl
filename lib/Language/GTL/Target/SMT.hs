@@ -86,7 +86,7 @@ data GTLSMTExpr = GSMTInt { asSMTInt :: SMTExpr GTLSMTInt }
 
 instance Args GTLSMTExpr where
   type ArgAnnotation GTLSMTExpr = GTLType
-  foldExprs f s e (Fix GTLInt) = let (s',e') = f s (asSMTInt e) ()
+  foldExprs f s e (Fix (GTLInt i)) = let (s',e') = f s (asSMTInt e) ()
                                  in (s',GSMTInt e')
   foldExprs f s e (Fix GTLByte) = let (s',e') = f s (asSMTByte e) ()
                                  in (s',GSMTByte e')
