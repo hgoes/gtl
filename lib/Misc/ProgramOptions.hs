@@ -25,6 +25,7 @@ data TranslationMode
      | Pretty -- ^ Pretty print the resulting GALS model
      | Native -- ^ Translate the system to promela using the contracts as specifications for the component behaviour
      | UPPAAL -- ^ Generate a UPPAAL model to check the GALS model
+     | SMV -- ^ Translate the system to NuSMV using specification
      | SMTBMC -- ^ Use a SMT solver to check the GALS model
      | SMTInduction
      deriving (Show,Eq)
@@ -72,7 +73,7 @@ defaultOptions = Options
   }
 
 modes :: [(String,TranslationMode)]
-modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty),("native",Native),("uppaal",UPPAAL),("smt_bmc",SMTBMC),("smt_ind",SMTInduction)]
+modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),("tikz",Tikz),("pretty",Pretty),("native",Native),("uppaal",UPPAAL),("smv",SMV),("smt_bmc",SMTBMC),("smt_ind",SMTInduction)]
 
 modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
 modeString def [] = ""
