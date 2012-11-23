@@ -40,6 +40,7 @@ data Options = Options
                , ccBinary :: String -- ^ Location of the C-compiler
                , ccFlags :: [String] -- ^ Flags to pass to the C-compiler
                , ldFlags :: [String] -- ^ Flags to pass to the linker
+               , includes :: [String] -- ^ Extra header files to include
                , scadeRoot :: Maybe FilePath -- ^ Location of the SCADE suite
                , smtBinary :: Maybe FilePath
                , verbosity :: Int -- ^ Verbosity level
@@ -48,6 +49,7 @@ data Options = Options
                , bmcCompleteness :: Bool
                , bmcBound :: Maybe Integer
                , useSonolar :: Bool
+               , scheduling :: String
                }
                deriving Show
 
@@ -61,6 +63,7 @@ defaultOptions = Options
   , ccBinary = "gcc"
   , ccFlags = []
   , ldFlags = []
+  , includes = []
   , scadeRoot = Nothing
   , smtBinary = Nothing
   , verbosity = 0
@@ -69,34 +72,39 @@ defaultOptions = Options
   , bmcCompleteness = False
   , bmcBound = Nothing
   , useSonolar = False
+  , scheduling = "none"
   }
 
 modes :: [(String,TranslationMode)]
 modes = [("native-c",NativeC),("local",Local),("promela-buddy",PromelaBuddy),{-("tikz",Tikz),-}("pretty",Pretty),("native",Native),("uppaal",UPPAAL),("smt_bmc",SMTBMC),("smt_ind",SMTInduction)]
 
-modeString :: (Show a,Eq b) => b -> [(a,b)] -> String
-modeString def [] = ""
-modeString def [(name,md)] = show name ++ (if md==def
-                                           then "(default)"
-                                           else "")
-modeString def names = buildOr names
-  where
-    buildOr ((name,md):names) = show name ++ (if md==def
-                                              then "(default)"
-                                              else "")++
-                                case names of
-                                  [(name2,md2)] -> " or " ++ show name2 ++ (if md2==def
-                                                                            then "(default)"
-                                                                            else "")
-                                  _ -> ", "++buildOr names
+scheduler :: [String]
+scheduler = ["none","sync","fair","timed"]
 
+modeString1 :: (Show a,Eq a) => a -> [a] -> String
+modeString1 def names = buildOr [ show name ++ (if name==def
+                                                then "(default)"
+                                                else "") | name <- names ]
+
+modeString2 :: (Show a,Eq b) => b -> [(a,b)] -> String
+modeString2 def names = buildOr [ show name ++ (if md==def 
+                                                then "(default)"
+                                                else "") | (name,md) <- names ]
+
+buildOr :: [String] -> String
+buildOr [] = ""
+buildOr [opt] = opt
+buildOr (x:xs) = x++buildOr' xs
+  where
+    buildOr' [x] = " or "++x
+    buildOr' (x:xs) = ", "++x++buildOr' xs
 
 options :: [OptDescr (Options -> Options)]
 options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
                                              Just rmode -> opt { mode = rmode }
                                              Nothing -> error $ "Unknown mode "++show str
                                          ) "mode"
-                                 ) ("The tranlation mode ("++modeString (mode defaultOptions) modes++")")
+                                 ) ("The tranlation mode ("++modeString2 (mode defaultOptions) modes++")")
           ,Option ['t'] ["trace-file"] (ReqArg (\str opt -> opt { traceFile = Just str }) "file") "Use a trace file to restrict a simulation"
           ,Option ['o'] ["output-directory"] (ReqArg (\path opts -> opts { outputPath = path }) "path") "Path into which the output should be generated"
           ,Option ['h'] ["help"] (NoArg (\opt -> opt { showHelp = True })) "Show this help information"
@@ -106,6 +114,10 @@ options = [Option ['m'] ["mode"] (ReqArg (\str opt -> case lookup str modes of
           ,Option ['d'] ["debug"] (ReqArg (\str opt -> opt { debug = Set.insert str $ debug opt }) "option") "Give debugging options (e.g. -ddump-buchi)"
           ,Option ['c'] ["complete"] (NoArg (\opt -> opt { bmcCompleteness = True })) "Makes the bounded model checking procedure complete (WARNING: can increase runtime by a lot)"
           ,Option ['b'] ["bound"] (ReqArg (\str opt -> opt { bmcBound = Just $ read str }) "num") "Gives an explicit bound where to stop the bounded model checking"
+          ,Option ['s'] ["scheduling"] (ReqArg (\str opt -> opt { scheduling = if elem str scheduler
+                                                                               then str
+                                                                               else error ("Unknown scheduling: "++str) }) "scheduler")
+           ("The scheduling algorithm to use ("++modeString1 (scheduling defaultOptions) scheduler++")")
           ,Option [] ["sonolar"] (NoArg (\opt -> opt { useSonolar = True })) "Restricts the SMT code generator to a tiny subset of SMTLib2 to enable the use of the sonolar solver"
           ]
 
@@ -116,6 +128,7 @@ header = unlines $ [
     , " * CC - Path to compiler"
     , " * CFLAGS - Additional flags to be passed to compiler"
     , " * LDFLAGS - Additional flags to be passed to linker"
+    , " * INCLUDES - Additional header files to include in generated code"
     , " * SCADE_ROOT - Path to the Scade root directory (e.g. C:\\Program Files\\Esterel Technologies\\SCADE 6.1.2)"
     , " * SMT_BINARY - Path to the SMT solver binary"
     , " All environment variables may be passed in the form <Variable>=<Value> as option."

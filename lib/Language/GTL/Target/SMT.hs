@@ -10,20 +10,22 @@ import Language.GTL.Translation
 import Language.SMTLib2 as SMT
 import Language.SMTLib2.Solver
 import Language.SMTLib2.Internals as SMT
-import Data.Text as T hiding (intersperse,length,concat,unlines,zip)
 import Data.Map as Map hiding ((!))
 import Data.Set as Set
+import qualified Data.Text as T
 import Data.AttoLisp as L
 import Control.Monad.Trans
 import Data.Traversable
-import Prelude hiding (mapM,sequence)
+import Data.Foldable
+import Prelude hiding (mapM,sequence,foldl1,concat,mapM_,minimum)
 import Data.List (genericIndex,intersperse)
 import Data.Word
 import Control.Concurrent
 import Misc.ProgramOptions
-import Data.List as List
+import qualified Data.List as List
 import Data.Time
 import System.IO (hFlush,stdout)
+import Data.Unit
 
 #ifdef SMTExts
 type GTLSMTPc = Integer
@@ -272,96 +274,198 @@ eqInstOutp st1 st2
            (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars st1) (instanceLocalVars st2))))
 
 -- | A scheduling dictates which instance may perform a calculation step at which point in time.
-class Scheduling s where
-  -- | A scheduling may define extra data it needs to perform the scheduling
+class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Integer) => Scheduling s where
   type SchedulingData s
-  initializeScheduling :: s -> SchedulingData s -> SMTExpr Bool
-  -- | Perform scheduling on two global states: The current one and the next one
-  schedule :: s
-              -> Set [String]
-              -> ArgAnnotation (SchedulingData s)
-              -> (SchedulingData s 
-                  -> GlobalState 
-                  -> SMTExpr Bool,
-                  SchedulingData s -- ^ The current scheduling data
-                  -> SchedulingData s -- ^ The next scheduling data
-                  -> GlobalState -- ^ The current state
-                  -> GlobalState -- ^ The next state
-                  -> SMTExpr Bool)
-  showSchedulingInformation :: s -> SchedulingData s -> SMT String
+  firstSchedule :: s -> SchedulingData s -> SMTExpr Bool
+  canSchedule :: s -> String -> SchedulingData s -> SMTExpr Bool
+  schedule :: s -> String -> SchedulingData s -> SchedulingData s -> SMTExpr Bool
   eqScheduling :: s -> SchedulingData s -> SchedulingData s -> SMTExpr Bool
+  schedulingFairnessCount :: s -> Map String Integer -> Integer
+  schedulingFairness :: s -> SchedulingData s -> [SMTExpr Bool]
+  showSchedulingInformation :: s -> SchedulingData s -> SMT String
 
 data SimpleScheduling = SimpleScheduling
 
 data SimpleSchedulingData = SimpleSchedulingData deriving (Typeable,Eq)
 
 instance Args SimpleSchedulingData where
-  type ArgAnnotation SimpleSchedulingData = GTLSpec String
+  type ArgAnnotation SimpleSchedulingData = Map String Integer
   foldExprs _ s _ _ = (s,SimpleSchedulingData)
 
 instance Scheduling SimpleScheduling where
   type SchedulingData SimpleScheduling = SimpleSchedulingData
-  initializeScheduling _ _ = SMT.constant True
-  schedule _ enums spec = (init,step)
-    where
-      init _ st = and' (Map.elems $ Map.intersectionWith (\(fun,_) inst -> fun inst) funs (instanceStates st))
-      step _ _ stf stt = or' [ and' (((snd $ funs!iname)
-                                      ((instanceStates stf)!iname)
-                                      ((instanceStates stt)!iname))
-                                     :[ eqInstOutp inst ((instanceStates stt)!iname')
-                                        | (iname',inst) <- Map.toList (instanceStates stf)
-                                      , iname /= iname'
-                                      ])
-                               | (iname,inst) <- Map.toList (gtlSpecInstances spec)
-                             ]
-      funs = fmap (\inst -> instanceFuns enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) (gtlInstanceContract inst)) (gtlSpecInstances spec)
-  showSchedulingInformation _ _ = return "none"
+  firstSchedule _ _ = SMT.constant True
+  canSchedule _ _ _ = SMT.constant True
+  schedule _ _ _ _ = SMT.constant True
   eqScheduling _ _ _ = SMT.constant True
+  schedulingFairnessCount _ _ = 0
+  schedulingFairness _ _ = []
+  showSchedulingInformation _ _ = return "none"
 
-data FairScheduling = FairScheduling
+data SyncScheduling = SyncScheduling
 
-newtype FairSchedulingData = FairSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq)
+newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq)
 
-instance Args FairSchedulingData where
-  type ArgAnnotation FairSchedulingData = GTLSpec String
-  foldExprs f s ~(FairSchedulingData mp) spec = let (s',mp') = List.mapAccumL (\cs (name,_) -> let (cs',e) = f cs (mp!name) ()
-                                                                                               in (cs',(name,e))) s (Map.toAscList (gtlSpecInstances spec))
-                                                in (s',FairSchedulingData $ Map.fromAscList mp')
+instance Args SyncSchedulingData where
+  type ArgAnnotation SyncSchedulingData = Map String Integer
+  foldExprs f s ~(SyncSchedulingData mp) procs
+    = let (s',mp') = mapAccumL (\cs (name,_) -> let (cs',nv) = f cs (mp!name) ()
+                                                in (cs',(name,nv))) s (Map.toAscList procs)
+      in (s',SyncSchedulingData (Map.fromAscList mp'))
 
-instance Scheduling FairScheduling where
-  type SchedulingData FairScheduling = FairSchedulingData
-  initializeScheduling _ (FairSchedulingData mp) = and' (fmap not' $ Map.elems mp)
-  schedule _ enums spec = (init,step)
-    where
-      funs = fmap (\inst -> instanceFuns enums ((gtlSpecModels spec)!(gtlInstanceModel inst)) (gtlInstanceContract inst)) (gtlSpecInstances spec)
-      init _ st = and' (Map.elems $ Map.intersectionWith (\(fun,_) inst -> fun inst) funs (instanceStates st))
-      step (FairSchedulingData ps) (FairSchedulingData ps') stf stt
-          = let smap = Map.intersectionWithKey (\name p1 p2 -> let inst = (gtlSpecInstances spec)!name
-                                                               in (p1,p2,and' $ ((snd $ funs!name) ((instanceStates stf)!name) ((instanceStates stt)!name))
-                                                                         :[ eqInstOutp inst ((instanceStates stt)!name')
-                                                                            | (name',inst) <- Map.toList (instanceStates stf)
-                                                                          , name /= name'
-                                                                          ])) ps ps'
-            in or' $ (and' $ (or' [ and' $ sched:p2:[ not' p2' 
-                                                      | (name',(_,p2',_)) <- Map.toList smap
-                                                    , name /= name'
-                                                    ]
-                                    | (name,(p1,p2,sched)) <- Map.toList smap
-                                  ]):(Map.elems ps)):
-                   [and' $ sched:(not' p1):p2
-                    :[ p1' .==. p2'
-                       | (name',(p1',p2',_)) <- Map.toList smap
-                     , name /= name'
-                     ]
-                    | (name,(p1,p2,sched)) <- Map.toList smap ]
-  showSchedulingInformation _ (FairSchedulingData mp) = do
+instance Scheduling SyncScheduling where
+  type SchedulingData SyncScheduling = SyncSchedulingData
+  firstSchedule _ (SyncSchedulingData mp) = and' [ not' x | x <- Map.elems mp ]
+  canSchedule _ name (SyncSchedulingData mp) = or' [ not' (mp!name)
+                                                   , and' $ Map.elems mp ]
+  schedule _ name (SyncSchedulingData m1) (SyncSchedulingData m2) 
+    = and' [m2!name
+           ,ite (m1!name) 
+            (and' [ not' x | (name',x) <- Map.toList m2, name/=name' ])
+            (and' [ x .==. (m1!name') | (name',x) <- Map.toList m2, name/=name' ])
+           ]
+  eqScheduling _ (SyncSchedulingData p1) (SyncSchedulingData p2)
+    = and' $ Map.elems $ Map.intersectionWith (.==.) p1 p2
+  schedulingFairnessCount _ _ = 0
+  schedulingFairness _ _ = []
+  showSchedulingInformation _ (SyncSchedulingData mp) = do
     mp' <- mapM (\(name,x) -> do
                     vx <- SMT.getValue x
                     return $ name ++ ":" ++ (if vx then "1" else "0")
                 ) (Map.toList mp)
     return $ show mp'
-  eqScheduling _ (FairSchedulingData p1) (FairSchedulingData p2)
-      = and' $ Map.elems $ Map.intersectionWith (.==.) p1 p2
+
+data FairScheduling = FairScheduling
+
+data FairSchedulingData = FairSchedulingData (SMTExpr BitVector) Integer (Map String BitVector) deriving (Typeable,Eq)
+
+instance Args FairSchedulingData where
+  type ArgAnnotation FairSchedulingData = Map String Integer
+  foldExprs f s ~(FairSchedulingData bv w v) procs 
+    = let w' = ceiling $ logBase 2 $ fromIntegral $ Map.size procs
+          (_,v') = mapAccumL (\n _ -> (n+1,BitVector n)) 0 procs
+          (s',bv') = f s bv w'
+      in (s',FairSchedulingData bv' w' v')
+
+instance Scheduling FairScheduling where
+  type SchedulingData FairScheduling = FairSchedulingData
+  firstSchedule _ _ = SMT.constant True
+  canSchedule _ _ _ = SMT.constant True
+  schedule _ name (FairSchedulingData i w mp) _ = i .==. SMT.constantAnn (mp!name) w
+  eqScheduling _ (FairSchedulingData i _ _) (FairSchedulingData j _ _) = i .==. j
+  schedulingFairnessCount _ procs = fromIntegral (Map.size procs)
+  schedulingFairness _ (FairSchedulingData i w mp) = [ i .==. SMT.constantAnn v w | (name,v) <- Map.toList mp ]
+  showSchedulingInformation _ (FairSchedulingData i w mp) = do
+    v <- SMT.getValue' w i
+    case [ name | (name,j) <- Map.toList mp, j==v ] of
+      [n] -> return n
+
+data TimedScheduling = TimedScheduling
+
+data TimedSchedulingData = TimedSchedulingData (Map String (SMTExpr GTLSMTInt)) (SMTExpr GTLSMTInt) (Map String Integer) deriving (Typeable,Eq)
+
+instance Args TimedSchedulingData where
+  type ArgAnnotation TimedSchedulingData = Map String Integer
+  foldExprs f s ~(TimedSchedulingData mp v _) procs = let (s1,mp') = List.mapAccumL (\s (name,_) -> let (s',x) = f s (mp!name) ()
+                                                                                                    in (s',(name,x))
+                                                                                    ) s (Map.toAscList procs)
+                                                          (s2,v') = f s1 v ()
+                                                    in (s2,TimedSchedulingData (Map.fromAscList mp') v' procs)
+
+minimumSMT :: SMTOrd t => [SMTExpr t] -> SMTExpr t -> SMTExpr Bool
+minimumSMT [x] r = r .==. x
+minimumSMT xs r = and' $ (or' [ r .==. x | x <- xs ]):
+                  [ r .<=. x | x <- xs ]
+
+instance Scheduling TimedScheduling where
+  type SchedulingData TimedScheduling = TimedSchedulingData
+  firstSchedule _ (TimedSchedulingData mp _ _) = and' [ v .==. SMT.constant 0 | v <- Map.elems mp ]
+  canSchedule _ name (TimedSchedulingData mp _ _) = (mp!name) .==. SMT.constant 0
+  schedule _ name (TimedSchedulingData mp1 min p) (TimedSchedulingData mp2 _ _)
+    = let mp1' = Map.adjust (+ (SMT.constant $ fromIntegral (p!name))) name mp1
+      in and' $ (minimumSMT (Map.elems mp1') min):
+         (Map.elems $ Map.intersectionWith (\o n -> n .==. o - min) mp1' mp2)
+  showSchedulingInformation _ (TimedSchedulingData mp min procs) = do
+    mp' <- mapM SMT.getValue mp
+    return $ show $ Map.toList mp'
+  eqScheduling _ (TimedSchedulingData mp1 _ _) (TimedSchedulingData mp2 _ _) = and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
+  schedulingFairnessCount _ _ = 0
+  schedulingFairness _ _ = []
+  
+data TimedScheduling2 = TimedScheduling2
+
+data TimedSchedulingData2 = TimedSchedulingData2 
+                            (Map String (SMTExpr BitVector))
+                            (Map String Integer)
+                            (Map String Integer)
+                          deriving (Eq,Typeable)
+
+{-
+countScheduleStates :: Integral a => [a] -> a
+countScheduleStates procs = allStates - noZeroStates
+  where
+    procs' = fmap (`div` com) procs
+    com = foldl1 gcd procs
+    
+    allStates = product (fmap (+1) procs')
+    noZeroStates = product procs'
+
+encodeScheduleState :: Integral a => [a] -> [a] -> a
+encodeScheduleState limits num = 
+-}
+
+combinations :: [[a]] -> [[a]]
+combinations [] = [[]]
+combinations (xs:xxs) = [ (x:ys) | x <- xs, ys <- combinations xxs ]
+
+findAndRemoveIndex :: (a -> Bool) -> [a] -> ([a],Int)
+findAndRemoveIndex f = find' 0
+  where
+    find' n (x:xs) = if f x
+                     then (xs,n)
+                     else (let (rest,i) = find' (n+1) xs
+                           in (x:rest,i))
+
+restoreAt :: a -> Int -> [a] -> [a]
+restoreAt x 0 ys = x:ys
+restoreAt x n (y:ys) = y:(restoreAt x (n-1) ys)
+
+normate :: Integral b => [(a,b)] -> [(a,b)]
+normate xs = fmap (\(n,x) -> (n,x-m)) xs
+  where
+    m = minimum (fmap snd xs)
+
+instance Args TimedSchedulingData2 where
+  type ArgAnnotation TimedSchedulingData2 = Map String Integer
+  foldExprs f s ~(TimedSchedulingData2 cs _ _) procs
+    = let md = foldl1 gcd procs
+          cys = fmap (`div` md) procs
+          ann = fmap (ceiling . logBase 2 . fromIntegral . (+1)) cys
+          (s',cs') = foldExprs f s cs ann
+      in (s',TimedSchedulingData2 cs' cys ann)
+  
+instance Scheduling TimedScheduling2 where
+  type SchedulingData TimedScheduling2 = TimedSchedulingData2
+  firstSchedule _ (TimedSchedulingData2 bvs _ w) = and' [ bv .==. (SMT.constantAnn (BitVector 0) (w!name)) | (name,bv) <- Map.toList bvs ]
+  canSchedule _ name (TimedSchedulingData2 bvs _ w) = bvs!name .==. (SMT.constantAnn (BitVector 0) (w!name))
+  schedule _ name (TimedSchedulingData2 bvs1 cys w) (TimedSchedulingData2 bvs2 _ _)
+    = or' [ and' $ 
+            [ bvs1!name .==. SMT.constantAnn (BitVector v) (w!name) | (name,v) <- cur ] ++
+            [ bvs2!name' .==. SMT.constantAnn (BitVector v) (w!name') | (name',v) <- normate $ (name,cys!name):(zip onames x) ]
+          | x <- combinations ranges
+          , let cur = zip onames x
+          ]
+    where
+      ranges = fmap (\l -> [0..l]) limits
+      (onames,limits) = unzip cys'
+      (cys',name_idx) = findAndRemoveIndex (\(name',_) -> name == name') $ Map.toList cys
+  showSchedulingInformation _ (TimedSchedulingData2 mp _ _) = do
+    mp' <- mapM SMT.getValue mp
+    return $ show $ Map.toList mp'
+  eqScheduling _ (TimedSchedulingData2 mp1 _ _) (TimedSchedulingData2 mp2 _ _)
+    = and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
+  schedulingFairnessCount _ _ = 0
+  schedulingFairness _ _ = []
 
 -- | Saves the variables needed for the encoding of LTL properties
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
@@ -411,6 +515,10 @@ instance Args (TemporalVars (String,String)) where
                                                                                                       in (s',Map.insert arg v2 (auxFEnc ntv1)))
                                                                                 in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1) 
                                                                                             , auxFEnc = aux' })
+                                                          _ -> let (s2,v) = f s1 ((formulaEnc tv)!expr) ()
+                                                                   ntv2 = ntv1 { formulaEnc = Map.insert expr v (formulaEnc ntv1) }
+                                                               in (s2,ntv2)
+                                                          --GTL.Next NoTime -> let (s2,v1) = f (formulaEnc tv)!expr
                             _ -> (s,ntv)
 
 data BMCConfig a = BMCConfig { bmcConfigCur :: a
@@ -457,6 +565,8 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
                          in case op of
                               GTL.Always -> (self .==. and' [e',nself]):es
                               GTL.Finally NoTime -> (self .==. or' [e',nself]):es
+                              GTL.Next NoTime -> let ne = (formulaEnc nxt)!e
+                                                 in (self .==. ne):es
                               _ -> es
   GTL.BinRelExpr _ _ _ -> let GSMTBool v = translateExpr f expr
                           in [self .==. v]
@@ -465,68 +575,106 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
     self = (formulaEnc cur)!expr
     nself = (formulaEnc nxt)!expr
 
-bmc :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) => BMCConfig a -> s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
+getProcs :: GTLSpec String -> Map String Integer
+getProcs spec = fmap (\inst -> gtlModelCycleTime $ (gtlSpecModels spec)!(gtlInstanceModel inst))
+                (gtlSpecInstances spec)
+
+createSMTFunctions :: Scheduling s => BMCConfig a -> s -> GTLSpec String
+                      -> SMT ((GlobalState,SchedulingData s) -> SMTExpr Bool,
+                              (GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool,
+                              (GlobalState,GlobalState) -> SMTExpr Bool)
+createSMTFunctions cfg sched spec = do
+  let enums = enumMap spec
+      kenums = Map.keysSet enums
+      procs = getProcs spec
+  funs <- fmap Map.fromAscList $
+          mapM (\(name,inst) -> do
+                   let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                       (init,step) = instanceFuns kenums ((gtlSpecModels spec)!(gtlInstanceModel inst)) (gtlInstanceContract inst)
+                   init_fun <- mkFun cfg ("init_"++name) ("init function of "++name) mdl init
+                   step_fun <- mkFun cfg ("step_"++name) ("step function of "++name) (mdl,mdl) (uncurry step)
+                   return (name,(init_fun,step_fun))
+               ) (Map.toAscList (gtlSpecInstances spec))
+  g_init_fun <- mkFun cfg "init" "global init function" (spec,procs) 
+                (\(gst,sched_st) -> and' $ (firstSchedule sched sched_st):
+                                    [ fst (funs!name) lst 
+                                    | (name,lst) <- Map.toList (instanceStates gst) ])
+  g_step_fun <- mkFun cfg "step" "global step function" (spec,spec,procs,procs)
+                (\(g1,g2,s1,s2)
+                 -> or' [ and' $ [canSchedule sched name s1
+                                 ,schedule sched name s1 s2
+                                 ,snd (funs!name) (lst1,(instanceStates g2)!name)] ++
+                          [ eqInstOutp lst2 ((instanceStates g2)!name') 
+                          | (name',lst2) <- Map.toList (instanceStates g1), name/=name' ]
+                        | (name,lst1) <- Map.toList (instanceStates g1) ])
+  conn_fun <- mkFun cfg "conn" "connection function" (spec,spec) (connectionFun spec)
+  return (g_init_fun,g_step_fun,conn_fun)
+
+mkFun :: (Args a,ArgAnnotation a ~ b,SMTType c,Unit (SMTAnnotation c)) => BMCConfig d -> String -> String -> b -> (a -> SMTExpr c) -> SMT (a -> SMTExpr c)
+mkFun cfg name descr ann f 
+  = if bmcConfigInline cfg
+    then (do
+             comment $ descr
+             fun <- defFunAnnNamed name ann unit f
+             return (app fun))
+    else return f
+
+bmc :: Scheduling s => BMCConfig a -> s -> GTLSpec String -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
 bmc cfg sched spec = do
-#ifndef SMTExts  
-  setLogic $ T.pack "QF_BV"
-#endif
-  setOption $ PrintSuccess False
-  setOption $ ProduceModels True
   let formula = GTL.distributeNot (gtlSpecVerify spec)
       enums = enumMap spec
-      (init,step) = schedule sched (Map.keysSet enums) spec
-  init_fun <- (if bmcConfigInline cfg
-               then fmap app . defFunAnn (spec,spec) () 
-               else return) $ \(sdata,st) -> init sdata st
-  step_fun <- (if bmcConfigInline cfg
-               then fmap app . defFunAnn ((spec,spec),(spec,spec)) ()
-               else return) $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-  dep_fun <- (if bmcConfigInline cfg
-              then fmap app . defFunAnn (spec,formula,formula) ()
-              else return) $ \(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
-                                                                                       in case Map.lookup var (instanceInputVars inst) of
-                                                                                            Just v -> v
-                                                                                            Nothing -> case Map.lookup var (instanceOutputVars inst) of
-                                                                                                         Just v -> v
-                                                                                                         Nothing -> (instanceLocalVars inst)!var
-                                                                  ) formula cur nxt
+      kenums = Map.keysSet enums
+      procs = getProcs spec
+#ifndef SMTExts
+  setLogic $ T.pack "QF_BV"
+#endif
+  --setOption $ PrintSuccess False
+  setOption $ ProduceModels True
+  (g_init_fun,g_step_fun,conn_fun) <- createSMTFunctions cfg sched spec
+  dep_fun <- mkFun cfg "deps" "dependency function" (spec,formula,formula)
+             (\(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
+                                                                        in case Map.lookup var (instanceInputVars inst) of
+                                                                          Just v -> v
+                                                                          Nothing -> case Map.lookup var (instanceOutputVars inst) of
+                                                                            Just v -> v
+                                                                            Nothing -> (instanceLocalVars inst)!var
+                                                   ) formula cur nxt)
+
   tmp_cur <- argVarsAnn formula
   tmp_e <- argVarsAnn formula
   tmp_l <- argVarsAnn formula
-  loop_exists <- SMT.var
+  loop_exists <- SMT.varNamed "loopExists"
   se <- argVarsAnn spec
-  te <- argVarsAnn spec
+  te <- argVarsAnn procs
+  fe <- mapM (\_ -> SMT.varNamed "fairnessE") [1..(schedulingFairnessCount sched procs)]
   start_time <- liftIO getCurrentTime
-  conn <- (if bmcConfigInline cfg
-           then fmap app . defFunAnn (spec,spec) ()
-           else return) (connectionFun spec)
-  bmc' cfg sched spec conn formula init_fun step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te [] start_time
+  bmc' cfg sched spec conn_fun formula g_init_fun g_step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
                            , bmcL :: SMTExpr Bool
                            , bmcInLoop :: SMTExpr Bool
                            , bmcScheduling :: SchedulingData s
+                           , bmcFairness :: [SMTExpr Bool]
                            }
 
-bmc' :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) => 
+bmc' :: (Scheduling s) => 
         BMCConfig a -> s -> GTLSpec String 
      -> ((GlobalState,GlobalState) -> SMTExpr Bool)
      -> TypedExpr (String,String) 
-     -> ((SchedulingData s,GlobalState) -> SMTExpr Bool)
-     -> (((SchedulingData s,GlobalState),(SchedulingData s,GlobalState)) -> SMTExpr Bool)
+     -> ((GlobalState,SchedulingData s) -> SMTExpr Bool)
+     -> ((GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool)
      -> ((GlobalState,TemporalVars (String,String),TemporalVars (String,String)) -> SMTExpr Bool)
      -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String)
-     -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [BMCState s] -> UTCTime
+     -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [SMTExpr Bool] -> [BMCState s] -> UTCTime
      -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te [] start_time = do
+bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
   init_st <- argVarsAnn spec
-  l <- SMT.var
-  inloop <- SMT.var
+  l <- SMT.varNamed "l"
+  inloop <- SMT.varNamed "inloop"
   comment "Scheduling data"
-  sdata <- argVarsAnn spec
-  assert $ initializeScheduling sched sdata
-  assert $ init (sdata,init_st)
+  sdata <- argVarsAnn (getProcs spec)
+  assert $ init (init_st,sdata)
   assert $ conn (init_st,init_st)
   assert $ not' l
   assert $ not' inloop
@@ -534,8 +682,11 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   assert $ deps (init_st,tmp_cur,tmp_nxt)
   assert $ (formulaEnc tmp_cur)!formula
   incPLTLbase loop_exists tmp_cur tmp_e tmp_l
-  let hist = [BMCState init_st tmp_cur l inloop sdata]
-  res <- if bmcConfigCheckSat cfg (bmcConfigCur cfg) 
+  case fe of
+    [] -> return ()
+    _ -> assert $ loop_exists .=>. and' fe
+  let hist = [BMCState init_st tmp_cur l inloop sdata (fmap (const $ SMT.constant False) fe)]
+  res <- if bmcConfigCheckSat cfg (bmcConfigCur cfg)
          then stack' cfg (do
                       -- k-variant case for LoopConstraints
                       assert $ eqSt se init_st
@@ -556,9 +707,9 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   case res of
     Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                then return Nothing
-               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te hist start_time
+               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe hist start_time
     Just path -> return $ Just path
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te history@(last_state:_) start_time = do
+bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
   let sdata = bmcScheduling last_state
       i = length history
   ctime <- liftIO $ getCurrentTime
@@ -569,10 +720,11 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
     else return ()
   cur_state <- argVarsAnn spec
   tmp_nxt <- argVarsAnn formula
-  l <- SMT.var
-  inloop <- SMT.var
-  nsdata <- argVarsAnn spec
-  assert $ step ((sdata,bmcVars last_state),(nsdata,cur_state))
+  cur_fair <- mapM (\(i,_) -> SMT.varNamed ("fair"++show i)) (zip [0..] fe)
+  l <- SMT.varNamed "l"
+  inloop <- SMT.varNamed "inloop"
+  nsdata <- argVarsAnn (getProcs spec)
+  assert $ step (bmcVars last_state,cur_state,sdata,nsdata)
   assert $ conn (cur_state,cur_state)
 
   -- k-invariant case for LoopConstraints:
@@ -593,7 +745,11 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   mapM_ (\(expr,var) -> let Just ge = Map.lookup expr (formulaEnc tmp_cur)
                         in assert $ var .==. and' [(auxGEnc $ bmcTemporals last_state)!expr
                                                   ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
-  let history' = (BMCState cur_state tmp_cur l inloop nsdata):history
+  
+  -- k-invariant case for fairness
+  mapM (\(cf,lf,cur) -> assert $ cf .==. or' [lf,and' [inloop,cur]]) (zip3 cur_fair (bmcFairness last_state) (schedulingFairness sched sdata))
+  
+  let history' = (BMCState cur_state tmp_cur l inloop nsdata cur_fair):history
   simple_path <- case bmcConfigCompleteness cfg (bmcConfigCur cfg) of
     False -> return True
     True -> do
@@ -632,16 +788,18 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
                                 ) (Map.toList $ formulaEnc tmp_cur)
                           -- k-variant case for IncPLTL
                           incPLTLvar tmp_cur tmp_e
+                          -- k-variant case for fairness
+                          mapM_ (\(f_now,f_end) -> assert $ f_end .==. f_now) (zip cur_fair fe)
                           r <- checkSat
                           if r then getPath sched history' >>= return.Just
-                               else return Nothing)
+                               else return Nothing
+                       )
                   else return Nothing
            case res of  
              Just path -> return $ Just path
              Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                         then return Nothing
-                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te history' start_time)
-
+                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe history' start_time)
   
 incPLTLbase :: SMTExpr Bool -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String) -> SMT ()
 incPLTLbase loop_exists tmp_cur tmp_e tmp_l = mapM_ (\(expr,var) -> do
@@ -687,7 +845,7 @@ getVarValues st = do
   lst <- mapM (\(iname,inst) -> mapM (\(vname,var) -> do
                                          c <- getGTLValue var
                                          return ((iname,vname),c)) (Map.toList $ Map.unions [instanceInputVars inst,instanceOutputVars inst,instanceLocalVars inst])) (Map.toList $ instanceStates st)
-  return $ Map.fromList (Prelude.concat lst)
+  return $ Map.fromList (concat lst)
 
 -- | Once the SMT solver has produced a model, extract the value of a given GTL variable from it
 getGTLValue :: GTLSMTExpr -> SMT GTLConstant
@@ -752,13 +910,22 @@ sonolarConfig (Just limit) compl
                 , bmcConfigInline = False
                 }
 
+noInlineConfig :: Maybe Integer -> Bool -> BMCConfig Integer
+noInlineConfig bound cmpl = (normalConfig bound cmpl) { bmcConfigInline = False }
+
 verifyModelBMC :: Options -> GTLSpec String -> IO ()
 verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- solve $ bmc ((if useSonolar opts then sonolarConfig
-                       else normalConfig) (bmcBound opts) (bmcCompleteness opts)) SimpleScheduling spec
+      act :: Scheduling s => s -> SMT (Maybe [(Map (String,String) GTLConstant,Bool,String)])
+      act sched = bmc ((if useSonolar opts then noInlineConfig
+                        else normalConfig) (bmcBound opts) (bmcCompleteness opts)) sched spec
+  res <- case scheduling opts of
+    "none" -> solve $ act SimpleScheduling
+    "sync" -> solve $ act SyncScheduling
+    "fair" -> solve $ act FairScheduling
+    "timed" -> solve $ act TimedScheduling2
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
@@ -771,33 +938,31 @@ limitPCs bas st = and' $ concat
                   | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ]
 
 -- | Perform k-induction by providing a solver and a GTL specification.
-kInduction :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) 
-              => s -> (SMT () -> IO ()) -> GTLSpec String -> IO (Maybe [Map (String,String) GTLConstant])
-kInduction sched solver spec = do
+kInduction :: (Scheduling s) 
+              => BMCConfig a -> s -> (SMT () -> IO ()) -> GTLSpec String -> IO (Maybe [Map (String,String) GTLConstant])
+kInduction cfg sched solver spec = do
   let enums = enumMap spec
       bas = fmap (\inst -> let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
                                formula = List.foldl1 gand $ fmap gtlContractFormula $ (gtlInstanceContract inst)++(gtlModelContract mdl)
                            in gtl2ba (Just (gtlModelCycleTime mdl)) formula) (gtlSpecInstances spec)
+      procs = getProcs spec
       Fix (Typed _ (UnBoolExpr Always formula)) = gtlSpecVerify spec
-      (init,step) = schedule sched (Map.keysSet enums) spec
+      --(init,step) = schedule sched (Map.keysSet enums) spec
   baseCaseOrders <- newChan
   indCaseOrders <- newChan
   baseCaseResults <- newChan
   indCaseResults <- newChan
   baseCase <- forkIO $ solver $ do
-                                 init_fun <- defFunAnn (spec,spec) () $ \(sdata,st) -> init sdata st
-                                 step_fun <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-                                 conn <- defFunAnn (spec,spec) () (connectionFun spec)
-                                 sched_data <- argVarsAnn spec
-                                 start <- argVarsAnn spec
-                                 assert $ init_fun `app` (sched_data,start)
-                                 kInductionBase baseCaseOrders baseCaseResults (encodeProperty formula) enums spec conn step_fun sched sched_data [] start 1
+    (init_fun,step_fun,conn) <- createSMTFunctions cfg sched spec
+    sched_data <- argVarsAnn procs
+    start <- argVarsAnn spec
+    assert $ init_fun (start,sched_data)
+    kInductionBase baseCaseOrders baseCaseResults (encodeProperty formula) enums spec conn step_fun sched sched_data [] start 1
   indCase <- forkIO $ solver $ do
-               step_fun <- defFunAnn ((spec,spec),(spec,spec)) () $ \((sdata1,st1),(sdata2,st2)) -> step sdata1 sdata2 st1 st2
-               conn <- defFunAnn (spec,spec) () (connectionFun spec)
-               sched_data <- argVarsAnn spec
-               start <- argVarsAnn spec
-               kInductionInd indCaseOrders indCaseResults (encodeProperty formula) enums spec bas conn step_fun sched sched_data start 1 
+    (_,step_fun,conn) <- createSMTFunctions cfg sched spec
+    sched_data <- argVarsAnn procs
+    start <- argVarsAnn spec
+    kInductionInd indCaseOrders indCaseResults (encodeProperty formula) enums spec bas conn step_fun sched sched_data start 1 
   kInduction' baseCaseOrders indCaseOrders baseCaseResults indCaseResults
 
 kInduction' :: Chan Bool -> Chan Bool -> Chan (Maybe [Map (String,String) GTLConstant]) -> Chan Bool -> IO (Maybe [Map (String,String) GTLConstant])
@@ -820,19 +985,19 @@ encodeProperty :: TypedExpr (String,String) -> GlobalState -> SMTExpr Bool
 encodeProperty expr st = let GSMTBool var = translateExpr (\(m,n) u h -> getVar n u $ (instanceStates st)!m) expr
                          in var
 
-kInductionBase :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) 
+kInductionBase :: (Scheduling s) 
                   => Chan Bool -> Chan (Maybe [Map (String,String) GTLConstant])
                   -> (GlobalState -> SMTExpr Bool)
                   -> Map [String] Integer -> GTLSpec String 
-                  -> SMTExpr (SMTFun (GlobalState,GlobalState) Bool)
-                  -> SMTExpr (SMTFun ((SchedulingData s,GlobalState),(SchedulingData s,GlobalState)) Bool)
+                  -> ((GlobalState,GlobalState) -> SMTExpr Bool)
+                  -> ((GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool)
                   -> s -> SchedulingData s
                   -> [GlobalState] -> GlobalState -> Integer -> SMT ()
 kInductionBase orders results prop enums spec conn step sched sched_data all last n = do
   continue <- liftIO $ readChan orders
   if continue
     then (do
-             assert $ conn `app` (last,last)
+             assert $ conn (last,last)
              res <- stack $ do
                assert $ not' $ prop last
                r <- checkSat
@@ -848,25 +1013,25 @@ kInductionBase orders results prop enums spec conn step sched sched_data all las
                  liftIO $ writeChan results Nothing
                  next <- argVarsAnn spec
                  assert $ prop last
-                 assert $ step `app` ((sched_data,last),(sched_data,next))
+                 assert $ step (last,next,sched_data,sched_data)
                  kInductionBase orders results prop enums spec conn step sched sched_data (last:all) next (n+1)
          )
     else return ()
 
-kInductionInd :: (Scheduling s,Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ GTLSpec String) 
+kInductionInd :: (Scheduling s) 
                  => Chan Bool -> Chan Bool
                  -> (GlobalState -> SMTExpr Bool)
                  -> Map [String] Integer -> GTLSpec String
                  -> Map String (BA [TypedExpr String] Integer)
-                 -> SMTExpr (SMTFun (GlobalState,GlobalState) Bool)
-                 -> SMTExpr (SMTFun ((SchedulingData s,GlobalState),(SchedulingData s,GlobalState)) Bool)
+                 -> ((GlobalState,GlobalState) -> SMTExpr Bool)
+                 -> ((GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool)
                  -> s -> SchedulingData s
                  -> GlobalState -> Integer -> SMT ()
 kInductionInd orders results prop enums spec bas conn step sched sched_data last n = do
   continue <- liftIO $ readChan orders
   if continue
     then (do
-             assert $ conn `app` (last,last)
+             assert $ conn (last,last)
              assert $ limitPCs bas last
              res <- stack $ do
                assert $ not' $ prop last
@@ -877,12 +1042,13 @@ kInductionInd orders results prop enums spec bas conn step sched sched_data last
                              next <- argVarsAnn spec
                              assert $ prop last
                              --assert $ step bas last next
-                             assert $ step `app` ((sched_data,last),(sched_data,next))
+                             assert $ step (last,next,sched_data,sched_data)
                              kInductionInd orders results prop enums spec bas conn step sched sched_data next (n+1)
                          )
                else (liftIO $ writeChan results True)
          )
     else return ()
+
 
 -- | Verify a given specification using K-Induction
 verifyModelKInduction :: Maybe String -> GTLSpec String -> IO ()
@@ -890,7 +1056,7 @@ verifyModelKInduction solver spec = do
   let solve = case solver of
         Nothing -> withZ3
         Just x -> withSMTSolver x
-  res <- kInduction SimpleScheduling solve spec
+  res <- kInduction (noInlineConfig Nothing False) SimpleScheduling solve spec
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ]
