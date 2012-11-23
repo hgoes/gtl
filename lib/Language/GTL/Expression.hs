@@ -291,6 +291,7 @@ opPrec And = 5
 opPrec Or = 4
 opPrec Implies = 6
 opPrec (Until _) = 3
+opPrec (UntilOp _) = 3
 
 intPrec OpPlus = 9
 intPrec OpMinus = 10
@@ -315,6 +316,7 @@ showTermWith f g p (BinBoolExpr op l r)
         Or -> showString " or "
         Implies -> showString " implies "
         Until ts -> showString $ " until"++show ts++" "
+        UntilOp ts -> showString $ " untilOp"++show ts++" "
     ) . (g (opPrec op) r)
 showTermWith f g p (BinRelExpr rel l r)
   = showParen (p > 8) $
@@ -599,6 +601,7 @@ distributeNot expr
       Or -> BinBoolExpr And (distributeNot l) (distributeNot r)
       Implies -> BinBoolExpr And (pushNot l) (distributeNot r)
       Until ts -> BinBoolExpr (UntilOp ts) (distributeNot l) (distributeNot r)
+      UntilOp ts -> BinBoolExpr (Until ts) (distributeNot l) (distributeNot r)
     BinRelExpr rel l r -> Fix $ Typed gtlBool $ BinRelExpr (relNot rel) l r
     UnBoolExpr op p -> case op of
       Not -> pushNot p
