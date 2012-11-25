@@ -24,14 +24,13 @@ import Data.Int
 import Misc.ProgramOptions as Opts
 import Misc.VerificationEnvironment
 
--- | Do a complete verification of a given GTL file
+-- | Do a comp lete verification of a given GTL file
 verifyModel :: --Opts.Options -- ^ Options
                -- -> String -- ^ Name of the GTL file without extension
                GTLSpec String -- ^ The GTL file contents
                -> IO ()
 verifyModel spec = do
   let modules = translateSpec spec
-      ltlSpec = gtlToLTL Nothing (gtlSpecVerify spec)
   --traceFiles <- runVerification opts name pr
   --parseTraces opts name traceFiles (traceToAtoms model)
   putStrLn $ show ltlSpec
@@ -54,7 +53,14 @@ translateSpec spec = [
  [buildMainModule spec]
 
 translateModel :: GTLModel a -> [ModuleElement]
-translateModel m = []
+translateModel m = VarDeclaration [
+  (outp, ???)
+| (outp, tp) <- Map.toList $ gtlModelOutput m
+]++
+[
+ InitConstraint (BasicExpr inp v)
+| (inp, v) <- Map.toList $ gtlModelDefaults m
+]
 
 buildMainModule :: GTLSpec String -> S.Module
 buildMainModule spec = S.Module {
@@ -66,15 +72,20 @@ buildMainModule spec = S.Module {
  , let mname = gtlInstanceModel inst
        m = (gtlSpecModels spec)!mname
        conn = gtlSpecConnections spec
- ]]
+ ]]++[LTLSpec $ gtlToLTL Nothing (gtlSpecVerify spec)]
 }
 
 buildProcessParam :: String 
                      -> [(GTLConnectionPoint a,GTLConnectionPoint a)] 
                      -> [BasicExpr] 
-buildProcessParam n (((GTLConnPt f fv fi), (GTLConnPt t tv ti)):xs) = (IdExpr ComplexId {
-  idBase = Just f
-  , idNavigation = [Left "fv"] -- TODO fv into String
- }):[]
+buildProcessParam n (((GTLConnPt f fv fi), _):xs) = ( -- nur links weil p.x -> c.ix also p schreibt in ix aber nicht ix in p.x somit nur left betrachten
+ if f == n then 
+   IdExpr ComplexId {
+     idBase = Just f
+     , idNavigation = [Left "fv"] -- TODO fv into String
+   }
+ else
+   []
+ ):(buildProcessParam n xs)
 buildProcessParam n [] = []
 
