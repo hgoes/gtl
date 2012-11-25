@@ -29,6 +29,8 @@ getSteps cy (TimeUSecs s) = s `div` cy
 
 getUSecs :: TimeSpec -> Integer
 getUSecs (TimeUSecs s) = s
+getUSecs (TimeSteps n) = n
+getUSecs NoTime = 0
 
 gtlToLTL :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> LTL (TypedExpr v)
 gtlToLTL cycle_time expr = fst $ gtlToLTL' 0 cycle_time expr

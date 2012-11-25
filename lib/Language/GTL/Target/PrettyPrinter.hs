@@ -151,16 +151,23 @@ gtlToTikz spec = do
                                                                ]
                                                  , edgeStmts = [DotEdge { fromNode = f
                                                                         , toNode = t
-                                                                        , edgeAttributes = [TailPort (LabelledPort (PN $ genPortName fv fi) (Just East))
-                                                                                           ,HeadPort (LabelledPort (PN $ genPortName tv ti) (Just West))
+                                                                        , edgeAttributes = [TailPort (LabelledPort (PN $ T.pack fv) (Just East))
+                                                                                           ,HeadPort (LabelledPort (PN $ T.pack tv) (Just West))
                                                                                            ]
                                                                         }
                                                                | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
                                                                ]
                                                  }
                     }
+  putStrLn (T.unpack $ printIt gr)
+  putStrLn "gr syntax"
+  putStrLn (show gr)
+  putStrLn ""
   outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt gr))
   let dot = parseIt' outp :: DotGraph String
+  putStrLn $ (T.unpack $ printIt dot)
+  putStrLn "dot syntax"
+  putStrLn (show dot)
   return $ dotToTikz (Just mp) dot
 
 -- | Creates the hole record object with its ports
@@ -369,8 +376,10 @@ dotToTikz mtp gr
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
+                                                 UnknownAttribute n _ -> (compare (T.unpack n) "pos") == EQ
                                                  _ -> False) (edgeAttributes ed) of
                                 Just (Pos (SplinePos [spl])) -> spl
+                                Just (UnknownAttribute _ ps) -> error "unknownattr 'pos': parse points"
                                 Nothing -> error "Edge has no position"
            lbl = case List.find (\attr -> case attr of
                                   Comment _ -> True
@@ -413,7 +422,8 @@ exprToLatex expr = case getValue $ unfix expr of
                               BinGT -> ">"
                               BinGTEq -> "\\geq "
                               BinEq -> "="
-                              BinNEq -> "\neq "))
+                              BinNEq -> "\\neq "
+                              BinAssign -> ":="))
                           (exprToLatex r)
 						 )
 	Var v h _ -> T.pack (v++(if h==0 then "" else "["++show h++"]"))
@@ -432,6 +442,8 @@ exprToLatex expr = case getValue $ unfix expr of
 							)
 	UnBoolExpr GTL.Not p -> T.append (T.pack "\\lnot ") (exprToLatex p)
 	IndexExpr expr idx -> T.append (exprToLatex expr) (T.pack $ "_{"++show idx++"}")
+	ClockRef clk -> T.pack ("clock("++(show clk)++")")
+	ClockReset clk limit -> T.pack ("clock("++(show clk)++") := "++(show limit))
 
 -- | convert int to int64
 int2Int64 :: Int -> Int64
