@@ -17,7 +17,7 @@ Flag SMTExts
 Library
   Build-Depends: base,array,containers,language-scade,language-promela,
     mtl,process,filepath,binary,bytestring,directory,extensible-exceptions,language-uppaal,fgl,hxt,pqueue,
-    syb,smtlib2,text,atto-lisp,time
+    syb,smtlib2,text,atto-lisp,time,language-c
   Hs-Source-Dirs: lib
   if flag(SMTExts)
     GHC-Options: -fwarn-unused-imports -DSMTExts
@@ -37,6 +37,7 @@ Library
     Language.GTL.Backend.Scade
     Language.GTL.Backend.None
     Language.GTL.Backend.All
+    Language.GTL.Backend.C
     Language.GTL.Expression
     Language.GTL.Buchi
     Language.GTL.Types
