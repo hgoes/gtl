@@ -216,7 +216,7 @@ lookupType spec inst var idx inp
           _ -> error $ "Internal error: Unable to resolve type "++show ttp
     in tp
 
-unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
+{-unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i (Fix e) = case getValue e of
   Var v lvl u -> case unfix $ getType e of
     GTLArray sz tp -> concat [ unpackExpr f (j:i) (Fix $ Typed tp (Var v lvl u)) | j <- [0..(sz-1)] ]
@@ -230,7 +230,7 @@ unpackExpr f i (Fix e) = case getValue e of
   BinIntExpr op l r -> [Fix $ Typed (getType e) (BinIntExpr op (flattenExpr f i l) (flattenExpr f i r))]
   UnBoolExpr op ne -> [Fix $ Typed (getType e) (UnBoolExpr op (flattenExpr f i ne))]
   IndexExpr ne ni -> unpackExpr f (ni:i) ne
-  Automaton buchi -> [ flattenExpr f i (Fix e) ]
+  Automaton _ buchi -> [ flattenExpr f i (Fix e) ] -}
 
 translateAtoms :: (Ord a,Ord b) => (a -> [Integer] -> b) -> (b -> Integer -> b) -> Maybe (String,GTLModel a) -> [TypedExpr a] -> (Map b (Restriction b),[TypedExpr b])
 translateAtoms f g mmdl

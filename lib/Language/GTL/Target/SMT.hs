@@ -243,7 +243,7 @@ instanceFuns enums mdl contr
   = (init,step)
     where
       bas = fmap (\f -> case GTL.getValue $ unfix $ gtlContractFormula f of
-                     Automaton ba -> Left (ba,snd $ mapAccumL (\n _ -> (n+1,n)) 0 (baTransitions ba))
+                     Automaton _ ba -> Left (ba,snd $ mapAccumL (\n _ -> (n+1,n)) 0 (baTransitions ba))
                      _ -> Right $ gtl2ba (Just (gtlModelCycleTime mdl)) (gtlContractFormula f)
                  ) ((gtlModelContract mdl)++contr)
       init inst = and' $ [ either (\(aut,st_mp) -> let inits' = fmap (st_mp!) (Set.toList $ baInits aut)

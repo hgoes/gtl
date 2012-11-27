@@ -77,7 +77,7 @@ data GExpr = GBin BinOp TimeSpec PExpr PExpr
            | GVar (Maybe String) String
            | GSet [Integer]
            | GExists String (Maybe String) String PExpr
-           | GAutomaton [State]
+           | GAutomaton (Maybe String) [State]
            | GTuple [PExpr]
            | GArray [PExpr]
            | GIndex PExpr PExpr
