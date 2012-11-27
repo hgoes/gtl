@@ -117,7 +117,7 @@ data InstanceState = InstanceState
                      { instanceInputVars :: Map String GTLSMTExpr
                      , instanceOutputVars :: Map String GTLSMTExpr
                      , instanceLocalVars :: Map String GTLSMTExpr
-                     , instancePC :: SMTExpr GTLSMTPc -- ^ Saves the state of the state machine
+                     , instanceAutomata :: [SMTExpr GTLSMTPc]
                      } deriving (Eq,Typeable)
 
 getVar :: String -> VarUsage -> InstanceState -> GTLSMTExpr
@@ -140,11 +140,12 @@ instance Args InstanceState where
                              (s3,loc) = List.mapAccumL (\cs (name,tp) -> let (cs',val') = foldExprs f cs ((instanceLocalVars is)!name) tp
                                                                          in (cs',(name,val'))
                                                         ) s2 (Map.toAscList $ gtlModelLocals mdl)
-                             (s4,pc') = f s3 (instancePC is) ()
+                             ((s4,_),pc') = List.mapAccumL (\(cs,i) _ -> let (cs',val') = foldExprs f cs ((instanceAutomata is)!!i) ()
+                                                                         in ((cs',i+1),val')) (s3,0) (gtlModelContract mdl)
                          in (s4,InstanceState { instanceInputVars = Map.fromAscList inp
                                               , instanceOutputVars = Map.fromAscList outp
                                               , instanceLocalVars = Map.fromAscList loc 
-                                              , instancePC = pc' })
+                                              , instanceAutomata = pc' })
 
 -- | Saves the variables of all components in the GALS system
 data GlobalState = GlobalState
@@ -241,35 +242,60 @@ instanceFuns :: Set [String] -> GTLModel String -> [GTLContract String] -> (Inst
 instanceFuns enums mdl contr
   = (init,step)
     where
-      ba = gtl2ba (Just (gtlModelCycleTime mdl)) formula
-      formula = List.foldl1 gand $ fmap gtlContractFormula $ contr++(gtlModelContract mdl)
-      init inst = and' $ (or' [ (instancePC inst) .==. SMT.constant (fromIntegral f)
-                              | f <- Set.toList (baInits ba) ]):
-                [ eqGTLSMT
-                  (case Map.lookup var (instanceInputVars inst) of
-                     Just var' -> var'
-                     Nothing -> case Map.lookup var (instanceOutputVars inst) of
-                                  Just var' -> var'
-                                  Nothing -> (instanceLocalVars inst)!var)
-                  (translateExpr (\v u _ -> getVar v u inst) (constantToExpr enums def))
+      bas = fmap (\f -> case GTL.getValue $ unfix $ gtlContractFormula f of
+                     Automaton ba -> Left (ba,snd $ mapAccumL (\n _ -> (n+1,n)) 0 (baTransitions ba))
+                     _ -> Right $ gtl2ba (Just (gtlModelCycleTime mdl)) (gtlContractFormula f)
+                 ) ((gtlModelContract mdl)++contr)
+      init inst = and' $ [ either (\(aut,st_mp) -> let inits' = fmap (st_mp!) (Set.toList $ baInits aut)
+                                                   in or' [ c .==. SMT.constant (fromIntegral p)
+                                                          | p <- inits' ]
+                                  )
+                           (\rba -> or' [ c .==. SMT.constant (fromIntegral p)
+                                        | p <- Set.toList $ baInits rba
+                                        ]
+                           ) ba
+                         | (ba,c) <- zip bas (instanceAutomata inst) ] ++
+                  [ eqGTLSMT
+                    (case Map.lookup var (instanceInputVars inst) of
+                        Just var' -> var'
+                        Nothing -> case Map.lookup var (instanceOutputVars inst) of
+                          Just var' -> var'
+                          Nothing -> (instanceLocalVars inst)!var)
+                    (translateExpr (\v u _ -> getVar v u inst) (constantToExpr enums def))
                   | (var,Just def) <- Map.toList $ gtlModelDefaults mdl ]
-      step stf stt = and' [ (instancePC stf .==. SMT.constant (fromIntegral st)) .=>. 
-                            or' [ and' ((instancePC stt .==. SMT.constant (fromIntegral trg)):
-                                        [let GSMTBool v = translateExpr (\v u i -> case u of
-                                                                                     Input -> (instanceInputVars stf)!v
-                                                                                     StateIn -> (instanceLocalVars stf)!v
-                                                                                     Output -> (instanceOutputVars stt)!v
-                                                                                     StateOut -> (instanceLocalVars stt)!v) c
-                                         in v
-                                         | c <- cond ])
-                                  | (cond,trg) <- trans
-                                ]
-                            | (st,trans) <- Map.toList (baTransitions ba) ]
+      step stf stt = and' [ either (\(aut,st_mp) -> and' [ (c1 .==. SMT.constant (fromIntegral $ st_mp!st)) .=>.
+                                                           or' [ and' ((c2 .==. SMT.constant (fromIntegral $ st_mp!trg)):
+                                                                       [let GSMTBool v = translateExpr (\v u i -> case u of
+                                                                                                           Input -> (instanceInputVars stf)!v
+                                                                                                           StateIn -> (instanceLocalVars stf)!v
+                                                                                                           Output -> (instanceOutputVars stt)!v
+                                                                                                           StateOut -> (instanceLocalVars stt)!v) c
+                                                                        in v
+                                                                       | c <- cond ])
+                                                               | (cond,trg) <- trans
+                                                               ]
+                                                         | (st,trans) <- Map.toList (baTransitions aut)
+                                                         ])
+                            (\rba -> and' [ (c1 .==. SMT.constant (fromIntegral st)) .=>. 
+                                            or' [ and' ((c2 .==. SMT.constant (fromIntegral trg)):
+                                                        [let GSMTBool v = translateExpr (\v u i -> case u of
+                                                                                            Input -> (instanceInputVars stf)!v
+                                                                                            StateIn -> (instanceLocalVars stf)!v
+                                                                                            Output -> (instanceOutputVars stt)!v
+                                                                                            StateOut -> (instanceLocalVars stt)!v) c
+                                                         in v
+                                                        | c <- cond ])
+                                                | (cond,trg) <- trans ]
+                                          | (st,trans) <- Map.toList (baTransitions rba)
+                                          ]
+                            ) ba
+                          | (ba,c1,c2) <- zip3 bas (instanceAutomata stf) (instanceAutomata stt)
+                          ]
 
 -- | Asserts that two instance states are equal in their output and state variables.
 eqInstOutp :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInstOutp st1 st2 
-  = and' ((instancePC st1 .==. instancePC st2):
+  = and' ((and' $ zipWith (.==.) (instanceAutomata st1) (instanceAutomata st2)):
           ((Map.elems $ Map.intersectionWith eqGTLSMT (instanceOutputVars st1) (instanceOutputVars st2))++
            (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars st1) (instanceLocalVars st2))))
 
@@ -930,12 +956,14 @@ verifyModelBMC opts spec = do
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path
 
+{-
 -- | Apply limits to all integers used to store the current state of a component. Used to strengthen k-induction.
 limitPCs :: Map String (BA [TypedExpr String] Integer) -> GlobalState -> SMTExpr Bool
 limitPCs bas st = and' $ concat
                   [ [(instancePC inst) .>=. 0
                     ,(instancePC inst) .<. (SMT.constant (fromIntegral sz))]
-                  | (name,inst) <- Map.toList (instanceStates st), let sz = Map.size $ baTransitions $ bas!name ]
+                  | (name,inst) <- Map.toList (instanceStates st)
+                  , let sz = Map.size $ baTransitions $ bas!name ]
 
 -- | Perform k-induction by providing a solver and a GTL specification.
 kInduction :: (Scheduling s) 
@@ -1059,4 +1087,4 @@ verifyModelKInduction solver spec = do
   res <- kInduction (noInlineConfig Nothing False) SimpleScheduling solve spec
   case res of
     Nothing -> putStrLn "No errors found in model"
-    Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ]
+    Just path -> putStrLn $ renderPath [ (st,False,"") | st <- path ] -}
