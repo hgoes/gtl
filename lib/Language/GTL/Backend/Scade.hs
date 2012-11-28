@@ -113,10 +113,9 @@ instance GTLBackend Scade where
     = let name = (intercalate "_" node)
           rname = intercalate "::" node
           (inp,outp,kind) = scadeInterface node decls
-          expr_names = fmap (\(expr,i) -> (expr,intercalate "_" (node++[show i]))) (zip exprs [0..])
-          scade = sequence $
-                  fmap (\(expr,name) -> fmap (dfaToScade types name inp outp locals init . renameDFAStates) $
-                                        determinizeBA (gtl2ba (Just cy) expr)) expr_names
+          scade = do
+            dfas <- sequence $ fmap (\expr -> determinizeBA (gtl2ba (Just cy) expr)) exprs
+            return $ dfasToScade types name inp outp locals init $ fmap renameDFAStates dfas
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
@@ -126,8 +125,8 @@ instance GTLBackend Scade where
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
-            writeFile testNodeFile (show $ prettyScade scade')
-            writeFile proofNodeFile (show $ prettyScade [generateProver types name (fmap snd expr_names) node inp outp constVars])
+            writeFile testNodeFile (show $ prettyScade [scade'])
+            writeFile proofNodeFile (show $ prettyScade [generateProver types name [name] node inp outp constVars])
             if not (dryRun opts) then
               do
                 reportFile' <- verifyScadeNodes opts gtlName name opFile testNodeFile proofNodeFile
@@ -518,16 +517,15 @@ buildTest opname ins outs = UserOpDecl
   }
 
 -- | Convert a DFA to Scade.
-dfaToScade :: ScadeTypeMapping
+dfasToScade :: ScadeTypeMapping
                 -> String -- ^ Name of the resulting SCADE node
                 -> [(String, TypeExpr)] -- ^ Input variables
                 -> [(String, TypeExpr)] -- ^ Output variables
                 -> Map String GTLType -- ^ Local variables of the mode
                 -> Map String (Maybe GTLConstant)
-                -> DFA [TypedExpr String] Integer -- ^ The DFA
+                -> [DFA [TypedExpr String] Integer] -- ^ The DFAs
                 -> Sc.Declaration
-
-dfaToScade types name ins outs locals defs dfa
+dfasToScade types name ins outs locals defs dfas
   = UserOpDecl
     { userOpKind = Sc.Node
     , userOpImported = False
@@ -543,32 +541,39 @@ dfaToScade types name ins outs locals defs dfa
                                }]
     , userOpNumerics = []
     , userOpContent = DataDef { dataSignals = []
-                              , dataLocals = declarationsToScade types (Map.toList locals) defs
-                              , dataEquations = [StateEquation
-                                                 (StateMachine Nothing (dfaToStates locals dfa))
+                              , dataLocals = [VarDecl { varNames = [VarId ("test_result"++show n) False False]
+                                                      , varType = TypeBool
+                                                      , varDefault = Nothing
+                                                      , varLast = Nothing }
+                                             | (_,n) <- zip dfas [0..] ] ++
+                                             declarationsToScade types (Map.toList locals) defs
+                              , dataEquations = SimpleEquation [Named "test_result"] (foldl1 (BinaryExpr BinAnd) [ IdExpr (Path ["test_result"++show n]) | (_,n) <- zip dfas [0..] ]) :
+                                                [StateEquation
+                                                 (StateMachine Nothing (dfaToStates locals ("test_result"++show n) dfa))
                                                  [] True
+                                                | (dfa,n) <- zip dfas [0..]
                                                 ]
                               }
     }
 
 -- | Translates a buchi automaton into a list of SCADE automaton states.
-dfaToStates :: Map String GTLType -> DFA [TypedExpr String] Integer -> [Sc.State]
-dfaToStates locals dfa = failState :
-                  [ Sc.State
-                   { stateInitial = s == dfaInit dfa
-                   , stateFinal = False
-                   , stateName = "st" ++ (show s)
-                   , stateData = DataDef { dataSignals = []
-                                         , dataLocals = []
-                                         , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr True)]
-                                         }
-                   , stateUnless = [ stateToTransition locals cond trg
-                                   | (cond, trg) <- trans ] ++
-                                   [failTransition]
-                   , stateUntil = []
-                   , stateSynchro = Nothing
-                   }
-                 | (s, trans) <- Map.toList (unTotal $ dfaTransitions dfa) ]
+dfaToStates :: Map String GTLType -> String -> DFA [TypedExpr String] Integer -> [Sc.State]
+dfaToStates locals resultvar dfa
+  = failState resultvar :
+    [ Sc.State { stateInitial = s == dfaInit dfa
+               , stateFinal = False
+               , stateName = "st" ++ (show s)
+               , stateData = DataDef { dataSignals = []
+                                     , dataLocals = []
+                                     , dataEquations = [SimpleEquation [Named resultvar] (ConstBoolExpr True)]
+                                     }
+               , stateUnless = [ stateToTransition locals cond trg
+                               | (cond, trg) <- trans ] ++
+                               [failTransition]
+               , stateUntil = []
+               , stateSynchro = Nothing
+               }
+    | (s, trans) <- Map.toList (unTotal $ dfaTransitions dfa) ]
 
 -- | Constructs a transition into the `failState'.
 failTransition :: Sc.Transition
@@ -576,14 +581,14 @@ failTransition = Transition (ConstBoolExpr True) Nothing (TargetFork Restart "fa
 
 -- | The state which is entered when a contract is violated.
 --   There is no transition out of this state.
-failState :: Sc.State
-failState = Sc.State
+failState :: String -> Sc.State
+failState resultvar = Sc.State
   { stateInitial = False
   , stateFinal = False
   , stateName = "fail"
   , stateData = DataDef { dataSignals = []
                         , dataLocals = []
-                        , dataEquations = [SimpleEquation [Named "test_result"] (ConstBoolExpr False)]
+                        , dataEquations = [SimpleEquation [Named resultvar] (ConstBoolExpr False)]
                         }
   , stateUnless = []
   , stateUntil = []
