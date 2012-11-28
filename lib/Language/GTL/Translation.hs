@@ -90,7 +90,7 @@ gtlToLTL' clk cycle_time (Fix expr)
                                                  (LTL.Un LTL.Not (Atom $ Fix $ Typed gtlBool $ ClockRef clk1))
                                                  arg)))),clk1+1)
     IndexExpr _ _ -> (Atom (Fix expr),clk)
-    Automaton buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ renameStates buchi),clk)
+    Automaton _ buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ renameStates buchi),clk)
     BuiltIn "equal" args@(x:xs) -> case unfix $ getType (unfix x) of
       GTLBool -> let (clk1,tt) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time arg in (nclk,nres:cres)) (clk,[]) args
                      (clk2,ff) = foldl (\(cclk,cres) arg -> let (nres,nclk) = gtlToLTL' cclk cycle_time (distributeNot arg) in (nclk,nres:cres)) (clk1,[]) args
@@ -142,7 +142,7 @@ expandExpr expr
       GTL.Finally _ -> error "Can't use finally in state formulas yet"
       GTL.After _ -> error "Can't use after in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
-    Automaton _ -> error "Can't use automata in state formulas yet"
+    Automaton _ _ -> error "Can't use automata in state formulas yet"
     ClockReset _ _ -> error "Can't use clock reset in state formulas yet"
     ClockRef _ -> error "Can't use clock ref in state formulas yet"
     BuiltIn _ _ -> error "Can't use builtin in state formulas yet"

@@ -232,7 +232,7 @@ expr : pexpr "and" pexpr                 { GBin GOpAnd NoTime $1 $3 }
      | pexpr "/" pexpr                   { GBin GOpDiv NoTime $1 $3 }
      | pexpr "*" pexpr                   { GBin GOpMult NoTime $1 $3 }
      | "exists" id "=" var ":" pexpr    { GExists $2 (fst $4) (snd $4) $6 }
-     | "automaton" "{" many(state) "}" { GAutomaton $3 }
+     | "automaton" maybe(id) "{" many(state) "}" { GAutomaton $2 $4 }
      | pexpr "[" pexpr "]"               { GIndex $1 $3 }
      | enum                            { GEnum $1 }
      | "true"                          { GConstBool True }

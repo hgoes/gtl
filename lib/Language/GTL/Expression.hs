@@ -85,7 +85,7 @@ data Term v r = Var v Integer VarUsage -- ^ A variable with a name and a history
               | BinIntExpr IntOp r r -- ^ An arithmetic expression
               | UnBoolExpr UnBoolOp r -- ^ A unary logical expression
               | IndexExpr r Integer -- ^ Use an index to access a subcomponent of an expression
-              | Automaton (BA [r] String) -- ^ A automaton specifying a temporal logical condition
+              | Automaton (Maybe String) (BA [r] String) -- ^ A automaton specifying a temporal logical condition
               | ClockReset Integer Integer
               | ClockRef Integer
               | BuiltIn String [r]
@@ -143,7 +143,7 @@ instance (Binary r,Binary v,Ord v) => Binary (Term v r) where
   put (BinIntExpr op l r) = put (4::Word8) >> put op >> put l >> put r
   put (UnBoolExpr op p) = put (5::Word8) >> put op >> put p
   put (IndexExpr e i) = put (6::Word8) >> put i >> put e
-  put (Automaton aut) = put (7::Word8) >> put aut
+  put (Automaton _ aut) = put (7::Word8) >> put aut
   put (ClockReset x y) = put (8::Word8) >> put x >> put y
   put (ClockRef x) = put (9::Word8) >> put x
   get = do
@@ -180,7 +180,7 @@ instance (Binary r,Binary v,Ord v) => Binary (Term v r) where
         return $ IndexExpr e i
       7 -> do
         aut <- get
-        return $ Automaton aut
+        return $ Automaton Nothing aut
       8 -> do
         x <- get
         y <- get
@@ -348,8 +348,12 @@ showTermWith f g p (UnBoolExpr op arg)
 showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
 showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit
 showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
-showTermWith f g p (Automaton ba)
-  = showString "automaton {"
+showTermWith f g p (Automaton name ba)
+  = showString "automaton "
+    . (case name of
+          Nothing -> id
+          Just n -> showString n . showChar ' ') 
+    . showChar '{'
     . foldl (.) id [ (if Set.member st (baInits ba) 
                       then showString "init "
                       else id) .
@@ -367,7 +371,7 @@ showTermWith f g p (Automaton ba)
                                   | (cond,trg) <- trans ] .
                      showString "}"
                    | (st,trans) <- Map.toList $ baTransitions ba ]
-    . showString "}"
+    . showChar '}'
 
 -- | Helper function for type checking: If the two supplied types are the same,
 --   return 'Right' (), otherwise generate an error using the supplied identifier.
@@ -469,13 +473,13 @@ typeCheck varmp enums e = liftM Fix $ typeCheck' (typeCheck varmp enums) (getTyp
                         then return $ Typed (tps `genericIndex` idx) (IndexExpr pp idx)
                         else throwError $ "Index "++show idx++" out of bounds "++show (genericLength tps)
         _ -> throwError $ "Expression " ++ mus pp ++ " is not indexable"
-    typeCheck' mu mutp mus varmp enums (Automaton buchi) = do
+    typeCheck' mu mutp mus varmp enums (Automaton name buchi) = do
       ntrans <- mapM (\trans -> mapM (\(cond,trg) -> do
                                          ncond <- mapM mu cond
                                          return (ncond,trg)
                                      ) trans
                      ) (baTransitions buchi)
-      return $ Typed gtlBool (Automaton $ buchi { baTransitions = ntrans })
+      return $ Typed gtlBool (Automaton name $ buchi { baTransitions = ntrans })
     typeCheck' mu mutp mus varmp enums (BuiltIn name args) = do
       tps <- mapM mu args
       case name of
@@ -556,7 +560,7 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
       Just _ -> do
         (var,u) <- f q n inf
         parseTerm' mu f (Map.insert b (var,0,u) ex) inf expr
-    parseTerm' mu f ex inf (_,GAutomaton sts) = do
+    parseTerm' mu f ex inf (_,GAutomaton name sts) = do
       stmp <- foldlM (\mp st -> do
                          let (exprs,nexts) = partitionEithers (stateContent st)
                          rexpr <- mapM (mu ex inf) exprs
@@ -570,15 +574,16 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
                                         ) nexts
                          return $ Map.insert (stateName st) (stateInitial st,stateFinal st,rexpr,rnexts) mp
                      ) Map.empty sts
-      return $ Automaton $ BA { baTransitions = fmap (\(_,_,_,nxts) -> [ (case cond of
-                                                                             Nothing -> tcond
-                                                                             Just t -> t:tcond,trg)
-                                                                       | (cond,trg) <- nxts,
-                                                                         let (_,_,tcond,_) = stmp!trg
-                                                                       ]) stmp
-                              , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
-                              , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
-                              }
+      return $ Automaton name $
+        BA { baTransitions = fmap (\(_,_,_,nxts) -> [ (case cond of
+                                                          Nothing -> tcond
+                                                          Just t -> t:tcond,trg)
+                                                    | (cond,trg) <- nxts,
+                                                      let (_,_,tcond,_) = stmp!trg
+                                                    ]) stmp
+           , baInits = Map.keysSet $ Map.filter (\(init,_,_,_) -> init) stmp
+           , baFinals = Map.keysSet $ Map.filter (\(_,fin,_,_) -> fin) stmp
+           }
     parseTerm' mu f ex inf (_,GIndex expr ind) = do
       rind <- case ind of
         (_,GConst x) -> return x
@@ -610,7 +615,7 @@ distributeNot expr
       Finally NoTime -> Fix $ Typed gtlBool $ UnBoolExpr Always (distributeNot p)
       Finally spec -> Fix $ Typed gtlBool $ UnBoolExpr (Next spec) (distributeNot p)
     IndexExpr e i -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
-    Automaton buchi -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
+    Automaton _ _ -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     ClockRef x -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     ClockReset _ _ -> error "Can't negate a clock reset"
 
@@ -643,10 +648,10 @@ getTermVars mu expr = case getValue expr of
   BinIntExpr op l r -> (mu l)++(mu r)
   UnBoolExpr op p -> mu p
   IndexExpr e i -> fmap (\(v,u,idx,lvl,tp) -> (v,u,i:idx,lvl,tp)) (mu e)
-  Automaton buchi -> concat [ concat $ fmap mu cond
-                            | trans <- Map.elems (baTransitions buchi),
-                              (cond,_) <- trans
-                            ]
+  Automaton _ buchi -> concat [ concat $ fmap mu cond
+                              | trans <- Map.elems (baTransitions buchi),
+                                (cond,_) <- trans
+                              ]
   BuiltIn _ args -> concat $ fmap mu args
 
 -- | Get all variables used in a GTL value.
@@ -669,8 +674,8 @@ mapTermVars f mu (BinRelExpr rel l r) = BinRelExpr rel (mu l) (mu r)
 mapTermVars f mu (BinIntExpr op l r) = BinIntExpr op (mu l) (mu r)
 mapTermVars f mu (UnBoolExpr op p) = UnBoolExpr op (mu p)
 mapTermVars f mu (IndexExpr e i) = IndexExpr (mu e) i
-mapTermVars f mu (Automaton buchi)
-  = Automaton $ buchi { baTransitions = fmap (fmap (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
+mapTermVars f mu (Automaton name buchi)
+  = Automaton name $ buchi { baTransitions = fmap (fmap (\(cond,trg) -> (fmap mu cond,trg))) (baTransitions buchi) }
 
 -- | Change the type of the variables used in a value
 mapValueVars :: (r1 -> r2) -> GTLValue r1 -> GTLValue r2
@@ -850,7 +855,7 @@ getClocks (Fix e) = case getValue e of
   ClockRef c -> [c]
   BinBoolExpr _ lhs rhs -> (getClocks lhs) ++ (getClocks rhs)
   UnBoolExpr _ r -> getClocks r
-  Automaton aut -> automatonClocks id aut
+  Automaton _ aut -> automatonClocks id aut
   BuiltIn _ r -> concat $ fmap getClocks r
   _ -> []
 
@@ -1048,7 +1053,7 @@ flattenExpr f idx (Fix e) = Fix $ Typed (getType e) $ case getValue e of
   BinIntExpr op l r -> BinIntExpr op (flattenExpr f idx l) (flattenExpr f idx r)
   UnBoolExpr op ne -> UnBoolExpr op (flattenExpr f idx ne)
   IndexExpr e i -> getValue $ unfix $ flattenExpr f (i:idx) e
-  Automaton buchi -> Automaton (baMapAlphabet (fmap $ flattenExpr f idx) buchi)
+  Automaton name buchi -> Automaton name (baMapAlphabet (fmap $ flattenExpr f idx) buchi)
 
 unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
 unpackExpr f i (Fix e) = case getValue e of
@@ -1066,7 +1071,7 @@ unpackExpr f i (Fix e) = case getValue e of
   BinIntExpr op l r -> [Fix $ Typed (getType e) (BinIntExpr op (flattenExpr f i l) (flattenExpr f i r))]
   UnBoolExpr op ne -> [Fix $ Typed (getType e) (UnBoolExpr op (flattenExpr f i ne))]
   IndexExpr ne ni -> unpackExpr f (ni:i) ne
-  Automaton buchi -> [ flattenExpr f i (Fix e) ]
+  Automaton _ _ -> [ flattenExpr f i (Fix e) ]
 
 defaultValue :: GTLType -> GTLConstant
 defaultValue tp = case unfix tp of
