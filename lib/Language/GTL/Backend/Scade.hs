@@ -111,6 +111,7 @@ instance GTLBackend Scade where
                     }
   backendVerify Scade (ScadeData node decls types opFile) cy exprs locals init constVars opts gtlName
     = let name = (intercalate "_" node)
+          rname = intercalate "::" node
           (inp,outp,kind) = scadeInterface node decls
           expr_names = fmap (\(expr,i) -> (expr,intercalate "_" (node++[show i]))) (zip exprs [0..])
           scade = sequence $
@@ -137,7 +138,7 @@ instance GTLBackend Scade where
                     mapM (\prop -> if propStatus prop
                                    then return ()
                                    else (writeFile (outputDir </> (gtlName++"-"++name++"-"++(propName prop)++"-counterex") <.> "sss")
-                                         (propertyToReport prop))
+                                         (propertyToReport (Just rname) prop))
                          ) (properties report)
                     return $ Just $ all propStatus (properties report)
               else return Nothing
@@ -228,12 +229,17 @@ renderTickValue :: ScadeTickValue -> String
 renderTickValue (SingleData _ v) = v
 renderTickValue (CompositeData vs) = "("++intercalate "," (fmap renderTickValue vs)++")"
 
-propertyToReport :: Property -> String
-propertyToReport prop = unlines $ concat
-                        [ [ "SSM::set "++propNode prop++"/"++name++" "++renderTickValue val
-                          | InputAssignment name val <- tickContent tick ]
-                          ++ ["SSM::cycle"]
-                        | tick <- propTrace prop ]
+propertyToReport :: Maybe String -> Property -> String
+propertyToReport node prop
+  = unlines $ concat
+    [ [ "SSM::set "++rnode++"/"++name++" "++renderTickValue val
+      | InputAssignment name val <- tickContent tick ]
+      ++ ["SSM::cycle"]
+    | tick <- propTrace prop ]
+  where
+    rnode = case node of
+      Nothing -> propNode prop
+      Just n -> n
 
 instance XmlPickler Prover where
   xpickle = xpElem "prover" $
