@@ -209,7 +209,8 @@ eqGTLSMT (GSMTTuple l) (GSMTTuple r) = and' $ List.zipWith eqGTLSMT l r
 eqInst :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInst l r = and' $ (Map.elems $ Map.intersectionWith eqGTLSMT (instanceInputVars l) (instanceInputVars r)) ++
              (Map.elems $ Map.intersectionWith eqGTLSMT (instanceOutputVars l) (instanceOutputVars r)) ++
-             (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars l) (instanceLocalVars r))
+             (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars l) (instanceLocalVars r)) ++
+             (zipWith (.==.) (instanceAutomata l) (instanceAutomata r))
 
 eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
 eqSt l r = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates l) (instanceStates r)
