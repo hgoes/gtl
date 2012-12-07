@@ -159,15 +159,8 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  putStrLn (T.unpack $ printIt gr)
-  putStrLn "gr syntax"
-  putStrLn (show gr)
-  putStrLn ""
-  outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt gr))
+  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (T.unpack $ printIt gr))
   let dot = parseIt' outp :: DotGraph String
-  putStrLn $ (T.unpack $ printIt dot)
-  putStrLn "dot syntax"
-  putStrLn (show dot)
   return $ dotToTikz (Just mp) dot
 
 -- | Creates the hole record object with its ports
@@ -181,7 +174,7 @@ genHRecordShape inp outp w h = GH.Table $ GH.HTable { GH.tableFontAttrs = Nothin
 		[GH.LabelCell [GH.Border 1, 
                      GH.RowSpan $ fromIntegral rows, 
 							GH.Height $ round h, 
-							GH.Width $ round w] (GH.Text [GH.Str $ T.pack ""])]++
+							GH.Width $ round w] (GH.Text [GH.Str $ T.pack " "])]++
 		[GH.LabelCell [GH.RowSpan $ fromIntegral rows] (
 			if (Map.size outp) > 0 then 
 			GH.Table GH.HTable {
@@ -219,13 +212,13 @@ genHRecordShape inp outp w h = GH.Table $ GH.HTable { GH.tableFontAttrs = Nothin
 genPortName :: String -> [Integer] -> Text
 genPortName var ind = T.append (T.pack var) (T.concat (fmap (\i -> T.pack ("_"++show i)) ind))
 
--- | Convert a single model into Tikz drawing commands.
+-- | Convert a single model into Tikz drawing commands
 --   Also returns the width and height of the bounding box for the rendered picture.
 modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL Nothing (gtlContractExpression $ gtlModelContract m)
       buchi = ltl2ba ltl
-  outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
+  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
   let dot = parseIt' outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
@@ -379,7 +372,7 @@ dotToTikz mtp gr
                                                  UnknownAttribute n _ -> (compare (T.unpack n) "pos") == EQ
                                                  _ -> False) (edgeAttributes ed) of
                                 Just (Pos (SplinePos [spl])) -> spl
-                                Just (UnknownAttribute _ ps) -> error "unknownattr 'pos': parse points"
+                                Just (UnknownAttribute _ ps) -> error $ show ed --"unknownattr 'pos': parse points"
                                 Nothing -> error "Edge has no position"
            lbl = case List.find (\attr -> case attr of
                                   Comment _ -> True
@@ -441,7 +434,7 @@ exprToLatex expr = case getValue $ unfix expr of
 							 (exprToLatex rhs)
 							)
 	UnBoolExpr GTL.Not p -> T.append (T.pack "\\lnot ") (exprToLatex p)
-	IndexExpr expr idx -> T.append (exprToLatex expr) (T.pack $ "_{"++show idx++"}")
+	IndexExpr expr idx -> T.append (exprToLatex expr) (T.pack $ " \\lbrace "++show idx++" \\rbrace ")
 	ClockRef clk -> T.pack ("clock("++(show clk)++")")
 	ClockReset clk limit -> T.pack ("clock("++(show clk)++") := "++(show limit))
 
