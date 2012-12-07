@@ -13,6 +13,7 @@ import Data.GraphViz
 import Data.GraphViz.Printing
 import Data.GraphViz.Parsing
 import Data.GraphViz.Attributes.Complete
+import Data.GraphViz.PreProcessing
 import qualified Data.GraphViz.Attributes.HTML as GH
 import qualified Data.Text.Lazy as T
 import Data.Int (Int64)
@@ -159,8 +160,8 @@ gtlToTikz spec = do
                                                                ]
                                                  }
                     }
-  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (T.unpack $ printIt gr))
-  let dot = parseIt' outp :: DotGraph String
+  outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt gr))
+  let dot = parseIt' $ preProcess outp :: DotGraph String
   return $ dotToTikz (Just mp) dot
 
 -- | Creates the hole record object with its ports
@@ -218,8 +219,8 @@ modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL Nothing (gtlContractExpression $ gtlModelContract m)
       buchi = ltl2ba ltl
-  outp <- fmap (\i -> T.pack i) (readProcess "sfdp" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
-  let dot = parseIt' outp :: DotGraph String
+  outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
+  let dot = parseIt' $ preProcess outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
   return (res,px*2.0,py*2.0)
