@@ -27,6 +27,8 @@ module Language.GTL.Expression
         galways,
         gfinally,
         gimplies,
+        guntil,
+        grelease,
         enumConst,
         isInput,isOutput,isState,
         typeCheck,
@@ -239,11 +241,22 @@ gneq x y
 
 galways :: TypedExpr v -> TypedExpr v
 galways x
-  | getType (unfix x) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr Always x)
+  | getType (unfix x) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr (Always NoTime) x)
 
 gfinally :: TypedExpr v -> TypedExpr v
 gfinally x
   | getType (unfix x) == gtlBool = Fix $ Typed gtlBool (UnBoolExpr (Finally NoTime) x)
+
+guntil :: TypedExpr v -> TypedExpr v -> TypedExpr v
+guntil l r
+  | getType (unfix l) == gtlBool &&
+    getType (unfix r) == gtlBool = Fix $ Typed gtlBool (BinBoolExpr (Until NoTime) l r)
+
+grelease :: TypedExpr v -> TypedExpr v -> TypedExpr v
+grelease l r
+  | getType (unfix l) == gtlBool &&
+    getType (unfix r) == gtlBool = Fix $ Typed gtlBool (BinBoolExpr (UntilOp NoTime) l r)
+
 
 gimplies :: TypedExpr v -> TypedExpr v -> TypedExpr v
 gimplies x y
@@ -299,8 +312,8 @@ intPrec OpMult = 11
 intPrec OpDiv = 12
 
 unPrec Not = 7
-unPrec Always = 2
-unPrec (Next _) = 2
+unPrec (Always _) = 2
+unPrec Next = 2
 unPrec (Finally _) = 2
 
 showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
@@ -341,8 +354,8 @@ showTermWith f g p (UnBoolExpr op arg)
   = showParen (p > unPrec op) $ 
     (showString $ case op of
         Not -> "not "
-        Always -> "always "
-        Next ts -> "next"++show ts++" "
+        Always ts -> "always"++show ts++" "
+        Next -> "next "
         Finally ts -> "finaly"++show ts++" ") . 
     (g (unPrec op) arg)
 showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
@@ -527,11 +540,10 @@ parseTerm f ex inf e = liftM Fix $ parseTerm' (\ex' inf' expr -> parseTerm f ex'
                     _ -> ex
                 ) inf p
       return $ UnBoolExpr (case op of
-                              GOpAlways -> Always
-                              GOpNext -> Next ts
+                              GOpAlways -> Always ts
+                              GOpNext -> Next
                               GOpNot -> Not
                               GOpFinally -> Finally ts
-                              GOpAfter -> After ts
                           ) rec
     parseTerm' mu f ex inf (_,GConst x) = return $ Value (GTLIntVal $ fromIntegral x)
     parseTerm' mu f ex inf (_,GConstBool x) = return $ Value (GTLBoolVal x)
@@ -610,10 +622,9 @@ distributeNot expr
     BinRelExpr rel l r -> Fix $ Typed gtlBool $ BinRelExpr (relNot rel) l r
     UnBoolExpr op p -> case op of
       Not -> pushNot p
-      Next NoTime -> Fix $ Typed gtlBool $ UnBoolExpr (Next NoTime) (distributeNot p)
-      Always -> Fix $ Typed gtlBool $ UnBoolExpr (Finally NoTime) (distributeNot p)
-      Finally NoTime -> Fix $ Typed gtlBool $ UnBoolExpr Always (distributeNot p)
-      Finally spec -> Fix $ Typed gtlBool $ UnBoolExpr (Next spec) (distributeNot p)
+      Next -> Fix $ Typed gtlBool $ UnBoolExpr Next (distributeNot p)
+      Always spec -> Fix $ Typed gtlBool $ UnBoolExpr (Finally spec) (distributeNot p)
+      Finally spec -> Fix $ Typed gtlBool $ UnBoolExpr (Always spec) (distributeNot p)
     IndexExpr e i -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     Automaton _ _ -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     ClockRef x -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
@@ -697,10 +708,9 @@ data BoolOp = And     -- ^ &#8896;
 
 -- | Unary boolean operators with the traditional semantics.
 data UnBoolOp = Not
-              | Always
-              | Next TimeSpec
+              | Always TimeSpec
+              | Next
               | Finally TimeSpec
-              | After TimeSpec
               deriving (Show,Eq,Ord)
 
 instance Binary TimeSpec where
@@ -739,17 +749,17 @@ instance Binary BoolOp where
 
 instance Binary UnBoolOp where
   put Not = put (0::Word8)
-  put Always = put (1::Word8)
-  put (Next ts) = put (2::Word8) >> put ts
+  put (Always ts) = put (1::Word8) >> put ts
+  put Next = put (2::Word8)
   put (Finally ts) = put (3::Word8) >> put ts
   get = do
     i <- get
     case (i::Word8) of
       0 -> return Not
-      1 -> return Always
-      2 -> do
+      1 -> do
         ts <- get
-        return $ Next ts
+        return (Always ts)
+      2 -> return Next
       3 -> do
         ts <- get
         return $ Finally ts

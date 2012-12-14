@@ -341,6 +341,7 @@ class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Int
   firstSchedule :: s -> SchedulingData s -> SMTExpr Bool
   canSchedule :: s -> String -> SchedulingData s -> SMTExpr Bool
   schedule :: s -> String -> SchedulingData s -> SchedulingData s -> SMTExpr Bool
+  scheduleDelta :: s -> SchedulingData s -> SchedulingData s -> SMTExpr GTLSMTInt
   eqScheduling :: s -> SchedulingData s -> SchedulingData s -> SMTExpr Bool
   schedulingFairnessCount :: s -> Map String Integer -> Integer
   schedulingFairness :: s -> SchedulingData s -> [SMTExpr Bool]
@@ -359,6 +360,7 @@ instance Scheduling SimpleScheduling where
   firstSchedule _ _ = SMT.constant True
   canSchedule _ _ _ = SMT.constant True
   schedule _ _ _ _ = SMT.constant True
+  scheduleDelta _ _ _ = SMT.constant 1
   eqScheduling _ _ _ = SMT.constant True
   schedulingFairnessCount _ _ = 0
   schedulingFairness _ _ = []
@@ -414,6 +416,7 @@ instance Scheduling FairScheduling where
   firstSchedule _ _ = SMT.constant True
   canSchedule _ _ _ = SMT.constant True
   schedule _ name (FairSchedulingData i w mp) _ = i .==. SMT.constantAnn (mp!name) w
+  scheduleDelta _ _ _ = SMT.constant 1
   eqScheduling _ (FairSchedulingData i _ _) (FairSchedulingData j _ _) = i .==. j
   schedulingFairnessCount _ procs = fromIntegral (Map.size procs)
   schedulingFairness _ (FairSchedulingData i w mp) = [ i .==. SMT.constantAnn v w | (name,v) <- Map.toList mp ]
@@ -447,6 +450,7 @@ instance Scheduling TimedScheduling where
     = let mp1' = Map.adjust (+ (SMT.constant $ fromIntegral (p!name))) name mp1
       in and' $ (minimumSMT (Map.elems mp1') min):
          (Map.elems $ Map.intersectionWith (\o n -> n .==. o - min) mp1' mp2)
+  scheduleDelta _ (TimedSchedulingData _ min _) _ = min
   showSchedulingInformation _ (TimedSchedulingData mp min procs) = do
     mp' <- mapM SMT.getValue mp
     return $ show $ Map.toList mp'
@@ -533,11 +537,12 @@ instance Scheduling TimedScheduling2 where
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxGEnc :: Map (TypedExpr v) (SMTExpr Bool)
+                                   , eventClocks :: Map (TypedExpr v) (SMTExpr GTLSMTInt,SMTExpr Bool)
                                    } deriving (Typeable,Eq)
 
 instance Args (TemporalVars (String,String)) where
   type ArgAnnotation (TemporalVars (String,String)) = TypedExpr (String,String)
-  foldExprs f s tv expr = foldTV s tv (TemporalVars Map.empty Map.empty Map.empty) expr
+  foldExprs f s tv expr = foldTV s tv (TemporalVars Map.empty Map.empty Map.empty Map.empty) expr
       where
         foldTV s tv ntv expr
             | Map.member expr (formulaEnc ntv) = (s,ntv)
@@ -559,17 +564,43 @@ instance Args (TemporalVars (String,String)) where
                                                                    | Map.member rhs (auxGEnc ntv3) -> (s3,ntv3)
                                                                    | otherwise -> let (s4,v2) = f s3 ((auxGEnc tv)!rhs) ()
                                                                                   in (s4,ntv3 { auxGEnc = Map.insert rhs v2 (auxGEnc ntv3) })
+                                                               GTL.Until (TimeUSecs t) -> let (s4,ntv4) = foldTV s3 tv ntv3 (Fix $ Typed gtlBool (GTL.BinBoolExpr (GTL.Until NoTime) lhs rhs))
+                                                                                          in if Map.member rhs (eventClocks ntv4)
+                                                                                             then (s4,ntv4)
+                                                                                             else (let ~(old_t,old_v) = (eventClocks tv)!rhs
+                                                                                                       (s5,nt) = f s4 old_t ()
+                                                                                                       (s6,nv) = f s5 old_v ()
+                                                                                                       ntv5 = ntv4 { eventClocks = Map.insert rhs (nt,nv) (eventClocks ntv4) }
+                                                                                                   in (s6,ntv5))
+                                                               GTL.UntilOp (TimeUSecs t) -> let (s4,ntv4) = foldTV s3 tv ntv3 (Fix $ Typed gtlBool (GTL.BinBoolExpr (GTL.UntilOp NoTime) lhs rhs))
+                                                                                            in if Map.member (gnot rhs) (eventClocks ntv4)
+                                                                                               then (s4,ntv4)
+                                                                                               else (let ~(old_t,old_v) = (eventClocks tv)!(gnot rhs)
+                                                                                                         (s5,nt) = f s4 old_t ()
+                                                                                                         (s6,nv) = f s5 old_v ()
+                                                                                                         ntv5 = ntv4 { eventClocks = Map.insert (gnot rhs) (nt,nv) (eventClocks ntv4) }
+                                                                                                     in (s6,ntv5))
                                                                _ -> (s3,ntv3)
                             GTL.UnBoolExpr op arg -> let (s1,ntv1) = foldTV s tv ntv arg
                                                      in case op of
                                                           GTL.Not -> (s1,ntv1 { formulaEnc = Map.insert expr (not' ((formulaEnc ntv1)!arg)) (formulaEnc ntv1) })
-                                                          GTL.Always -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
-                                                                            (s3,aux') = if Map.member arg (auxGEnc ntv1)
-                                                                                        then (s2,auxGEnc ntv1)
-                                                                                        else (let (s',v2) = f s2 ((auxGEnc tv)!arg) ()
-                                                                                              in (s',Map.insert arg v2 (auxGEnc ntv1)))
-                                                                        in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1)
-                                                                                    , auxGEnc = aux' })
+                                                          GTL.Always NoTime -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
+                                                                                   (s3,aux') = if Map.member arg (auxGEnc ntv1)
+                                                                                               then (s2,auxGEnc ntv1)
+                                                                                               else (let (s',v2) = f s2 ((auxGEnc tv)!arg) ()
+                                                                                                     in (s',Map.insert arg v2 (auxGEnc ntv1)))
+                                                                               in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1)
+                                                                                           , auxGEnc = aux' })
+                                                          GTL.Always (TimeUSecs t) -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
+                                                                                          ntv2 = ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1) }
+                                                                                          (s3,ntv3) = foldTV s2 tv ntv2 (galways arg)
+                                                                                      in if Map.member (gnot arg) (eventClocks ntv3)
+                                                                                         then (s3,ntv3)
+                                                                                         else (let ~(old_t,old_v) = (eventClocks tv)!(gnot arg)
+                                                                                                   (s4,nt) = f s3 old_t ()
+                                                                                                   (s5,nv) = f s4 old_v ()
+                                                                                                   ntv4 = ntv3 { eventClocks = Map.insert (gnot arg) (nt,nv) (eventClocks ntv3) }
+                                                                                               in (s5,ntv4))
                                                           GTL.Finally NoTime -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
                                                                                     (s3,aux') = if Map.member arg (auxFEnc ntv1)
                                                                                                 then (s2,auxFEnc ntv1)
@@ -577,6 +608,15 @@ instance Args (TemporalVars (String,String)) where
                                                                                                       in (s',Map.insert arg v2 (auxFEnc ntv1)))
                                                                                 in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1) 
                                                                                             , auxFEnc = aux' })
+                                                          GTL.Finally (TimeUSecs t) -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
+                                                                                           ntv2 = ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1) }
+                                                                                       in if Map.member arg (eventClocks ntv2)
+                                                                                          then (s2,ntv2)
+                                                                                          else (let ~(old_t,old_v) = (eventClocks tv)!arg
+                                                                                                    (s3,nt) = f s2 old_t ()
+                                                                                                    (s4,nv) = f s3 old_v ()
+                                                                                                    ntv3 = ntv2 { eventClocks = Map.insert arg (nt,nv) (eventClocks ntv2) }
+                                                                                                in (s4,ntv3))
                                                           _ -> let (s2,v) = f s1 ((formulaEnc tv)!expr) ()
                                                                    ntv2 = ntv1 { formulaEnc = Map.insert expr v (formulaEnc ntv1) }
                                                                in (s2,ntv2)
@@ -621,14 +661,28 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
                                      GTL.Or -> (self .==. or' [l,r]):ls++rs
                                      GTL.Implies -> (self .==. (l .=>. r)):ls++rs
                                      GTL.Until NoTime -> (self .==. or' [r,and' [l,nself]]):ls++rs
+                                     GTL.Until (TimeUSecs t) -> let rest = dependencies f (guntil lhs rhs) cur nxt
+                                                                    unt = (formulaEnc cur)!(guntil lhs rhs)
+                                                                    (x,v) = (eventClocks cur)!rhs
+                                                                in (self .==. and' [unt,x .<=. SMT.constant (fromIntegral t),v]):rest
                                      GTL.UntilOp NoTime -> (self .==. and' [r,or' [l,nself]]):ls++rs
+                                     GTL.UntilOp (TimeUSecs t) -> let rest = dependencies f (grelease lhs rhs) cur nxt
+                                                                      unt = (formulaEnc cur)!(grelease lhs rhs)
+                                                                      (x,v) = (eventClocks cur)!(gnot rhs)
+                                                                  in (self .==. or' [unt,and' [x .>. SMT.constant (fromIntegral t),v]]):rest
   GTL.UnBoolExpr op e -> let es = dependencies f e cur nxt
                              e' = (formulaEnc cur)!e
                          in case op of
-                              GTL.Always -> (self .==. and' [e',nself]):es
+                              GTL.Always NoTime -> (self .==. and' [e',nself]):es
+                              GTL.Always (TimeUSecs t) -> let (x,v) = (eventClocks cur)!(gnot e)
+                                                              rest = dependencies f (galways e) cur nxt
+                                                          in (self .==. or' [(formulaEnc cur)!(galways e)
+                                                                            ,and' [x .>. SMT.constant (fromIntegral t),v]]):rest
                               GTL.Finally NoTime -> (self .==. or' [e',nself]):es
-                              GTL.Next NoTime -> let ne = (formulaEnc nxt)!e
-                                                 in (self .==. ne):es
+                              GTL.Finally (TimeUSecs t) -> let (x,v) = (eventClocks cur)!e
+                                                           in (self .==. and' [x .<. SMT.constant (fromIntegral t),v]):es
+                              GTL.Next -> let ne = (formulaEnc nxt)!e
+                                          in (self .==. ne):es
                               _ -> es
   GTL.BinRelExpr _ _ _ -> let GSMTBool v = translateExpr f expr
                           in [self .==. v]
@@ -636,6 +690,21 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
   where
     self = (formulaEnc cur)!expr
     nself = (formulaEnc nxt)!expr
+
+eventClockDependencies :: (Ord v,Show v) => SMTExpr GTLSMTInt -> TemporalVars v -> TemporalVars v -> [SMTExpr Bool]
+eventClockDependencies t cur nxt
+  = concat $ Map.elems $
+    Map.intersectionWithKey
+    (\expr (cur_x,cur_v) (nxt_x,nxt_v)
+     -> case GTL.getValue $ unfix expr of
+       UnBoolExpr GTL.Not expr -> let e = (formulaEnc cur)!expr
+                                  in [not' e .=>. and' [cur_x .==. 0,cur_v]
+                                     ,e .=>. and' [cur_x .==. nxt_x + t
+                                                  ,cur_v .==. nxt_v ]]
+       _ -> let e = (formulaEnc cur)!expr
+            in [e .=>. and' [cur_x .==. 0,cur_v]
+               ,not' e .=>. and' [cur_x .==. nxt_x + t
+                                 ,cur_v .==. nxt_v ]]) (eventClocks cur) (eventClocks nxt)
 
 getProcs :: GlobalInfo -> Map String Integer
 getProcs spec = fmap (\inst -> gtlModelCycleTime $ iiModel inst)
@@ -700,7 +769,8 @@ bmc cfg sched spec = do
                                                                             Just v -> v
                                                                             Nothing -> (instanceLocalVars inst)!var
                                                    ) formula cur nxt)
-
+  clk_fun <- mkFun cfg "clk" "event clock update" ((),formula,formula)
+             (\(delta,cur,nxt) -> and' $ eventClockDependencies delta cur nxt)
   tmp_cur <- argVarsAnn formula
   tmp_e <- argVarsAnn formula
   tmp_l <- argVarsAnn formula
@@ -709,7 +779,7 @@ bmc cfg sched spec = do
   te <- argVarsAnn procs
   fe <- mapM (\_ -> SMT.varNamed "fairnessE") [1..(schedulingFairnessCount sched procs)]
   start_time <- liftIO getCurrentTime
-  bmc' cfg sched spec conn_fun formula g_init_fun g_step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time
+  bmc' cfg sched spec conn_fun formula g_init_fun g_step_fun dep_fun clk_fun tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
@@ -726,10 +796,11 @@ bmc' :: (Scheduling s) =>
      -> ((GlobalState,SchedulingData s) -> SMTExpr Bool)
      -> ((GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool)
      -> ((GlobalState,TemporalVars (String,String),TemporalVars (String,String)) -> SMTExpr Bool)
+     -> ((SMTExpr GTLSMTInt,TemporalVars (String,String),TemporalVars (String,String)) -> SMTExpr Bool)
      -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String)
      -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [SMTExpr Bool] -> [BMCState s] -> UTCTime
      -> SMT (Maybe [(Map (String,String) GTLConstant,Map (String,String) String,Bool,String)])
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
+bmc' cfg sched spec conn formula init step deps clk tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
   init_st <- argVarsAnn spec
   l <- SMT.varNamed "l"
   inloop <- SMT.varNamed "inloop"
@@ -741,6 +812,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   assert $ not' inloop
   tmp_nxt <- argVarsAnn formula
   assert $ deps (init_st,tmp_cur,tmp_nxt)
+  assert $ clk (1,tmp_cur,tmp_nxt)
   assert $ (formulaEnc tmp_cur)!formula
   incPLTLbase loop_exists tmp_cur tmp_e tmp_l
   case fe of
@@ -760,6 +832,8 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
                             ) (Map.toList $ formulaEnc tmp_e)
                       -- k-variant case for IncPLTL
                       incPLTLvar tmp_cur tmp_e
+                      -- k-variant case for Event clocks
+                      mapM_ (\(x,v) -> assert $ not' v) (eventClocks tmp_nxt)
                       solvable <- checkSat
                       if solvable
                         then getPath sched spec hist >>= return.Just
@@ -768,9 +842,9 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   case res of
     Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                then return Nothing
-               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe hist start_time
+               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps clk tmp_nxt tmp_e tmp_l loop_exists se te fe hist start_time
     Just path -> return $ Just path
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
+bmc' cfg sched spec conn formula init step deps clk tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
   let sdata = bmcScheduling last_state
       i = length history
   ctime <- liftIO $ getCurrentTime
@@ -796,6 +870,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   
   -- k-invariant case for LastStateFormula
   assert $ deps (cur_state,tmp_cur,tmp_nxt)
+  assert $ clk (scheduleDelta sched sdata nsdata,tmp_cur,tmp_nxt)
   mapM_ (\(expr,var) -> assert $ l .=>. (var .==. ((formulaEnc tmp_cur)!expr))
         ) (Map.toList $ formulaEnc tmp_l)
   
@@ -851,6 +926,8 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
                           incPLTLvar tmp_cur tmp_e
                           -- k-variant case for fairness
                           mapM_ (\(f_now,f_end) -> assert $ f_end .==. f_now) (zip cur_fair fe)
+                          -- k-variant case for event clocks
+                          mapM_ (\(x,v) -> assert $ not' v) (eventClocks tmp_nxt)
                           r <- checkSat
                           if r then getPath sched spec history' >>= return.Just
                                else return Nothing
@@ -860,7 +937,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
              Just path -> return $ Just path
              Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                         then return Nothing
-                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe history' start_time)
+                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps clk tmp_nxt tmp_e tmp_l loop_exists se te fe history' start_time)
   
 incPLTLbase :: SMTExpr Bool -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String) -> SMT ()
 incPLTLbase loop_exists tmp_cur tmp_e tmp_l = mapM_ (\(expr,var) -> do
@@ -871,7 +948,7 @@ incPLTLbase loop_exists tmp_cur tmp_e tmp_l = mapM_ (\(expr,var) -> do
                                                                                         let f_e = (auxFEnc tmp_e)!e
                                                                                         assert $ loop_exists .=>. (var .=>. f_e)
                                                                                         assert $ not' $ (auxFEnc tmp_cur)!e
-                                                         GTL.UnBoolExpr Always e -> do
+                                                         GTL.UnBoolExpr (Always NoTime) e -> do
                                                            let g_e = (auxGEnc tmp_e)!e
                                                            assert $ loop_exists .=>. (g_e .=>. var)
                                                            assert $ (auxGEnc tmp_cur)!e
@@ -1003,7 +1080,7 @@ verifyModelBMC opts spec = do
     "none" -> solve $ act SimpleScheduling
     "sync" -> solve $ act SyncScheduling
     "fair" -> solve $ act FairScheduling
-    "timed" -> solve $ act TimedScheduling2
+    "timed" -> solve $ act TimedScheduling
   case res of
     Nothing -> putStrLn "No errors found in model"
     Just path -> putStrLn $ renderPath path

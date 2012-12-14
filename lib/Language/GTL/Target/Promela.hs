@@ -152,8 +152,8 @@ translateVerify e = case getValue $ unfix e of
                                        UntilOp NoTime -> LTLUntilOp) (translateVerify lhs) (translateVerify rhs)
   UnBoolExpr op ne -> LTLUn (case op of
                                 Not -> LTLNot
-                                Always -> LTLAlways
-                                Next NoTime -> LTLNext
+                                Always NoTime -> LTLAlways
+                                Next -> LTLNext
                                 Finally NoTime -> LTLEventually) (translateVerify ne)
   _ -> let (Just re,[]) = translateTExpr e
        in LTLNormalExpr re

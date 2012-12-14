@@ -69,14 +69,15 @@ gtlToLTL' clk cycle_time (Fix expr)
     UnBoolExpr op p -> let (arg,clk1) = gtlToLTL' clk cycle_time p
                        in case op of
                          GTL.Not -> (LTL.Un LTL.Not arg,clk1)
-                         GTL.Always -> (LTL.Bin LTL.UntilOp (LTL.Ground False) arg,clk1)
-                         GTL.Next NoTime -> (LTL.Un LTL.Next arg,clk1)
-                         GTL.Next ti -> case cycle_time of
+                         GTL.Always NoTime -> (LTL.Bin LTL.UntilOp (LTL.Ground False) arg,clk1)
+                         GTL.Always ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.And arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
+                         GTL.Next -> (LTL.Un LTL.Next arg,clk1)
                          GTL.Finally NoTime -> (LTL.Bin LTL.Until (LTL.Ground True) arg,clk1)
                          GTL.Finally ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Bin LTL.Or arg (LTL.Un LTL.Next expr)) arg [2..(getSteps rcycle_time ti)],clk1)
                            Nothing -> gtlToLTL' clk cycle_time (Fix $ Typed gtlBool $ BinBoolExpr (GTL.Until ti) (Fix $ Typed gtlBool (Value (GTLBoolVal True))) p)
+                         {-
                          GTL.After ti -> case cycle_time of
                            Just rcycle_time -> (foldl (\expr _ -> LTL.Un LTL.Next expr) arg [1..(getSteps rcycle_time ti)],clk1)
                            Nothing
@@ -88,7 +89,7 @@ gtlToLTL' clk cycle_time (Fix expr)
                                                 (LTL.Ground True)
                                                 (LTL.Bin LTL.And
                                                  (LTL.Un LTL.Not (Atom $ Fix $ Typed gtlBool $ ClockRef clk1))
-                                                 arg)))),clk1+1)
+                                                 arg)))),clk1+1)-}
     IndexExpr _ _ -> (Atom (Fix expr),clk)
     Automaton _ buchi -> (LTLAutomaton (renameStates $ optimizeTransitionsBA $ minimizeBA $ expandAutomaton $ renameStates buchi),clk)
     BuiltIn "equal" args@(x:xs) -> case unfix $ getType (unfix x) of
@@ -137,10 +138,9 @@ expandExpr expr
                      expandNot (x:xs) = let res = expandNot xs
                                         in [ Set.insert (distributeNot at) el | el <- res, at <- Set.toList x ]
                  in expandNot (expandExpr p)
-      GTL.Next _ -> error "Can't use next in state formulas yet"
-      GTL.Always -> error "Can't use always in state formulas yet"
+      GTL.Next -> error "Can't use next in state formulas yet"
+      GTL.Always _ -> error "Can't use always in state formulas yet"
       GTL.Finally _ -> error "Can't use finally in state formulas yet"
-      GTL.After _ -> error "Can't use after in state formulas yet"
     IndexExpr _ _ -> [Set.singleton expr]
     Automaton _ _ -> error "Can't use automata in state formulas yet"
     ClockReset _ _ -> error "Can't use clock reset in state formulas yet"

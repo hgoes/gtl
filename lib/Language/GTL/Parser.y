@@ -213,8 +213,8 @@ expr : pexpr "and" pexpr                 { GBin GOpAnd NoTime $1 $3 }
      | "after" time_spec pexpr          { GUn GOpAfter $2 $3 }
      | "not" pexpr                      { GUn GOpNot NoTime $2 }
      | "always" pexpr                   { GUn GOpAlways NoTime $2 }
+     | "always" time_spec pexpr         { GUn GOpAlways $2 $3 }
      | "next" pexpr                     { GUn GOpNext NoTime $2 }
-     | "next" time_spec pexpr           { GUn GOpNext $2 $3 }
      | "finally" pexpr                  { GUn GOpFinally NoTime $2 }
      | "finally" time_spec pexpr        { GUn GOpFinally $2 $3 }
      | pexpr "in" pexpr                  { GBin GOpIn NoTime $1 $3 }
