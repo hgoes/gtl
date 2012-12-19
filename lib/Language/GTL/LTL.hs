@@ -241,16 +241,16 @@ gba2ba gba = BA { baInits = inits
                                          else k
                  in findNext j' (drop j' finalList)
 
--- | delta : 2^Q -> 2^(S x 2^Q x 2^F), F ⊆ Q.
+-- | delta : 2^Q -> 2^(S x 2^Q x 2^F), F &#8838; Q.
 -- The transition are labeled with the index of the final set they belong to.
 type LabeledHyperTransitionMap st a = Map (Set st) (Set (a, Set st, Set st))
--- | delta : 2^Q -> 2^(S x 2^Q), F ⊆ Q.
+-- | delta : 2^Q -> 2^(S x 2^Q), F &#8838; Q.
 -- Hyper refers to hyper graphs as one edge points to multiple nodes.
 type HyperTransitionMap st a = Map (Set st) (Set (a, Set st))
--- | delta : F -> 2^(S x 2^Q), F ⊆ Q.
+-- | delta : F -> 2^(S x 2^Q), F &#8838; Q.
 -- Mapping from an final set index to assigned transitions for _one_ starting node.
 type FinalTransitionMap st a = Map st (Set (a, Set st))
--- | T_f ⊆ (2^(S x 2^Q))^Q -- that is a subset of all mappings Q -> 2^(S x 2^Q)
+-- | T_f &#8838; (2^(S x 2^Q))^Q -- that is a subset of all mappings Q -> 2^(S x 2^Q)
 type FinalSetFamily st a = Map st (HyperTransitionMap st a)
 
 -- Mapping from sets of final transitions to the contained transitions
