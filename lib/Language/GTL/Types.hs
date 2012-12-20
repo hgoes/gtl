@@ -93,6 +93,8 @@ resolveType' aliases mp tried (Fix (UnResolvedType' tp))
 
 baseType :: GTLType -> GTLType
 baseType (Fix (GTLNamed _ tp)) = baseType tp
+baseType (Fix (GTLArray n tp)) = Fix (GTLArray n (baseType tp))
+baseType (Fix (GTLTuple tps)) = Fix (GTLTuple (fmap baseType tps))
 baseType x = x
 
 -- | Represents the corresponding values to the 'GTLType'.
