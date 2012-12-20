@@ -30,6 +30,8 @@ getSteps cy (TimeUSecs s) = s `div` cy
 getUSecs :: TimeSpec -> Integer
 getUSecs (TimeUSecs s) = s
 
+-- | Translate a GTL expression into an LTL formula.
+--   Can be given an optional cycle time if the formula is from a contract.
 gtlToLTL :: (Ord v,Show v) => Maybe Integer -> TypedExpr v -> LTL (TypedExpr v)
 gtlToLTL cycle_time expr = fst $ gtlToLTL' 0 cycle_time expr
 

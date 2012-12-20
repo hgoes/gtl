@@ -1,7 +1,7 @@
 {-| Provides a UPPAAL verification target.
     UPPAAL is a state-based verification formalism and thus it is quite easy to translate GTL code to it.
  -}
-module Language.GTL.Target.UPPAAL where
+module Language.GTL.Target.UPPAAL (translateSpec) where
 
 import Language.GTL.Model hiding (getEnums)
 import Language.GTL.Types

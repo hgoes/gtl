@@ -70,10 +70,11 @@ import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad (liftM)
 import Text.Show
 
-data VarUsage = Input
-              | Output
-              | StateIn
-              | StateOut
+-- | States how a variable is being used in a formula
+data VarUsage = Input -- ^ The variable is an input variable in a contract
+              | Output -- ^ The variable is an output variable
+              | StateIn -- ^ The variable is being read from a local state variable
+              | StateOut -- ^ The variable is being used to define the value of a local state variable
               deriving (Show,Eq,Ord)
 
 -- | Represents a GTL term without recursion, which can be added by applying the 'Fix' constructor.
@@ -1146,15 +1147,3 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
           Nothing -> Nothing
           Just ys' -> Just (y:ys')
         ENEQ -> Nothing
-
-defaultConstant :: GTLType -> GTLConstant
-defaultConstant (Fix tp)
-  = case tp of
-  GTLInt -> Fix $ GTLIntVal 0
-  GTLByte -> Fix $ GTLByteVal 0
-  GTLBool -> Fix $ GTLBoolVal False
-  GTLFloat -> Fix $ GTLFloatVal 0.0
-  GTLEnum vals -> Fix $ GTLEnumVal (head vals)
-  GTLArray sz tp -> Fix $ GTLArrayVal $ genericReplicate sz (defaultConstant tp)
-  GTLTuple tps -> Fix $ GTLTupleVal $ fmap defaultConstant tps
-  GTLNamed _ tp -> defaultConstant tp

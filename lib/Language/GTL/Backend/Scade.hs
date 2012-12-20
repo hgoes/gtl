@@ -611,7 +611,7 @@ stateToTransition locals cond trg =
 exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 exprToScade locals (Fix expr) = case getValue expr of
   Var name lvl u -> (foldl (\e _ -> UnaryExpr UnPre e) (case u of
-                                                           StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
+                                                           --StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
                                                            _ -> IdExpr (Path [name])
                                                        ) [1..lvl], Nothing)
   Value val -> (valueToScade locals val, Nothing)

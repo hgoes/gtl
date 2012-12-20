@@ -45,6 +45,7 @@ data TargetModel = TargetModel
                    , tmodelVerify :: TypedExpr TargetVar -- ^ The verification goal
                    } deriving Show
 
+-- | A flattened B&#xFC;chi automaton without arrays or tuples.
 data TargetProc = TargetProc
                   { tprocAutomaton :: BA TransitionConditions Integer
                   , tprocCycleTime :: Integer
@@ -53,6 +54,7 @@ data TargetProc = TargetProc
 completeRestrictions :: Ord a => Map a (Restriction b) -> Map a GTLType -> Map a c -> Map a (Restriction b)
 completeRestrictions restr outp om = Map.intersection (Map.union restr (fmap emptyRestriction outp)) om
 
+-- | Generate an automaton from the verification formula of the 'TargetModel'
 getVerifyAutomaton :: TargetModel -> BA [TypedExpr TargetVar] Integer
 getVerifyAutomaton tm = gtl2ba Nothing (gnot $ tmodelVerify tm)
 

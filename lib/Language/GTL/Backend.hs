@@ -68,8 +68,9 @@ data CInterface = CInterface
                     cIFaceTranslateValue :: GTLConstant -> CExpr
                   }
 
-data CExpr = CValue String
-           | CArray [CExpr]
+-- | A (simplified) expression in the C-language
+data CExpr = CValue String -- ^ A simple expression
+           | CArray [CExpr] -- ^ An array of values
 
 -- | Merge two type-mappings into one, report conflicting types
 mergeTypes :: MonadError String m => Map String GTLType -> Map String GTLType -> m (Map String GTLType)

@@ -38,31 +38,42 @@ data GTLType' r = GTLInt -- ^ A 64bit unsigned integer
                 | GTLNamed String r -- ^ A type alias
                 deriving (Eq,Ord,Show)
 
+-- | Numeric types
 gtlInt,gtlByte,gtlBool,gtlFloat :: GTLType
 gtlInt = Fix GTLInt
 gtlByte = Fix GTLByte
 gtlBool = Fix GTLBool
 gtlFloat = Fix GTLFloat
 
+-- | Construct an enum type by giving a list of all possible values for the type.
 gtlEnum :: [String] -> GTLType
 gtlEnum constr = Fix $ GTLEnum constr
 
+-- | Construct an array type by giving its length and underlying element type.
 gtlArray :: Integer -> GTLType -> GTLType
 gtlArray i tp = Fix $ GTLArray i tp
 
+-- | Construct a tuple type by giving a list of its element types.
 gtlTuple :: [GTLType] -> GTLType
 gtlTuple tps = Fix $ GTLTuple tps
 
+-- | A 'GTLType' is the fixpoint variant (i.e. the recursive datatype) of the 'GTLType''.
 type GTLType = Fix GTLType'
 
+-- | An unresolved type is either a (yet) unknown identifier or a resolved type.
 newtype UnResolvedType' r = UnResolvedType' (Either String (GTLType' r))
 
+-- | The fixpoint variant of 'UnresolvedType''.
 type UnResolvedType = Fix UnResolvedType'
 
 instance Show2 UnResolvedType' where
   show2 (UnResolvedType' tp) = show tp
 
-resolveType :: MonadError String m => Map String GTLType -> Map String UnResolvedType -> UnResolvedType -> m GTLType
+-- | Try to convert an unresolved type to a normal type
+resolveType :: MonadError String m => Map String GTLType -- ^ A map of resolved type aliases
+               -> Map String UnResolvedType -- ^ A map of unresolved type aliases
+               -> UnResolvedType -- ^ The type to resolve
+               -> m GTLType
 resolveType aliases mp ut = case resolveType' aliases mp Set.empty ut of
   Left e -> throwError e
   Right t -> return t
@@ -91,6 +102,7 @@ resolveType' aliases mp tried (Fix (UnResolvedType' tp))
                    rtp' <- resolveType' aliases mp (Set.insert name tried) rtp
                    return $ Fix $ GTLNamed name rtp'
 
+-- | Remove any aliasing information from a type and reduce it to its basic type
 baseType :: GTLType -> GTLType
 baseType (Fix (GTLNamed _ tp)) = baseType tp
 baseType (Fix (GTLArray n tp)) = Fix (GTLArray n (baseType tp))
@@ -169,6 +181,7 @@ resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
 resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
 resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
 
+-- | Get a list of all base types contained in a type and the list of indices needed to reach them.
 allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
 allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
                                                | (t,idx) <- allPossibleIdx tp ]

@@ -2,7 +2,16 @@
 
 {-| This module provides a data structure for type-checked GTL specifications.
  -}
-module Language.GTL.Model where
+module Language.GTL.Model (GTLSpec(..)
+                          ,GTLModel(..)
+                          ,GTLInstance(..)
+                          ,GTLContract(..)
+                          ,GTLConnectionPoint(..)
+                          ,gtlParseSpec
+                          ,gtlContractExpression
+                          ,getInstanceVariableType
+                          ,getEnums
+                          ) where
 
 import Language.GTL.Parser.Token (BinOp(GOpAnd))
 import Language.GTL.Parser.Syntax
@@ -33,11 +42,14 @@ data GTLModel a = GTLModel
                   , gtlModelConstantInputs :: Map a (GTLType, GTLConstant)
                   }
 
+-- | A contract is a formula together with the information whether or not the contract is guaranteed to be true.
+--   If the contract is guaranteed to be true, it is not checked during local verification.
 data GTLContract a = GTLContract
                      { gtlContractIsGuaranteed :: Bool
                      , gtlContractFormula :: TypedExpr a
                      }
 
+-- | Generate a single expression from all non-guaranteed contracts in a list of contracts by conjunction.
 gtlContractExpression :: [GTLContract a] -> TypedExpr a
 gtlContractExpression cons = case mapMaybe (\con -> if gtlContractIsGuaranteed con
                                                     then Nothing
