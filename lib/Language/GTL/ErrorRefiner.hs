@@ -13,7 +13,7 @@ import Data.Binary.Put
 import Data.Binary.Get
 import qualified Data.ByteString.Lazy as LBS
 --import Codec.Compression.BZip
-import Data.List (genericLength,elemIndex)
+import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
