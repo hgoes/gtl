@@ -102,7 +102,7 @@ intOpToC :: GTL.IntOp -> String
 intOpToC GTL.OpPlus = "+"
 intOpToC GTL.OpMinus = "-"
 intOpToC GTL.OpMult = "*"
-intOpTOC GTL.OpDiv = "/"
+intOpToC GTL.OpDiv = "/"
 
 -- | Convert a trace into a promela module that checks if everything conforms to the trace.
 traceToPromela :: CNameGen -> Trace -> [Pr.Step]
