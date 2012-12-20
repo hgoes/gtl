@@ -698,7 +698,7 @@ declarationsToScade types decls defs = concat $ map declarationsToScade' decls
   where
     declarationsToScade' (n, Fix (GTLTuple ts)) = makeTupleDecls n [] ts
     declarationsToScade' (n, t) = [Sc.VarDecl [Sc.VarId n False False] (gtlTypeToScade types t) Nothing (Just $ case Map.lookup n defs of
-                                                                                                            Nothing -> constantToScade $ defaultConstant t
+                                                                                                            Nothing -> constantToScade $ defaultValue t
                                                                                                             Just (Just c) -> constantToScade c
                                                                                                         )]
 

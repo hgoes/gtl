@@ -44,8 +44,7 @@ module Language.GTL.Expression
         automatonClocks,
         flattenExpr,flattenVar,flattenConstant,
         defaultValue,constantToExpr,
-        showTermWith,
-        defaultConstant
+        showTermWith
         ) where
 
 import Language.GTL.Parser.Syntax
@@ -1073,15 +1072,17 @@ unpackExpr f i (Fix e) = case getValue e of
   IndexExpr ne ni -> unpackExpr f (ni:i) ne
   Automaton _ _ -> [ flattenExpr f i (Fix e) ]
 
+-- | Returns the initial default value for a given type, e.g. 0 for numbers, false for boolean etc.
 defaultValue :: GTLType -> GTLConstant
 defaultValue tp = case unfix tp of
   GTLInt -> Fix $ GTLIntVal 0
   GTLByte -> Fix $ GTLByteVal 0
   GTLBool -> Fix $ GTLBoolVal False
   GTLFloat -> Fix $ GTLFloatVal 0
-  (GTLEnum (x:xs)) -> Fix $ GTLEnumVal x
-  (GTLArray sz tp) -> Fix $ GTLArrayVal (genericReplicate sz (defaultValue tp))
-  (GTLTuple tps) -> Fix $ GTLTupleVal (fmap defaultValue tps)
+  GTLEnum (x:xs) -> Fix $ GTLEnumVal x
+  GTLArray sz tp -> Fix $ GTLArrayVal (genericReplicate sz (defaultValue tp))
+  GTLTuple tps -> Fix $ GTLTupleVal (fmap defaultValue tps)
+  GTLNamed _ tp -> defaultValue tp
 
 constantToExpr :: Set [String] -> GTLConstant -> TypedExpr v
 constantToExpr enums c = case unfix c of
