@@ -6,116 +6,15 @@
 \usetikzlibrary{calc,positioning}
 \usetikzlibrary{automata,arrows} 
 \usetikzlibrary{fit,chains}
-\input{box_sty}
-\input{record_sty}
 
 
 \usepackage{verbatim}
-\usepackage[paperwidth=1800pt,paperheight=1250pt]{geometry}
+\usepackage[paperwidth=2800pt,paperheight=2250pt]{geometry}
 
 
 \begin{document}
 
 \begin{tikzpicture}[auto,>=latex']
-
-\draw[color=red!50,fill=red!20,thick] (596.5bp,0.5bp) -- (913.5bp,0.5bp) -- (913.5bp,57.5bp) -- (596.5bp,57.5bp) -- (596.5bp,0.5bp); 
-\draw[color=red!50,fill=red!20,thick] (565.5bp,38.5bp) -- (596.5bp,38.5bp) -- (596.5bp,57.5bp) -- (565.5bp,57.5bp) -- (565.5bp,38.5bp); 
-\draw (581.0bp,48.0bp) node {ix}; 
-\draw[color=red!50,fill=red!20,thick] (565.5bp,19.5bp) -- (596.5bp,19.5bp) -- (596.5bp,38.5bp) -- (565.5bp,38.5bp) -- (565.5bp,19.5bp); 
-\draw (581.0bp,29.0bp) node {ix2}; 
-\draw[color=red!50,fill=red!20,thick] (565.5bp,0.5bp) -- (596.5bp,0.5bp) -- (596.5bp,19.5bp) -- (565.5bp,19.5bp) -- (565.5bp,0.5bp); 
-\draw (581.0bp,10.0bp) node {ix3}; 
-\draw[color=red!50,fill=red!20,thick] (913.5bp,0.5bp) -- (936.5bp,0.5bp) -- (936.5bp,57.5bp) -- (913.5bp,57.5bp) -- (913.5bp,0.5bp); 
-\draw (925.0bp,29.0bp) node {p}; 
-\begin{scope}[shift={(680.5bp,-10.0bp)}]
-\draw [color=blue!50,very thick,fill=blue!20](18.0bp,18.0bp) ellipse (16.0bp and 16.0bp);
-\draw (18.0bp,18.0bp) node {$nd0$};
-\draw [fill](18.0bp,76.0bp) ellipse (1.244448bp and 1.6bp);
-\draw [-,thick] (35.782bp,21.236bp).. controls (45.315bp,21.786bp) and (54.0bp,20.707bp) .. (54.0bp,18.0bp);
-\draw [-,thick] (54.0bp,18.0bp).. controls (54.0bp,16.35bp) and (50.775bp,15.306bp) .. (46.098bp,14.865bp);
-\draw (59.0bp,18.0bp) node {$\begin{array}{c}p\end{array}$};
-\draw [-,thick] (32.927bp,28.497bp).. controls (50.897bp,36.429bp) and (72.0bp,32.93bp) .. (72.0bp,18.0bp);
-\draw [-,thick] (72.0bp,18.0bp).. controls (72.0bp,5.753bp) and (57.8bp,1.1977bp) .. (42.777bp,4.3342bp);
-\draw (105.5bp,18.0bp) node {$\begin{array}{c}ix\geq 10\end{array}$};
-\draw [-,thick] (18.0bp,74.028bp).. controls (18.0bp,70.568bp) and (18.0bp,58.416bp) .. (18.0bp,46.408bp);
-
-\draw [-latex,thick] (46.098bp,14.865bp) -- (35.782bp,14.764bp);
-\draw [-latex,thick] (42.777bp,4.3342bp) -- (32.927bp,7.5026bp);
-\draw [-latex,thick] (18.0bp,46.408bp) -- (18.0bp,36.116bp);
-\end{scope}
-
-\draw[color=red!50,fill=red!20,thick] (-0.5bp,169.0bp) -- (226.5bp,169.0bp) -- (226.5bp,205.0bp) -- (-0.5bp,205.0bp) -- (-0.5bp,169.0bp); 
-\draw[color=red!50,fill=red!20,thick] (226.5bp,169.0bp) -- (248.5bp,169.0bp) -- (248.5bp,205.0bp) -- (226.5bp,205.0bp) -- (226.5bp,169.0bp); 
-\draw (237.5bp,187.0bp) node {x}; 
-\begin{scope}[shift={(59.5bp,148.0bp)}]
-\draw [color=blue!50,very thick,fill=blue!20](18.0bp,18.0bp) ellipse (16.0bp and 16.0bp);
-\draw (18.0bp,18.0bp) node {$nd0$};
-\draw [fill](18.0bp,76.0bp) ellipse (1.244448bp and 1.6bp);
-\draw [-,thick] (35.037bp,24.379bp).. controls (44.858bp,25.681bp) and (54.0bp,23.555bp) .. (54.0bp,18.0bp);
-\draw [-,thick] (54.0bp,18.0bp).. controls (54.0bp,14.528bp) and (50.429bp,12.396bp) .. (45.353bp,11.602bp);
-\draw (80.5bp,18.0bp) node {$\begin{array}{c}x\geq 0\\x<10\end{array}$};
-\draw [-,thick] (18.0bp,74.028bp).. controls (18.0bp,70.568bp) and (18.0bp,58.416bp) .. (18.0bp,46.408bp);
-
-\draw [-latex,thick] (45.353bp,11.602bp) -- (35.037bp,11.621bp);
-\draw [-latex,thick] (18.0bp,46.408bp) -- (18.0bp,36.116bp);
-\end{scope}
-
-\draw[color=red!50,fill=red!20,thick] (280.0bp,95.0bp) -- (537.0bp,95.0bp) -- (537.0bp,131.0bp) -- (280.0bp,131.0bp) -- (280.0bp,95.0bp); 
-\draw[color=red!50,fill=red!20,thick] (249.0bp,95.0bp) -- (280.0bp,95.0bp) -- (280.0bp,131.0bp) -- (249.0bp,131.0bp) -- (249.0bp,95.0bp); 
-\draw (264.5bp,113.0bp) node {xai}; 
-\draw[color=red!50,fill=red!20,thick] (537.0bp,95.0bp) -- (565.0bp,95.0bp) -- (565.0bp,131.0bp) -- (537.0bp,131.0bp) -- (537.0bp,95.0bp); 
-\draw (551.0bp,113.0bp) node {xa}; 
-\begin{scope}[shift={(351.0bp,74.0bp)}]
-\draw [color=blue!50,very thick,fill=blue!20](18.0bp,18.0bp) ellipse (16.0bp and 16.0bp);
-\draw (18.0bp,18.0bp) node {$nd0$};
-\draw [fill](18.0bp,76.0bp) ellipse (1.244448bp and 1.6bp);
-\draw [-,thick] (35.037bp,24.379bp).. controls (44.858bp,25.681bp) and (54.0bp,23.555bp) .. (54.0bp,18.0bp);
-\draw [-,thick] (54.0bp,18.0bp).. controls (54.0bp,14.528bp) and (50.429bp,12.396bp) .. (45.353bp,11.602bp);
-\draw (84.5bp,18.0bp) node {$\begin{array}{c}xa\geq 0\\xa<10\end{array}$};
-\draw [-,thick] (18.0bp,74.028bp).. controls (18.0bp,70.568bp) and (18.0bp,58.416bp) .. (18.0bp,46.408bp);
-
-\draw [-latex,thick] (45.353bp,11.602bp) -- (35.037bp,11.621bp);
-\draw [-latex,thick] (18.0bp,46.408bp) -- (18.0bp,36.116bp);
-\end{scope}
-
-\draw[color=red!50,fill=red!20,thick] (614.0bp,95.0bp) -- (871.0bp,95.0bp) -- (871.0bp,131.0bp) -- (614.0bp,131.0bp) -- (614.0bp,95.0bp); 
-\draw[color=red!50,fill=red!20,thick] (583.0bp,95.0bp) -- (614.0bp,95.0bp) -- (614.0bp,131.0bp) -- (583.0bp,131.0bp) -- (583.0bp,95.0bp); 
-\draw (598.5bp,113.0bp) node {xbi}; 
-\draw[color=red!50,fill=red!20,thick] (871.0bp,95.0bp) -- (899.0bp,95.0bp) -- (899.0bp,131.0bp) -- (871.0bp,131.0bp) -- (871.0bp,95.0bp); 
-\draw (885.0bp,113.0bp) node {xb}; 
-\begin{scope}[shift={(684.5bp,74.0bp)}]
-\draw [color=blue!50,very thick,fill=blue!20](18.0bp,18.0bp) ellipse (16.0bp and 16.0bp);
-\draw (18.0bp,18.0bp) node {$nd0$};
-\draw [fill](18.0bp,76.0bp) ellipse (1.244448bp and 1.6bp);
-\draw [-,thick] (35.037bp,24.379bp).. controls (44.858bp,25.681bp) and (54.0bp,23.555bp) .. (54.0bp,18.0bp);
-\draw [-,thick] (54.0bp,18.0bp).. controls (54.0bp,14.528bp) and (50.429bp,12.396bp) .. (45.353bp,11.602bp);
-\draw (85.0bp,18.0bp) node {$\begin{array}{c}xb\geq 0\\xb<10\end{array}$};
-\draw [-,thick] (18.0bp,74.028bp).. controls (18.0bp,70.568bp) and (18.0bp,58.416bp) .. (18.0bp,46.408bp);
-
-\draw [-latex,thick] (45.353bp,11.602bp) -- (35.037bp,11.621bp);
-\draw [-latex,thick] (18.0bp,46.408bp) -- (18.0bp,36.116bp);
-\end{scope}
-
-\draw [-,thick] (250.0bp,187.0bp).. controls (291.57bp,187.0bp) and (212.75bp,125.39bp) .. (240.0bp,94.0bp);
-\draw [-,thick] (240.0bp,94.0bp).. controls (262.25bp,68.365bp) and (493.66bp,50.502bp) .. (553.88bp,48.242bp);
-
-\draw [-,thick] (250.0bp,187.0bp).. controls (277.76bp,187.0bp) and (233.83bp,134.32bp) .. (239.19bp,117.86bp);
-
-\draw [-,thick] (250.0bp,187.0bp).. controls (322.81bp,187.0bp) and (514.97bp,175.98bp) .. (573.0bp,132.0bp);
-\draw [-,thick] (573.0bp,132.0bp).. controls (576.37bp,129.44bp) and (576.62bp,125.3bp) .. (576.75bp,121.54bp);
-
-\draw [-,thick] (566.0bp,113.0bp).. controls (580.95bp,113.0bp) and (558.7bp,59.135bp) .. (558.83bp,37.673bp);
-
-\draw [-,thick] (900.0bp,113.0bp).. controls (908.46bp,113.0bp) and (904.81bp,100.14bp) .. (899.0bp,94.0bp);
-\draw [-,thick] (899.0bp,94.0bp).. controls (847.68bp,39.787bp) and (615.45bp,113.02bp) .. (565.0bp,58.0bp);
-\draw [-,thick] (565.0bp,58.0bp).. controls (553.51bp,45.468bp) and (546.15bp,22.428bp) .. (554.43bp,13.586bp);
-
-\draw [-latex,thick] (553.88bp,48.242bp) -- (564.0bp,48.0bp);
-\draw [-latex,thick] (239.19bp,117.86bp) -- (248.0bp,113.0bp);
-\draw [-latex,thick] (576.75bp,121.54bp) -- (582.0bp,113.0bp);
-\draw [-latex,thick] (558.83bp,37.673bp) -- (564.0bp,29.0bp);
-\draw [-latex,thick] (554.43bp,13.586bp) -- (564.0bp,10.0bp);
-
+\input{mutex.dump}
 \end{tikzpicture}
-
 \end{document}
