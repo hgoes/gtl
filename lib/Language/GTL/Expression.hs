@@ -35,6 +35,7 @@ module Language.GTL.Expression
         distributeNot,pushNot,
         makeTypedExpr,
         getConstant,
+        constantType,
         mapGTLVars,
         getVars,
         relTurn,
@@ -43,7 +44,7 @@ module Language.GTL.Expression
         getClocks,
         automatonClocks,
         flattenExpr,flattenVar,flattenConstant,
-        defaultValue,constantToExpr,
+        defaultValue,constantToExpr,typedConstantToExpr,
         showTermWith
         ) where
 
@@ -230,7 +231,8 @@ gor x y
 -- | Create an equality relation between two expressions
 geq :: TypedExpr v -> TypedExpr v -> TypedExpr v
 geq x y
-  | getType (unfix x) == getType (unfix y) = Fix $ Typed gtlBool (BinRelExpr BinEq x y)
+  | baseType (getType (unfix x)) == baseType (getType (unfix y)) = Fix $ Typed gtlBool (BinRelExpr BinEq x y)
+  | otherwise = error $ "Language.GTL.Expression.geq: Type mismatch between "++show (getType (unfix x))++" and "++show (getType (unfix y))
 
 -- | Create an unequality relation between two expressions
 gneq :: TypedExpr v -> TypedExpr v -> TypedExpr v
@@ -401,6 +403,40 @@ getConstant e = case getValue (unfix e) of
     np <- mapM getConstant p
     return $ Fix np
   _ -> Nothing
+
+-- | Get the type of a GTL constant.
+constantType :: Set [String] -- ^ All possible enum types
+                -> GTLConstant
+                -> GTLType
+constantType enums c = case unfix c of
+  GTLIntVal _ -> gtlInt
+  GTLByteVal _ -> gtlByte
+  GTLBoolVal _ -> gtlBool
+  GTLFloatVal _ -> gtlFloat
+  GTLEnumVal v -> case find (elem v) enums of
+    Nothing -> error $ "Language.GTL.Expression.constantType: Enum value "++v++" not found in possible enum types "++show enums++"."
+    Just vals -> gtlEnum vals
+  GTLArrayVal [] -> error $ "Language.GTL.Expression.constantType: Can't get type of zero-length array."
+  GTLArrayVal (v:vs) -> gtlArray (genericLength vs+1) (constantType enums v)
+  GTLTupleVal vs -> gtlTuple (fmap (constantType enums) vs)
+
+-- | Convert a type and a constant to a typed expression.
+--   Performs type checking to make sure the constant actually has the type claimed.
+typedConstantToExpr :: GTLType -> GTLConstant -> TypedExpr v
+typedConstantToExpr t@(Fix GTLInt) (Fix (GTLIntVal i)) = Fix (Typed t (Value (GTLIntVal i)))
+typedConstantToExpr t@(Fix GTLByte) (Fix (GTLByteVal i)) = Fix (Typed t (Value (GTLByteVal i)))
+typedConstantToExpr t@(Fix GTLBool) (Fix (GTLBoolVal i)) = Fix (Typed t (Value (GTLBoolVal i)))
+typedConstantToExpr t@(Fix GTLFloat) (Fix (GTLFloatVal i)) = Fix (Typed t (Value (GTLFloatVal i)))
+typedConstantToExpr t@(Fix (GTLEnum enums)) (Fix (GTLEnumVal i))
+  | i `elem` enums = Fix (Typed t (Value (GTLEnumVal i)))
+  | otherwise = error $ "Language.GTL.Expression.typedConstantToExpr: "++i++" is not an enum value of "++show t
+typedConstantToExpr t@(Fix (GTLArray sz tp)) (Fix (GTLArrayVal vals)) 
+  | genericLength vals == sz = Fix (Typed t (Value (GTLArrayVal (fmap (typedConstantToExpr tp) vals))))
+  | otherwise = error $ "Language.GTL.Expression.typedConstantToExpr: Array size mismatch (should be "++show sz++")"
+typedConstantToExpr t@(Fix (GTLTuple tps)) (Fix (GTLTupleVal vals))
+  = Fix (Typed t (Value (GTLTupleVal (zipWith typedConstantToExpr tps vals))))
+typedConstantToExpr (Fix (GTLNamed _ tp)) c = typedConstantToExpr tp c
+typedConstantToExpr t v = error $ "Language.GTL.Expression.typedConstantToExpr: "++show v++" doesn't have type "++show t
 
 -- | Type-check an untyped expression.
 typeCheck :: (Ord v,Show v,MonadError String m) =>

@@ -7,6 +7,7 @@ import Language.GTL.Expression as GTL
 import Language.GTL.Types
 import Language.GTL.Buchi
 import Language.GTL.Translation
+import Language.GTL.ErrorRefiner
 import Language.SMTLib2 as SMT
 import Language.SMTLib2.Solver
 import Language.SMTLib2.Internals as SMT
@@ -27,6 +28,7 @@ import Data.Time
 import System.IO (hFlush,stdout)
 import Data.Unit
 import Data.Maybe (catMaybes)
+import System.FilePath
 
 #ifdef SMTExts
 type GTLSMTPc = Integer
@@ -218,8 +220,18 @@ eqSt l r = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates l) (in
 connectionFun :: GTLSpec String -> (GlobalState,GlobalState) -> SMTExpr Bool
 connectionFun spec = \(stf,stt) -> and' [ eqGTLSMT (indexGTLSMT ((instanceOutputVars $ (instanceStates stf)!f)!fv) fi)
                                                    (indexGTLSMT ((instanceInputVars $ (instanceStates stt)!t)!tv) ti)
-                                          | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
+                                        | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
                                         ]
+
+defaultsFun :: GTLSpec String -> GlobalState -> SMTExpr Bool
+defaultsFun spec st = and' [ eqGTLSMT ((instanceInputVars $ (instanceStates st)!iname)!vname) (translateConstant tp c)
+                           | (iname,inst) <- Map.toList (gtlSpecInstances spec)
+                           , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+                           , (vname,(tp,c)) <- Map.toList $ gtlModelConstantInputs mdl
+                           ]
+  where
+    translateConstant tp c = translateExpr (\_ _ _ -> error "Language.GTL.Target.SMT.defaultsFun: This should not happen.")
+                             (typedConstantToExpr tp c)
 
 translateRel :: SMTOrd a => Relation -> SMTExpr a -> SMTExpr a -> SMTExpr Bool
 translateRel BinLT = (.<.)
@@ -644,7 +656,8 @@ getProcs spec = fmap (\inst -> gtlModelCycleTime $ iiModel inst)
 createSMTFunctions :: Scheduling s => BMCConfig a -> s -> GlobalInfo
                       -> SMT ((GlobalState,SchedulingData s) -> SMTExpr Bool,
                               (GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool,
-                              (GlobalState,GlobalState) -> SMTExpr Bool)
+                              (GlobalState,GlobalState) -> SMTExpr Bool,
+                              GlobalState -> SMTExpr Bool)
 createSMTFunctions cfg sched info = do
   let enums = enumMap info
       kenums = Map.keysSet enums
@@ -669,7 +682,8 @@ createSMTFunctions cfg sched info = do
                           | (name',lst2) <- Map.toList (instanceStates g1), name/=name' ]
                         | (name,lst1) <- Map.toList (instanceStates g1) ])
   conn_fun <- mkFun cfg "conn" "connection function" (info,info) (connectionFun $ globalSpec info)
-  return (g_init_fun,g_step_fun,conn_fun)
+  const_fun <- mkFun cfg "constInps" "constant input function" info (defaultsFun $ globalSpec info)
+  return (g_init_fun,g_step_fun,conn_fun,const_fun)
 
 mkFun :: (Args a,ArgAnnotation a ~ b,SMTType c,Unit (SMTAnnotation c)) => BMCConfig d -> String -> String -> b -> (a -> SMTExpr c) -> SMT (a -> SMTExpr c)
 mkFun cfg name descr ann f 
@@ -691,7 +705,7 @@ bmc cfg sched spec = do
 #endif
   --setOption $ PrintSuccess False
   setOption $ ProduceModels True
-  (g_init_fun,g_step_fun,conn_fun) <- createSMTFunctions cfg sched spec
+  (g_init_fun,g_step_fun,conn_fun,const_fun) <- createSMTFunctions cfg sched spec
   dep_fun <- mkFun cfg "deps" "dependency function" (spec,formula,formula)
              (\(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
                                                                         in case Map.lookup var (instanceInputVars inst) of
@@ -709,7 +723,7 @@ bmc cfg sched spec = do
   te <- argVarsAnn procs
   fe <- mapM (\_ -> SMT.varNamed "fairnessE") [1..(schedulingFairnessCount sched procs)]
   start_time <- liftIO getCurrentTime
-  bmc' cfg sched spec conn_fun formula g_init_fun g_step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time
+  bmc' cfg sched spec conn_fun const_fun formula g_init_fun g_step_fun dep_fun tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time
 
 data BMCState s = BMCState { bmcVars :: GlobalState
                            , bmcTemporals :: TemporalVars (String,String)
@@ -722,6 +736,7 @@ data BMCState s = BMCState { bmcVars :: GlobalState
 bmc' :: (Scheduling s) => 
         BMCConfig a -> s -> GlobalInfo
      -> ((GlobalState,GlobalState) -> SMTExpr Bool)
+     -> (GlobalState -> SMTExpr Bool)
      -> TypedExpr (String,String) 
      -> ((GlobalState,SchedulingData s) -> SMTExpr Bool)
      -> ((GlobalState,GlobalState,SchedulingData s,SchedulingData s) -> SMTExpr Bool)
@@ -729,8 +744,9 @@ bmc' :: (Scheduling s) =>
      -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String)
      -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [SMTExpr Bool] -> [BMCState s] -> UTCTime
      -> SMT (Maybe [(Map (String,String) GTLConstant,Map (String,String) String,Bool,String)])
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
+bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
   init_st <- argVarsAnn spec
+  assert $ const_fun init_st
   l <- SMT.varNamed "l"
   inloop <- SMT.varNamed "inloop"
   comment "Scheduling data"
@@ -768,9 +784,9 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
   case res of
     Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                then return Nothing
-               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe hist start_time
+               else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn const_fun formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe hist start_time
     Just path -> return $ Just path
-bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
+bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
   let sdata = bmcScheduling last_state
       i = length history
   ctime <- liftIO $ getCurrentTime
@@ -780,6 +796,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
       hFlush stdout
     else return ()
   cur_state <- argVarsAnn spec
+  assert $ const_fun cur_state
   tmp_nxt <- argVarsAnn formula
   cur_fair <- mapM (\(i,_) -> SMT.varNamed ("fair"++show i)) (zip [0..] fe)
   l <- SMT.varNamed "l"
@@ -860,7 +877,7 @@ bmc' cfg sched spec conn formula init step deps tmp_cur tmp_e tmp_l loop_exists 
              Just path -> return $ Just path
              Nothing -> if bmcConfigTerminate cfg (bmcConfigCur cfg)
                         then return Nothing
-                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe history' start_time)
+                        else bmc' (cfg { bmcConfigCur = bmcConfigNext cfg (bmcConfigCur cfg) }) sched spec conn const_fun formula init step deps tmp_nxt tmp_e tmp_l loop_exists se te fe history' start_time)
   
 incPLTLbase :: SMTExpr Bool -> TemporalVars (String,String) -> TemporalVars (String,String) -> TemporalVars (String,String) -> SMT ()
 incPLTLbase loop_exists tmp_cur tmp_e tmp_l = mapM_ (\(expr,var) -> do
@@ -1006,7 +1023,22 @@ verifyModelBMC opts spec = do
     "timed" -> solve $ act TimedScheduling2
   case res of
     Nothing -> putStrLn "No errors found in model"
-    Just path -> putStrLn $ renderPath path
+    Just path -> do
+      writeTraces (replaceExtension (gtlFile opts) "gtltrace") [smtTraceToTrace info path]
+      putStrLn $ renderPath path
+
+smtTraceToTrace :: GlobalInfo -> [(Map (String,String) GTLConstant,Map (String,String) String,Bool,String)] -> [[TypedExpr (String,String)]]
+smtTraceToTrace info xs 
+  = [ [ geq (GTL.var tp (inst,v) 0 usage) (typedConstantToExpr tp c) 
+      | ((inst,v),c) <- Map.toList mp 
+      , let mdl = iiModel $ (instanceInfos info)!inst
+      , (tp,usage) <- case Map.lookup v (gtlModelInput mdl) of
+        Just tp' -> [(tp',Input)]
+        Nothing -> case Map.lookup v (gtlModelOutput mdl) of
+          Just tp' -> [(tp',Output)]
+          Nothing -> []
+        ]
+    | (mp,_,_,_) <- xs ]
 
 {-
 -- | Apply limits to all integers used to store the current state of a component. Used to strengthen k-induction.
