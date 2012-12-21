@@ -219,7 +219,7 @@ modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL Nothing (gtlContractExpression $ gtlModelContract m)
       buchi = ltl2ba ltl
-  outp <- fmap (\i -> T.pack i) (readProcess "neato" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
+  outp <- fmap (\i -> T.pack i) (readProcess "fdp" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
   let dot = parseIt' $ preProcess outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
