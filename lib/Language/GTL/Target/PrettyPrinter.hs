@@ -48,7 +48,7 @@ buchiToDot buchi
   = DotGraph { strictGraph = False
              , directedGraph = True
              , graphID = Nothing
-             , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap $ PrismOverlap Nothing
+             , graphStatements = DotStmts { attrStmts = [GraphAttrs [Overlap $ VpscOverlap
                                                                     ,Splines SplineEdges
                                                                     ]]
                                           , subGraphs = []
@@ -140,7 +140,7 @@ gtlToTikz spec = do
                                                                            ,Epsilon 0.0000001
                                                                            ,ESep (DVal 0.1)
                                                                            ,MaxIter 10000
-                                                                           ,Sep (DVal 0.1)
+                                                                           ,Sep (DVal 0.5)
                                                                            ,Start (StartStyle RandomStyle)
                                                                            ]]
                                                  , subGraphs = []
@@ -219,11 +219,11 @@ modelToTikz :: GTLModel String -> IO (String,Double,Double)
 modelToTikz m = do
   let ltl = gtlToLTL Nothing (gtlContractExpression $ gtlModelContract m)
       buchi = ltl2ba ltl
-  outp <- fmap (\i -> T.pack i) (readProcess "dot" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
+  outp <- fmap (\i -> T.pack i) (readProcess "neato" ["-Tdot"] (T.unpack $ printIt $ buchiToDot buchi))
   let dot = parseIt' $ preProcess outp :: DotGraph String
       Rect _ (Point px py _ _) = getDotBoundingBox dot
       res = dotToTikz Nothing dot
-  return (res,px*2.0,py*2.0)
+  return (res,px*2.5,py*2.0)
 
 -- | Helper function to render a graphviz point in Tikz.
 pointToTikz :: Point -> String
@@ -370,10 +370,8 @@ dotToTikz mtp gr
      | ed <- edgeStmts (graphStatements gr)
      , let Spline sp ep pts = case List.find (\attr -> case attr of
                                                  Pos _ -> True
-                                                 UnknownAttribute n _ -> (compare (T.unpack n) "pos") == EQ
                                                  _ -> False) (edgeAttributes ed) of
                                 Just (Pos (SplinePos [spl])) -> spl
-                                Just (UnknownAttribute _ ps) -> error $ show ed --"unknownattr 'pos': parse points"
                                 Nothing -> error "Edge has no position"
            lbl = case List.find (\attr -> case attr of
                                   Comment _ -> True
@@ -411,12 +409,12 @@ exprToLatex expr = case getValue $ unfix expr of
 	BinRelExpr rel l r -> T.append (exprToLatex l)
                          (T.append
 						  (T.pack (case rel of
-                              BinLT -> "<"
+                              BinLT -> "< "
                               BinLTEq -> "\\leq "
                               BinGT -> ">"
                               BinGTEq -> "\\geq "
                               BinEq -> "="
-                              BinNEq -> "\\neq "
+                              BinNEq -> "\\neq "                 -- bug displayed as 'eq' not \neq (mayby \\n is the problem)
                               BinAssign -> ":="))
                           (exprToLatex r)
 						 )
