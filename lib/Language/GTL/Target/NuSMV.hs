@@ -18,6 +18,7 @@ import Language.NuSMV.Misc as S
 import Language.NuSMV.Pretty as S
 
 import Data.Map as Map hiding (foldl)
+import Data.List as List
 import Data.Maybe
 import Prelude hiding (foldl,foldl1,mapM)
 
@@ -75,14 +76,28 @@ translateModel m = [VarDeclaration $ [
 translateContract :: [GTLContract String] -> BasicExpr
 --translateContract [] = ConstExpr $ ConstId ""
 translateContract contr = head [
-    genIDExpr Nothing ""
+    BinExpr OpImpl 
+      (BinExpr OpEq 
+         (genIDExpr Nothing "st") 
+         (ConstExpr $ ConstInteger st))
+      (genIDExpr Nothing (
+                       (concat $ List.intersperse " \\or " [
+                        createTrans trg cond
+                       | (cond,trg) <- trans])))
   | (st, trans) <- Map.toList $ baTransitions buchi
  ] 
  where 
-    stClause st trans = BinExpr OpImpl (genIDExpr Nothing st) (genTransProp trans)
-    genTransProp trans = genIDExpr Nothing ""
     ltl = gtlToLTL Nothing (gtlContractExpression contr)
     buchi = ltl2ba ltl
+
+createTrans:: Integer -> [TypedExpr String] -> String
+createTrans trg cond = 
+                          (((concat [
+                            (transExpr n)++" \\land "
+                            | (n) <- cond
+                            ])
+                          )++" next(st)="++(show trg))
+ where
     transExpr ex = case getValue $ unfix ex of 
                      BinRelExpr rel l r -> (transExpr l) ++ 
 						                         ((case rel of
@@ -119,8 +134,15 @@ translateContract contr = head [
                      ClockReset x y -> "clock reset"
                      ClockRef x -> "clockref"
                      BuiltIn _ args -> "builtin"
+
+{-where 
+    stClause st trans = BinExpr OpImpl (genIDExpr Nothing st) (genTransProp trans)
+    genTransProp trans = genIDExpr Nothing ""
+    ltl = gtlToLTL Nothing (gtlContractExpression contr)
+    buchi = ltl2ba ltl
 {--translateContract (x:xs) = ConstExpr $ ConstId $ transExpr $ gtlContractFormula x
 --}
+-}
 
 translateValue :: GTLValue a -> Constant
 translateValue (GTLIntVal x) = ConstInteger x
