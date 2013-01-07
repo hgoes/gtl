@@ -1,10 +1,9 @@
 #!/bin/bash
 
-filename='simple.tex'
-gtl_dir='/home/tuwibs/projects/gtl/'
+filename=$1'.tex'
 
 cat head.templ > $filename
-gtl -m tikz $gtl_dir'examples/'$1 >> $filename
+gtl -m tikz '../'$1'.gtl' >> $filename
 cat tail.templ >> $filename
 
 #pdflatex $filename
