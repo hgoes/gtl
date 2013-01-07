@@ -38,7 +38,7 @@ class GTLBackend b where
   --   Returns `Nothing' if the result is undecidable and `Just' `True', if the verification goal holds.
   backendVerify :: b -> GTLBackendModel b
                    -> Integer -- ^ Cycle time
-                   -> TypedExpr String -- ^ Contract
+                   -> [TypedExpr String] -- ^ Contract
                    -> Map String GTLType -- ^ Local variables of the model
                    -> Map String (Maybe GTLConstant) -- ^ Initial values
                    -> Map String (GTLType, GTLConstant) -- ^ Variables which get a constant value
@@ -51,9 +51,9 @@ data CInterface = CInterface
                   { -- | A list of C-headers to be included
                     cIFaceIncludes :: [String],
                     -- | A list of C-types that together form the signature of the state of the state machine
-                    cIFaceStateType :: [(String,String)],
+                    cIFaceStateType :: [(String,String,Bool)],
                     -- | The type signature of the input variables. Input variables aren't considered state.
-                    cIFaceInputType :: [(String,String)],
+                    cIFaceInputType :: [(String,String,Bool)],
                     -- | Generate a call to initialize the state machine
                     cIFaceStateInit :: [String] -> String,
                     -- | Perform one iteration of the state machine
@@ -63,7 +63,7 @@ data CInterface = CInterface
                     -- | Extract an input variable from the state machine
                     cIFaceGetInputVar :: [String] -> String -> [Integer] -> Maybe String,
                     -- | Translate a haskell type to C
-                    cIFaceTranslateType :: GTLType -> (String,String),
+                    cIFaceTranslateType :: GTLType -> (String,String,Bool),
                     -- | Translate a haskell value to C
                     cIFaceTranslateValue :: GTLConstant -> CExpr
                   }

@@ -1,0 +1,24 @@
+model[none] producer() {
+  output int[32] x;
+  always x < 10;
+  always x >= 0;
+}
+
+model[none] consumer() {
+  input int[32] ix;
+  input int[16] ix2;
+  input int ix3;
+  output bool p;
+  init ix 0;
+  init p true;
+  always (ix < 10 => p);
+}
+
+instance producer p;
+instance consumer c;
+
+connect p.x c.ix;
+
+verify {
+  always c.p;
+}

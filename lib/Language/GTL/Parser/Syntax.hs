@@ -21,7 +21,7 @@ data ModelDecl = ModelDecl
                  { modelName :: String -- ^ The name of the model in the GTL formalism.
                  , modelType :: String -- ^ The synchronous formalism the model is written in (for example /scade/)
                  , modelArgs :: [ModelArgs] -- ^ Arguments specific to the synchronous formalism, for example in which file the model is specified etc.
-                 , modelContract :: [PExpr] -- ^ A list of contracts that this model fulfills.
+                 , modelContract :: [Contract] -- ^ A list of contracts that this model fulfills.
                  , modelInits :: [(String,InitExpr)] -- ^ A list of initializations for the variables of the model.
                  , modelInputs :: Map String UnResolvedType -- ^ Declared inputs of the model with their corresponding type
                  , modelOutputs :: Map String UnResolvedType -- ^ Declared outputs of a model
@@ -48,7 +48,7 @@ data VerifyDecl = VerifyDecl
 data InstanceDecl = InstanceDecl
                     { instanceModel :: String -- ^ The model of which this is an instance
                     , instanceName :: String -- ^ The name of the instance
-                    , instanceContract :: [PExpr] -- ^ Additional contracts to which this instance conforms
+                    , instanceContract :: [Contract] -- ^ Additional contracts to which this instance conforms
                     , instanceInits :: [(String,InitExpr)] -- ^ Additional initialization values
                     } deriving Show
 
@@ -98,3 +98,9 @@ data State = State
 data InitExpr = InitAll -- ^ The variable is initialized with all possible values.
               | InitOne PExpr -- ^ The variable is initialized with a specific value.
               deriving (Show,Eq)
+
+data Contract = Contract 
+                { contractIsGuaranteed :: Bool
+                , contractFormula :: PExpr
+                } deriving (Show,Eq,Ord)
+  

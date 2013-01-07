@@ -13,7 +13,7 @@ import Data.Binary.Put
 import Data.Binary.Get
 import qualified Data.ByteString.Lazy as LBS
 --import Codec.Compression.BZip
-import Data.List (genericLength,elemIndex)
+import Data.List (genericLength)
 
 import Language.Promela.Syntax as Pr
 import Language.GTL.Buchi
@@ -27,7 +27,7 @@ type Trace = [[TypedExpr (String,String)]]
 
 -- | Converts GTL variables to C-names.
 --   Takes the component name, the variable name and the history level of the variable.
-type CNameGen = String -> String -> Integer -> String
+type CNameGen = String -> String -> [Integer] -> Integer -> String
 
 -- | Parse a SPIN trace file by calling it with the spin interpreter and parsing the output.
 --   Produces a list of tuples where the first component is the name of the component that
@@ -60,18 +60,19 @@ readBDDTraces fp = do
 
 -- | Given a function to generate names, this function converts a GTL atom into a C-expression.
 atomToC :: CNameGen -- ^ Function to generate C-names
+           -> [Integer]                 -- ^ Index
            -> TypedExpr (String,String) -- ^ GTL atom to convert
            -> String
-atomToC f (Fix expr) = case getValue expr of
-  Var (q,n) l _ -> f q n l
+atomToC f idx (Fix expr) = case getValue expr of
+  Var (q,n) l _ -> f q n idx l
   Value val -> valueToC (getType expr) val
-  BinRelExpr rel l r -> "("++atomToC f l++relToC rel++atomToC f r++")"
-  BinIntExpr op l r -> "("++atomToC f l++intOpToC op++atomToC f r++")"
-  UnBoolExpr GTL.Not p -> "!"++atomToC f p
-  IndexExpr e i -> (atomToC f e)++"["++show i++"]"
+  BinRelExpr rel l r -> "("++atomToC f idx l++relToC rel++atomToC f idx r++")"
+  BinIntExpr op l r -> "("++atomToC f idx l++intOpToC op++atomToC f idx r++")"
+  UnBoolExpr GTL.Not p -> "!"++atomToC f idx p
+  IndexExpr e i -> atomToC f (i:idx) e
 
 -- | Convert a GTL value to a C value
-valueToC :: GTLType -> GTLValue a -> String      
+valueToC :: GTLType -> GTLValue a -> String
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
@@ -108,14 +109,14 @@ traceToPromela :: CNameGen -> Trace -> [Pr.Step]
 traceToPromela f trace
   = fmap (\ats -> toStep $ case ats of
              [] -> Pr.StmtSkip
-             _ -> Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats))
+             _ -> Pr.StmtCExpr Nothing (foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f []) ats))
          ) trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
 
 -- | Convert a element from a trace into a C-expression.
 traceElemToC :: CNameGen -> [TypedExpr (String,String)] -> String
 traceElemToC f [] = "1"
-traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f) ats)
+traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f []) ats)
 
 -- | Convert a trace into a buchi automaton that checks for conformance to that trace.
 traceToBuchi :: Trace -> BA [TypedExpr (String,String)] Integer

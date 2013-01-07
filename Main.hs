@@ -23,10 +23,11 @@ import Language.GTL.Target.Local
 import Language.GTL.Translation
 import Language.GTL.Model
 --import Language.GTL.Target.PromelaCUDD as PrBd
---import Language.GTL.Target.PrettyPrinter as PrPr
+import Language.GTL.Target.PrettyPrinter as PrPr
 import Language.GTL.Target.Promela as PrNat
 import Language.GTL.Target.UPPAAL as UPP
 import Language.GTL.Target.Printer
+import Language.GTL.Target.SMT as SMT
 
 import Misc.ProgramOptions
 
@@ -39,6 +40,7 @@ versionString = "This is the GALS Translation Language of version "++version++".
                 ++(case branch of
                       Nothing -> ""
                       Just rbranch -> "\nBuilt from git branch: "++rbranch++".")
+                ++smtExts
   where
 #ifdef BUILD_VERSION
     version = BUILD_VERSION
@@ -59,6 +61,11 @@ versionString = "This is the GALS Translation Language of version "++version++".
     branch = Just BUILD_BRANCH
 #else
     branch = Nothing
+#endif
+#ifdef SMTExts
+    smtExts = ""
+#else
+    smtExts = "\nWARNING: Built with Z3 specific SMT output."
 #endif
 
 main = do
@@ -88,10 +95,12 @@ main = do
     NativeC -> translateGTL (traceFile opts) rgtl >>= putStrLn
     Local -> verifyLocal opts (dropExtension gtl_file) rgtl
     --PromelaBuddy -> PrBd.verifyModel opts (dropExtension gtl_file) rgtl
-    {-Tikz -> do
+    Tikz -> do
       str <- PrPr.gtlToTikz rgtl
-      putStrLn str-}
+      putStrLn str
     Pretty -> putStrLn (simplePrettyPrint rgtl)
     Native -> PrNat.verifyModel opts (dropExtension gtl_file) rgtl
     UPPAAL -> putStr (prettySpecification $ UPP.translateSpec rgtl)
+    SMTBMC -> SMT.verifyModelBMC opts rgtl
+    SMTInduction -> SMT.verifyModelKInduction (smtBinary opts) rgtl
   return ()

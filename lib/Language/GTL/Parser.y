@@ -37,6 +37,7 @@ import Control.Monad.Error
   "final"           { Key KeyFinal }
   "finally"         { Unary GOpFinally }
   "float"           { Key KeyFloat }
+  "guaranteed"      { Key KeyGuaranteed }
   "implies"         { Binary GOpImplies }
   "int"             { Key KeyInt }
   "local"           { Key KeyLocal }
@@ -162,8 +163,10 @@ model_contract : "{" formulas_or_inits_or_vars "}" { $2 }
 instance_contract : "{" formulas_or_inits "}" { $2 }
                   | ";"                       { id }
 
-formulas_or_inits_or_vars  : bool("contract") pexpr ";" formulas_or_inits_or_vars { \decl -> let ndecl = $4 decl
-                                                                                             in ndecl { modelContract = $2:(modelContract ndecl)
+contract : bool("guaranteed") bool("contract") pexpr { Contract $1 $3 }
+
+formulas_or_inits_or_vars  : contract ";" formulas_or_inits_or_vars { \decl -> let ndecl = $3 decl
+                                                                               in ndecl { modelContract = $1:(modelContract ndecl)
                                                                                                       } }
                            | init_decl ";" formulas_or_inits_or_vars           { \decl -> let ndecl = $3 decl
                                                                                           in ndecl { modelInits = $1:(modelInits ndecl)
@@ -184,8 +187,8 @@ formulas_or_inits_or_vars  : bool("contract") pexpr ";" formulas_or_inits_or_var
                                                                                                        "us" -> 1) } }
                            |                                                   { id }
 
-formulas_or_inits : bool("contract") pexpr ";" formulas_or_inits { \decl -> let ndecl = $4 decl
-                                                                            in ndecl { instanceContract = $2:(instanceContract ndecl) } }
+formulas_or_inits : contract ";" formulas_or_inits { \decl -> let ndecl = $3 decl
+                                                              in ndecl { instanceContract = $1:(instanceContract ndecl) } }
                   | init_decl ";" formulas_or_inits           { \decl -> let ndecl = $3 decl
                                                                          in ndecl { instanceInits = $1:(instanceInits ndecl) } }
                   |                                           { id }

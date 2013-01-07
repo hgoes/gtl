@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts,FlexibleInstances #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
@@ -7,11 +7,11 @@ module Language.GTL.Types
         UnResolvedType'(..),
         UnResolvedType,
         resolveType,baseType,
-        gtlInt,gtlByte,gtlBool,gtlFloat,gtlEnum,gtlArray,gtlTuple,
-		gtlTypeBits,
+        gtlInt,gtlByte,gtlBool,gtlFloat,gtlEnum,gtlArray,gtlTuple, gtlTypeBits,
         GTLValue(..),
         ToGTL(..),
         resolveIndices,
+        allPossibleIdx,
         isInstanceOf,
         isSubtypeOf,
         showGTLValue) where
@@ -23,9 +23,9 @@ import Data.Foldable (Foldable)
 import Data.Traversable
 import Control.Monad.Error (MonadError(..))
 import Data.Fix
-import Data.Map as Map
-import Data.Set as Set
-import Prelude hiding (mapM)
+import Data.Map as Map hiding (foldl)
+import Data.Set as Set hiding (foldl)
+import Prelude hiding (mapM, foldl)
 
 -- | All types that can occur in a GTL specification
 data GTLType' r = GTLInt (Maybe Integer) -- ^ A 64bit unsigned integer
@@ -180,6 +180,14 @@ resolveIndices (Fix (GTLTuple tps)) (x:xs) = if x < (genericLength tps)
 resolveIndices (Fix (GTLNamed _ tp)) idx = resolveIndices tp idx
 resolveIndices tp _ = throwError $ "Type "++show tp++" isn't indexable"
 
+allPossibleIdx :: GTLType -> [(GTLType,[Integer])]
+allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ] 
+                                               | (t,idx) <- allPossibleIdx tp ]
+allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] 
+                                             | (i,tp) <- zip [0..] tps ]
+allPossibleIdx (Fix (GTLNamed _ tp)) = allPossibleIdx tp
+allPossibleIdx tp = [(tp,[])]
+
 -- | Given a type, a function to extract type information from sub-values and a
 --   value, this function checks if the value is in the domain of the given type.
 isInstanceOf :: GTLType -> (r -> GTLType) -> GTLValue r -> Bool
@@ -200,7 +208,7 @@ intersperseS i (x:xs) = x . i . (intersperseS i xs)
 
 -- | In case a integer is present you get "[x]", otherwise you get an empty String.
 showGTLIntBits :: Maybe Integer -> String
-showGTLIntBits b =	(case b of 
+showGTLIntBits b =	(case b of
 						Just n  -> "[" ++ show n ++ "]"
 						Nothing -> "")
 
@@ -277,10 +285,10 @@ intBrackParser = do
 	case c of
 		Punc "[" -> (do
 			b <- lexP
-			case b of 
+			case b of
 				Int x -> (do
 					ch <- lexP
-					case ch of 
+					case ch of
 						Punc "]" -> return (Fix $ GTLInt $ Just x)
 						_ -> pfail)
 				_ -> pfail)
@@ -295,10 +303,11 @@ instance Read GTLType where
         tok <- lexP
         case tok of
           Symbol "^" -> do
-            n <- lexP
-            case n of
-              Int n' -> readPow (Fix $ GTLArray n' tp)
-              _ -> pfail
+            n <- readPrec
+            if n <= 0
+              then pfail
+              else return ()
+            readPow (Fix $ GTLArray n tp)
           _ -> pfail) <++ (return tp)
       readSingle = do
         tok <- lexP
@@ -340,8 +349,8 @@ instance Binary2 GTLType' where
   get2 = do
     i <- get
     case (i::Word8) of
-      0 -> do 
-		i <- get 
+      0 -> do
+		i <- get
 		return (GTLInt i)
       1 -> return GTLByte
       2 -> return GTLBool

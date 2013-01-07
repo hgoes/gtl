@@ -1,0 +1,49 @@
+\documentclass{article}
+\usepackage[margin=1in, paperwidth=30cm, paperheight=20cm]{geometry}
+
+\usepackage{xparse}
+\usepackage{tikz}
+\usepackage{ifthen}
+\usetikzlibrary{calc,positioning}
+\usetikzlibrary{automata,arrows} 
+\usetikzlibrary{fit,chains}
+\input{box_sty}
+\input{record_sty}
+
+\begin{document}
+%\tikz{\drawrecord{v_1}{v_2}{o_1}}
+%\tikz{\drawrecord{v_4}{v_5}{o_2}}
+
+%\vspace*{2cm}
+%
+%to set:
+%1: pos of records (here: a1(0,0) and a2(10,0)
+%2: create automata as node like 'autom'
+%3: set input and output variables
+%
+\begin{tikzpicture}
+\node (autom) at (0,0) { 			%automata 1 as tikzpicture
+	\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm,
+		scale = 1, transform shape]
+		\node[initial,state] (A) {};
+
+		\path[->] (A) edge [loop below] node [align=center]  {$c=c+1$} (A)
+	    		  (A) edge [loop above]node [align=center]  {$c=c+5$} (A);
+	\end{tikzpicture}
+};
+\node (autom1) at (10,0) { 			%automata 2 as tikzpicture
+	\begin{tikzpicture}[>=stealth',shorten >=1pt,auto,node distance=3 cm,
+		scale = 1, transform shape]
+		\node[initial,state] (A) {};
+		\node[state] (B) at ++(3,0) {};
+
+		\path[->] (A) edge [loop below] node [align=center]  {$c=c-6$} (A)
+				  (A) edge node [align=center] {$c=c+2$} (B);
+	\end{tikzpicture}
+};
+
+\drawrecord(0,0){ {i1,i2} }{ {o1} }{autom} 	%create record a1 
+\drawrecord(10,0){ {a,b} }{ {o} }{autom1} 	%create record a2
+\connect{a1o1}{a2a} 					%access I/O variables by using its recordname + variablenames
+\end{tikzpicture}
+\end{document}

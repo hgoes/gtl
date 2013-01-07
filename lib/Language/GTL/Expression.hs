@@ -32,7 +32,7 @@ module Language.GTL.Expression
         typeCheck,
         compareExpr,
         compareExprDebug,
-        distributeNot,
+        distributeNot,pushNot,
         makeTypedExpr,
         getConstant,
         mapGTLVars,
@@ -42,6 +42,8 @@ module Language.GTL.Expression
         maximumHistory,
         getClocks,
         automatonClocks,
+        flattenExpr,flattenVar,flattenConstant,
+        defaultValue,constantToExpr,
         showTermWith,
         defaultConstant
         ) where
@@ -54,8 +56,8 @@ import Data.AtomContainer
 
 import Data.Binary
 import Data.Maybe
-import Data.Map as Map
-import Data.Set as Set
+import Data.Map as Map hiding (foldl)
+import Data.Set as Set hiding (foldl)
 import Data.List as List (genericLength,genericIndex,genericReplicate)
 import Data.Either
 import Data.Foldable
@@ -298,10 +300,11 @@ intPrec OpDiv = 12
 unPrec Not = 7
 unPrec Always = 2
 unPrec (Next _) = 2
+unPrec (Finally _) = 2
 
 showTermWith :: (v -> Integer -> ShowS) -> (Integer -> r -> ShowS) -> Integer -> Term v r -> ShowS
 showTermWith f g p (Var name lvl u) = (if u == StateOut
-                                       then showString "#out " 
+                                       then showString "#out "
                                        else id) . f name lvl
 showTermWith f g p (Value val) = showString $ showGTLValue (\r -> g 0 r "") 0 val ""
 showTermWith f g p (BinBoolExpr op l r)
@@ -324,7 +327,7 @@ showTermWith f g p (BinRelExpr rel l r)
                   BinNEq -> " != "
                   BinAssign -> " := ") . (g 8 r)
 showTermWith f g p (BinIntExpr op l r)
-  = showParen (p > intPrec op) $ 
+  = showParen (p > intPrec op) $
     (g (intPrec op) l) .
     (showString $ case op of
         OpPlus -> " + "
@@ -333,18 +336,19 @@ showTermWith f g p (BinIntExpr op l r)
         OpDiv -> " / ") .
     (g (intPrec op) r)
 showTermWith f g p (UnBoolExpr op arg)
-  = showParen (p > unPrec op) $ 
+  = showParen (p > unPrec op) $
     (showString $ case op of
         Not -> "not "
         Always -> "always "
-        Next ts -> "next"++show ts++" ") . 
+        Next ts -> "next"++show ts++" "
+        Finally ts -> "finaly"++show ts++" ") . 
     (g (unPrec op) arg)
 showTermWith f g p (IndexExpr expr idx) = showParen (p > 13) $ g 13 expr . showChar '[' . showsPrec 0 idx . showChar ']'
 showTermWith f g p (ClockReset clk limit) = showString "clock(" .  showsPrec 0 clk . showString ") := " . showsPrec 0 limit
 showTermWith f g p (ClockRef clk) = showString "clock(" . showsPrec 0 clk . showChar ')'
 showTermWith f g p (Automaton ba)
   = showString "automaton {"
-    . foldl (.) id [ (if Set.member st (baInits ba) 
+    . foldl (.) id [ (if Set.member st (baInits ba)
                       then showString "init "
                       else id) .
                      (if Set.member st (baFinals ba)
@@ -603,7 +607,9 @@ distributeNot expr
     UnBoolExpr op p -> case op of
       Not -> pushNot p
       Next NoTime -> Fix $ Typed gtlBool $ UnBoolExpr (Next NoTime) (distributeNot p)
-      Always -> Fix $ Typed gtlBool $ BinBoolExpr (Until NoTime) (Fix (Typed gtlBool (Value (GTLBoolVal True)))) (distributeNot p)
+      Always -> Fix $ Typed gtlBool $ UnBoolExpr (Finally NoTime) (distributeNot p)
+      Finally NoTime -> Fix $ Typed gtlBool $ UnBoolExpr Always (distributeNot p)
+      Finally spec -> Fix $ Typed gtlBool $ UnBoolExpr (Next spec) (distributeNot p)
     IndexExpr e i -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     Automaton buchi -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
     ClockRef x -> Fix $ Typed gtlBool $ UnBoolExpr Not expr
@@ -991,6 +997,79 @@ compareExpr e1 e2
                                  Nothing -> EUNK
                                  Just c2 -> ENEQ)
                       else EUNK)
+
+flattenVar :: GTLType -> [Integer] -> [(GTLType,[Integer])]
+flattenVar (Fix (GTLArray sz tp)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar tp is)
+flattenVar (Fix (GTLArray sz tp)) [] = concat [fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | i <- [0..(sz-1)] ]
+flattenVar (Fix (GTLTuple tps)) (i:is) = fmap (\(t,is) -> (t,i:is)) (flattenVar (tps `genericIndex` i) is)
+flattenVar (Fix (GTLTuple tps)) [] = concat [ fmap (\(t,is) -> (t,i:is)) (flattenVar tp []) | (i,tp) <- zip [0..] tps ]
+flattenVar (Fix (GTLNamed _ tp)) idx = flattenVar tp idx
+flattenVar tp [] = allPossibleIdx tp --[(tp,[])]
+
+flattenConstant :: GTLConstant -> [GTLConstant]
+flattenConstant c = case unfix c of
+  GTLArrayVal vs -> concat $ fmap flattenConstant vs
+  GTLTupleVal vs -> concat $ fmap flattenConstant vs
+  _ -> [c]
+
+flattenExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> TypedExpr b
+flattenExpr f idx (Fix e) = Fix $ Typed (getType e) $ case getValue e of
+  Var v i u -> Var (f v idx) i u
+  Value v -> case idx of
+    [] -> Value (fmap (flattenExpr f []) v)
+    (i:is) -> case v of
+      GTLArrayVal vs -> getValue $ unfix $ flattenExpr f is (vs `genericIndex` i)
+      GTLTupleVal vs -> getValue $ unfix $ flattenExpr f is (vs `genericIndex` i)
+  BinBoolExpr op l r -> BinBoolExpr op (flattenExpr f idx l) (flattenExpr f idx r)
+  BinRelExpr rel l r -> getValue $ unfix $ foldl1 gand [ Fix $ Typed gtlBool (BinRelExpr rel el er)
+                                                       | (el,er) <- zip (unpackExpr f idx l) (unpackExpr f idx r) ]
+  BinIntExpr op l r -> BinIntExpr op (flattenExpr f idx l) (flattenExpr f idx r)
+  UnBoolExpr op ne -> UnBoolExpr op (flattenExpr f idx ne)
+  IndexExpr e i -> getValue $ unfix $ flattenExpr f (i:idx) e
+  Automaton buchi -> Automaton (baMapAlphabet (fmap $ flattenExpr f idx) buchi)
+
+unpackExpr :: (Ord a,Ord b) => (a -> [Integer] -> b) -> [Integer] -> TypedExpr a -> [TypedExpr b]
+unpackExpr f i (Fix e) = case getValue e of
+  Var v lvl u -> case resolveIndices (getType e) i of
+    Left err -> [Fix $ Typed (getType e) (Var (f v i) lvl u)]
+    Right tp -> case unfix tp of
+      GTLArray sz tp' -> concat [ unpackExpr f [j] (Fix $ Typed tp' (Var v lvl u)) | j <- [0..(sz-1)] ]
+      GTLTuple tps -> concat [ unpackExpr f [j] (Fix $ Typed tp' (Var v lvl u)) | (tp',j) <- zip tps [0..] ]
+      _ -> [Fix $ Typed tp (Var (f v i) lvl u)]
+  Value (GTLArrayVal vs) -> concat $ fmap (unpackExpr f i) vs
+  Value (GTLTupleVal vs) -> concat $ fmap (unpackExpr f i) vs
+  Value v -> [Fix $ Typed (getType e) (Value $ fmap (flattenExpr f i) v)]
+  BinBoolExpr op l r -> [Fix $ Typed (getType e) (BinBoolExpr op (flattenExpr f i l) (flattenExpr f i r))]
+  BinRelExpr rel l r -> [Fix $ Typed (getType e) (BinRelExpr rel (flattenExpr f i l) (flattenExpr f i r))]
+  BinIntExpr op l r -> [Fix $ Typed (getType e) (BinIntExpr op (flattenExpr f i l) (flattenExpr f i r))]
+  UnBoolExpr op ne -> [Fix $ Typed (getType e) (UnBoolExpr op (flattenExpr f i ne))]
+  IndexExpr ne ni -> unpackExpr f (ni:i) ne
+  Automaton buchi -> [ flattenExpr f i (Fix e) ]
+
+defaultValue :: GTLType -> GTLConstant
+defaultValue tp = case unfix tp of
+  GTLInt _ -> Fix $ GTLIntVal 0
+  GTLByte -> Fix $ GTLByteVal 0
+  GTLBool -> Fix $ GTLBoolVal False
+  GTLFloat -> Fix $ GTLFloatVal 0
+  (GTLEnum (x:xs)) -> Fix $ GTLEnumVal x
+  (GTLArray sz tp) -> Fix $ GTLArrayVal (genericReplicate sz (defaultValue tp))
+  (GTLTuple tps) -> Fix $ GTLTupleVal (fmap defaultValue tps)
+
+constantToExpr :: Set [String] -> GTLConstant -> TypedExpr v
+constantToExpr enums c = case unfix c of
+  GTLIntVal v -> Fix $ Typed (gtlInt Nothing) (Value (GTLIntVal v))
+  GTLByteVal v -> Fix $ Typed gtlByte (Value (GTLByteVal v))
+  GTLBoolVal v -> Fix $ Typed gtlBool (Value (GTLBoolVal v))
+  GTLFloatVal v -> Fix $ Typed gtlBool (Value (GTLFloatVal v))
+  GTLEnumVal v -> case find (elem v) enums of 
+    Just enum -> Fix $ Typed (gtlEnum enum) (Value (GTLEnumVal v))
+  GTLArrayVal vs -> let e:es = fmap (constantToExpr enums) vs
+                        tp = getType (unfix e)
+                    in Fix $ Typed (gtlArray (genericLength vs) tp) (Value (GTLArrayVal (e:es)))
+  GTLTupleVal vs -> let es = fmap (constantToExpr enums) vs
+                        tps = fmap (getType.unfix) es
+                    in Fix $ Typed (gtlTuple tps) (Value (GTLTupleVal es))
 
 instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
   atomsTrue = []

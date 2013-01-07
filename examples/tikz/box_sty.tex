@@ -1,0 +1,61 @@
+%%%
+%draw input/output boxes
+%used by record
+%
+%example:
+%	\def\mar{v1,v2}
+%
+%	\RecordBox{ \mar }{1}{rec}
+%
+\tikzset{input/.style={anchor=north west}}
+\tikzset{output/.style={anchor=north east}}
+\tikzset{rbox/.style={rectangle,draw}}
+
+\def\getlen#1{%
+\pgfmathsetmacro{\lenarray}{0}% 
+\foreach \i in #1{%
+\pgfmathtruncatemacro{\lenarray}{\lenarray+1}% 
+\global\let\lenarray\lenarray}%
+}   
+\NewDocumentCommand{\RecordBox}{m m m}{%var list,1=input/2=output, rec
+	\getlen{ #1 }
+	\begin{scope}[start chain=going below,node distance=-0.02cm]
+	\foreach \v [count=\i] in #1 {
+		\ifthenelse{\i=1}{
+			\ifthenelse{#2=1}{
+	    		\path let 
+					\p1=($(#3.west)-(#3.east)$),
+				 	\p2=($(#3.north)-(#3.south)$),
+            	  	\n1 = {veclen(\p1)*0.16} 					%width
+			  		,\n2 = {veclen(\p2)/\lenarray} 					%height
+              		in node[on chain, rbox, input
+			  		  ,minimum width=\n1
+					  ,minimum height=\n2
+					  ] (#3\v) at (#3.north west) {\v};
+			}{
+	    		\path let 
+					\p1=($(#3.west)-(#3.east)$),
+				 	\p2=($(#3.north)-(#3.south)$),
+            	  	\n1 = {veclen(\p1)*0.16} 					%width
+			  		,\n2 = {veclen(\p2)/\lenarray} 					%height
+              		in node[on chain, rbox, output
+			  		  ,minimum width=\n1
+					  ,minimum height=\n2
+					  ] (#3\v) at (#3.north east) {\v};
+
+			}
+		}{
+    		\path let 
+				\p1=($(#3.west)-(#3.east)$),
+			  	\p2=($(#3.north)-(#3.south)$),
+              	\n1 = {veclen(\p1)*0.16} 					%width
+			  	,\n2 = {veclen(\p2)/\lenarray} 					%height
+              	in node[on chain, rbox
+			  		  ,minimum width=\n1
+					  ,minimum height=\n2
+					  ,anchor=north
+					  ] (#3\v) {\v};
+		}
+	}
+	\end{scope}
+}

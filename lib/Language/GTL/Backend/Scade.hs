@@ -14,7 +14,7 @@ import Language.Scade.Syntax as Sc
 import Language.Scade.Pretty
 import Language.GTL.Expression as GTL
 import Language.GTL.DFA
-import Data.Map as Map hiding (map, filter)
+import Data.Map as Map hiding (map, filter, foldl)
 import Control.Monad.Identity
 import Data.List as List (intercalate, mapAccumL, intersperse, findIndex)
 import Data.Maybe (isJust)
@@ -78,7 +78,7 @@ instance GTLBackend Scade where
                          in x:"reset":rest
       in CInterface { cIFaceIncludes = [rname++".h"]
                     , cIFaceStateType = case kind of
-                         Node -> [("outC_"++rname,"")]
+                         Node -> [("outC_"++rname,"",True)]
                          Function -> [ scadeTranslateTypeC gtp
                                      | (vname,tp) <- outp,
                                        let Just gtp = scadeTypeToGTL types Map.empty tp ]
@@ -91,7 +91,7 @@ instance GTLBackend Scade where
                          Function -> ""
                     , cIFaceIterate = \st inp -> case kind of
                          Node -> case st of
-                           [st'] -> rname++"("++(concat $ intersperse "," (inp++["&("++st'++")"]))++")"
+                           [st'] -> rname++"("++(concat $ intersperse "," (inp++[st']))++")"
                          Function -> rname++"("++(concat $ intersperse "," (inp++st))++")"
                     , cIFaceGetInputVar = \vars var idx -> case List.findIndex (\(n,_) -> n==var) inp of
                          Nothing -> Nothing -- error $ show name++" can't find "++show var++" in "++show inp
@@ -111,24 +111,24 @@ instance GTLBackend Scade where
                     , cIFaceTranslateType = scadeTranslateTypeC
                     , cIFaceTranslateValue = scadeTranslateValueC
                     }
-  backendVerify Scade (ScadeData node decls types opFile) cy expr locals init constVars opts gtlName
+  backendVerify Scade (ScadeData node decls types opFile) cy exprs locals init constVars opts gtlName
     = let name = (intercalate "_" node)
           (inp,outp,kind) = scadeInterface node decls
-          buchi = gtl2ba (Just cy) expr
-          dfa = fmap (renameDFAStates {-. minimizeDFA-}) $ determinizeBA buchi
-          scade = fmap (dfaToScade types name inp outp locals init) dfa
-          --scade = buchiToScade name inp outp ()
+          expr_names = fmap (\(expr,i) -> (expr,intercalate "_" (node++[show i]))) (zip exprs [0..])
+          scade = sequence $
+                  fmap (\(expr,name) -> fmap (dfaToScade types name inp outp locals init . renameDFAStates) $
+                                        determinizeBA (gtl2ba (Just cy) expr)) expr_names
       in do
         let outputDir = (outputPath opts)
             testNodeFile = outputDir </> (gtlName ++ "-" ++ name) <.> "scade"
             proofNodeFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof") <.> "scade"
             scenarioFile = outputDir </> (gtlName ++ "-" ++ name ++ "-proof-counterex") <.> "sss"
-        dump opts gtlName name buchi
+        --dump opts gtlName name buchi
         case scade of
           Nothing -> putStrLn "Could not transform Buchi automaton into deterministic automaton" >> return Nothing
           Just scade' -> do
-            writeFile testNodeFile (show $ prettyScade [scade'])
-            writeFile proofNodeFile (show $ prettyScade [generateProver types name node inp outp constVars])
+            writeFile testNodeFile (show $ prettyScade scade')
+            writeFile proofNodeFile (show $ prettyScade [generateProver types name (fmap snd expr_names) node inp outp constVars])
             if not (dryRun opts) then
               case scadeRoot opts of
                 Just p -> do
@@ -163,10 +163,11 @@ dump opts gtlName name buchi =
   else return ()
 
 generateProver :: ScadeTypeMapping
-                -> String -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)]
+                -> String
+                -> [String] -> [String] -> [(String,Sc.TypeExpr)] -> [(String,Sc.TypeExpr)]
                 -> Map String (GTLType, GTLConstant) -- ^ Constant variables
                 -> Sc.Declaration
-generateProver types name nodePath ins outs constVars =
+generateProver types name names nodePath ins outs constVars =
   let nonConstInp = filterNonConst constVars ins
   in UserOpDecl
     { userOpKind = Sc.Node
@@ -185,9 +186,12 @@ generateProver types name nodePath ins outs constVars =
                               , dataLocals = interfaceToDeclaration outs ++ (declareConstVars types constVars)
                               , dataEquations =
                                 (constAssign constVars) ++
-                                [
-                                  SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
-                                  , SimpleEquation [(Named "test_result")] (ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs)))
+                                [SimpleEquation (map (Named . fst) outs) (ApplyExpr (PrefixOp $ PrefixPath $ Path nodePath) (map (IdExpr . Path . (:[]) . fst) ins))
+                                ,SimpleEquation [(Named "test_result")]
+                                 (case names of
+                                     [] -> ConstBoolExpr True
+                                     _ -> foldl1 (BinaryExpr BinAnd) $
+                                          fmap (\name -> ApplyExpr (PrefixOp $ PrefixPath $ Path [name ++ "_testnode"]) (map (IdExpr . Path . (:[]) . fst) (ins ++ outs))) names)
                                 ]
                               }
     }
@@ -222,6 +226,7 @@ verifyScadeNodes opts scadeRoot gtlName name opFile testNodeFile proofNodeFile =
                       , cwd = Nothing, env = Nothing
                       , std_in = CreatePipe, std_out = outputStream, std_err = outputStream
                       , close_fds = False
+                      , create_group = False
                     }
     exitCode <- Proc.waitForProcess p
     case exitCode of
@@ -347,12 +352,13 @@ generateScenario :: FilePath -> Report -> IO()
 generateScenario scenarioFile report =
   writeFile scenarioFile $ (unlines . (map unlines) . errorTrace $ report)
 
-scadeTranslateTypeC :: GTLType -> (String,String)
-scadeTranslateTypeC (Fix (GTLInt i)) = ("kcg_int","")
-scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","")
-scadeTranslateTypeC (Fix (GTLNamed n _)) = (n,"")
-scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q) = scadeTranslateTypeC tp
-                                            in (p,q++"["++show i++"]")
+scadeTranslateTypeC :: GTLType -> (String,String,Bool)
+scadeTranslateTypeC (Fix (GTLInt i)) = ("kcg_int","",False)
+scadeTranslateTypeC (Fix GTLBool) = ("kcg_bool","",False)
+scadeTranslateTypeC (Fix (GTLNamed n tp)) = let (_,_,ref) = scadeTranslateTypeC tp
+                                            in (n,"",ref)
+scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q,ref) = scadeTranslateTypeC tp
+                                            in (p,q++"["++show i++"]",True)
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: GTLConstant -> CExpr
@@ -414,7 +420,7 @@ scadeTypes :: [Sc.Declaration] -> ScadeTypeMapping
 scadeTypes decls = (\types -> resolvePackageOpen types types decls) $ (readScadeTypes decls)
   where
     readScadeTypes [] = Map.empty
-    readScadeTypes ((TypeBlock tps):xs) = foldl (\mp (TypeDecl _ name cont) -> case cont of
+    readScadeTypes ((TypeBlock tps):xs) = Prelude.foldl (\mp (TypeDecl _ name cont) -> case cont of
                                                 Nothing -> mp
                                                 Just expr -> Map.insert name (ScadeType expr) mp
                                             ) (readScadeTypes xs) tps
@@ -577,7 +583,7 @@ stateToTransition locals cond trg =
 -- TODO: is this the correct behaviour and the only case.
 exprToScade :: Map String GTLType -> TypedExpr String -> (Sc.Expr, Maybe Sc.DataDef)
 exprToScade locals (Fix expr) = case getValue expr of
-  Var name lvl u -> (foldl (\e _ -> UnaryExpr UnPre e) (case u of
+  Var name lvl u -> (Prelude.foldl (\e _ -> UnaryExpr UnPre e) (case u of
                                                            StateIn -> LastExpr name -- \x -> BinaryExpr BinAfter (ConstIntExpr 0) (UnaryExpr UnPre x)
                                                            _ -> IdExpr (Path [name])
                                                        ) [1..lvl], Nothing)
@@ -678,7 +684,7 @@ declarationsToScade types decls defs = concat $ map declarationsToScade' decls
         makeTupleDecl :: String -> [Int] -> Int -> GTLType -> (Int, [Sc.VarDecl])
         makeTupleDecl n indcs indx (Fix (GTLTuple ts)) = (indx + 1, makeTupleDecls n (indx : indcs) ts)
         makeTupleDecl n indcs indx t = (indx + 1, [Sc.VarDecl [Sc.VarId (n ++ (expandName indcs) ++ "_" ++ show indx) False False] (gtlTypeToScade types t) Nothing Nothing])
-        expandName = foldl (\n i -> n ++ "_" ++ show i ) ""
+        expandName = Prelude.foldl (\n i -> n ++ "_" ++ show i ) ""
 
 declareConstVars :: ScadeTypeMapping -> Map String (GTLType, GTLConstant) -> [Sc.VarDecl]
 declareConstVars types = foldrWithKey (\n (t,v) l -> (VarDecl [VarId n False False] (gtlTypeToScade types t) Nothing Nothing) : l) []
