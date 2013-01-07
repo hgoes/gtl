@@ -73,11 +73,15 @@ neverClaim trace spec
                             Just mdl = Map.lookup (gtlInstanceModel inst) (gtlSpecModels spec)
                         in if Map.member v (gtlModelOutput mdl)
                            then varName (allCInterface (gtlModelBackend mdl)) q v i l
-                           else (case [ (oq,ov,oidx) | (GTLConnPt oq ov oidx,GTLConnPt iq iv iidx) <- gtlSpecConnections spec, iq==q, iv==v,iidx==i ] of
-                                    [] -> error "FIXME: unconnected inputs can't be part of verification goal"
-                                    ((oq,ov,oidx):_) -> let Just inst' = Map.lookup oq (gtlSpecInstances spec)
-                                                            Just mdl' = Map.lookup (gtlInstanceModel inst') (gtlSpecModels spec)
-                                                        in varName (allCInterface (gtlModelBackend mdl')) oq ov oidx l)
+                           else (case Map.lookup v (gtlModelConstantInputs mdl) of
+                                    Nothing -> case [ (oq,ov,oidx) | (GTLConnPt oq ov oidx,GTLConnPt iq iv iidx) <- gtlSpecConnections spec, iq==q, iv==v,iidx==i ] of
+                                      [] -> error $ "FIXME: unconnected input "++show v++" can't be part of verification goal"
+                                      ((oq,ov,oidx):_) -> let Just inst' = Map.lookup oq (gtlSpecInstances spec)
+                                                              Just mdl' = Map.lookup (gtlInstanceModel inst') (gtlSpecModels spec)
+                                                          in varName (allCInterface (gtlModelBackend mdl')) oq ov oidx l
+                                    Just (tp,c) -> case cIFaceTranslateValue (allCInterface (gtlModelBackend mdl)) c of
+                                      CValue s -> s
+                                      _ -> error "FIXME: Constant input C-expression must evaluate to simple expression.")
         traceAut = traceToBuchi trace
         allAut = baMapAlphabet (\exprs -> case fmap (atomToC cname []) exprs of
                                    [] -> Nothing
