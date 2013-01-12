@@ -3,7 +3,7 @@
    misericordiam tuam
  -}
 {-# LANGUAGE GADTs,ScopedTypeVariables #-}
-{-| Implements the native Promela target. -}
+{-| Implements the native NuSMV target. -}
 module Language.GTL.Target.NuSMV 
        (verifyModel) where
 
@@ -17,6 +17,8 @@ import Language.NuSMV.Syntax as S
 import Language.NuSMV.Misc as S
 import Language.NuSMV.Pretty as S
 
+import System.Process
+
 import Data.Map as Map hiding (foldl)
 import Data.List as List
 import Data.Maybe
@@ -24,22 +26,26 @@ import Prelude hiding (foldl,foldl1,mapM)
 
 -- | Do a comp lete verification of a given GTL file
 verifyModel :: --Opts.Options -- ^ Options
-               -- -> String -- ^ Name of the GTL file without extension
-               GTLSpec String -- ^ The GTL file contents
+               -- String -- ^ Name of the GTL file without extension
+                GTLSpec String -- ^ The GTL file contents
                -> IO ()
 verifyModel spec = do
   let modules = translateSpec spec
   --traceFiles <- runVerification opts name pr
   --parseTraces opts name traceFiles (traceToAtoms model)
   --putStrLn $ show ltlSpec
+  (exitCode,out,err) <- readProcessWithExitCode "NuSMV" [] (show $ prettyProgram modules) 
   putStrLn $ show $ prettyProgram modules
+  putStrLn $ show exitCode
+  putStrLn out
+  putStrLn err
 
 translateSpec :: GTLSpec String -> [S.Module]
 translateSpec spec = [
   S.Module {
      moduleName = mname
    , moduleParameter = [ 
-       inp
+       "param_"++inp
      | (inp,_) <- Map.toList $ gtlModelInput m
      ]
    , moduleBody = translateModel m
@@ -51,27 +57,50 @@ translateSpec spec = [
  [buildMainModule spec]
 
 translateModel :: GTLModel String -> [ModuleElement]
-translateModel m = [VarDeclaration $ [
+translateModel m = [VarDeclaration $ 
+ [
    (name, translateVarType tp)
  | (name, tp) <- Map.toList $ gtlModelInput m
  ]
- ++[
+ ++
+ [
    (name, translateVarType tp)
  | (name, tp) <- Map.toList $ gtlModelOutput m
- ]]
- ++[AssignConstraint [
-   (InitAssign,ComplexId {
-     idBase=Nothing
-     ,idNavigation=[Left name]
-    }
-    ,ConstExpr $ (case val of
-                   Just (Fix v) -> translateValue v
-                   _ -> error "should not happen")
-   )
-   | (name,val) <- Map.toList $ gtlModelDefaults m
-   , isJust val
- ]]
+ ]
+ ++[(genBAEnum $ gtlModelContract m)]
+ ]
+ ++[AssignConstraint ([
+     (InitAssign,ComplexId {
+       idBase=Nothing
+       ,idNavigation=[Left name]
+      }
+      ,ConstExpr $ (case val of
+                     Just (Fix v) -> translateValue v
+                     _ -> error "should not happen")
+     )
+     | (name,val) <- Map.toList $ gtlModelDefaults m
+     , isJust val
+    ]
+    ++
+    [(NextAssign, ComplexId {
+                    idBase=Nothing
+                    , idNavigation=[Left name]
+                  },
+                  ConstExpr $ ConstId ("param_"++name)) 
+    | (name, _) <- Map.toList $ gtlModelInput m
+    ])
+ ]
  ++[TransConstraint $ translateContract $ gtlModelContract m]--[TransConstraint]
+
+genBAEnum :: [GTLContract String] -> (String, TypeSpecifier)
+genBAEnum contr = ("st", S.SimpleType $ S.TypeEnum [
+                                           Right st
+                                          | (st,_) <- Map.toList $ baTransitions buchi
+                                          ]
+                  )
+  where 
+    ltl = gtlToLTL Nothing (gtlContractExpression contr)
+    buchi = ltl2ba ltl
 
 translateContract :: [GTLContract String] -> BasicExpr
 --translateContract [] = ConstExpr $ ConstId ""
@@ -80,60 +109,66 @@ translateContract contr = head [
       (BinExpr OpEq 
          (genIDExpr Nothing "st") 
          (ConstExpr $ ConstInteger st))
-      (genIDExpr Nothing (
-                       (concat $ List.intersperse " \\or " [
-                        createTrans trg cond
-                       | (cond,trg) <- trans])))
+      (transT trans)
+      -- genIDExpr Nothing (
+      --                 (concat $ List.intersperse " \\or " [
+      --                  createTrans trg cond
+      --                 | (cond,trg) <- trans])))
   | (st, trans) <- Map.toList $ baTransitions buchi
  ] 
  where 
     ltl = gtlToLTL Nothing (gtlContractExpression contr)
     buchi = ltl2ba ltl
+    --[(String, TypedExpr String)] -> BasicExpr
+    transT ((cond,trg):[]) = createTrans trg cond
+    transT ((cond,trg):trans) = BinExpr S.OpOr (createTrans trg cond) (transT trans)
 
-createTrans:: Integer -> [TypedExpr String] -> String
-createTrans trg cond = 
-                          (((concat [
-                            (transExpr n)++" \\land "
-                            | (n) <- cond
-                            ])
-                          )++" next(st)="++(show trg))
+createTrans:: Integer -> [TypedExpr String] -> BasicExpr
+createTrans trg cond = (cT cond (BinExpr S.OpEq (UnExpr S.OpNext (ConstExpr $ ConstId "st")) (ConstExpr $ ConstInteger trg) ))
  where
-    transExpr ex = case getValue $ unfix ex of 
-                     BinRelExpr rel l r -> (transExpr l) ++ 
-						                         ((case rel of
-                                               BinLT -> "<"
-                                               BinLTEq -> "\\leq "
-                                               BinGT -> ">"
-                                               BinGTEq -> "\\geq "
-                                               BinEq -> "="
-                                               BinNEq -> "\neq "))++
-                                           (transExpr r)
-                     BinBoolExpr rel l r -> (transExpr l) ++
-                                            (show rel) ++
-                                            (transExpr r) 
-                     Var v h _ -> (v++(if h==0 then "" else "["++show h++"]"))
-                     Value v -> (case v of
-		                             GTLIntVal x -> show x
-		                             GTLBoolVal x -> show x
-		                             GTLEnumVal x -> "\\textrm{"++x++"}")
-                     BinIntExpr rel lhs rhs -> (transExpr lhs)++
-							                          ( (case rel of
-								                           E.OpPlus -> "+"
-								                           E.OpMinus -> "-"
-								                           E.OpMult -> "\\cdot "
-								                           E.OpDiv -> "/"))
-							                          ++(transExpr rhs)
-                     UnBoolExpr op p -> (case op of
-                                          E.Not -> "" 
-                                          E.Always -> ""
-                                          E.Next ts -> ""
-                                          E.Finally ts -> "")++
-                                        (transExpr p)
-                     IndexExpr expr idx -> (transExpr expr)++ ("_{"++show idx++"}")
-                     Automaton buchi -> "autom"
-                     ClockReset x y -> "clock reset"
-                     ClockRef x -> "clockref"
-                     BuiltIn _ args -> "builtin"
+    cT (x:expr) nex = BinExpr S.OpAnd (transExpr x) (cT expr nex)
+    cT ([]) nex = nex
+    transExpr ex =(case getValue $ unfix ex of 
+                     BinRelExpr rel l r -> BinExpr ((case rel of
+                                                      BinLT -> S.OpLT
+                                                      BinLTEq -> S.OpLTE
+                                                      BinGT -> S.OpGT
+                                                      BinGTEq -> S.OpGTE
+                                                      BinEq -> S.OpEq
+                                                      BinNEq -> S.OpNeq))
+                                                   (transExpr l) 
+                                                   (transExpr r)
+                     BinBoolExpr rel l r -> BinExpr ((case rel of
+                                                        E.And -> S.OpAnd
+                                                        E.Or -> S.OpOr
+                                                        E.Implies -> S.OpImpl
+                                                        _ -> error "not supported"))
+                                                    (transExpr l) 
+                                                    (transExpr r)
+                     Var v h _ -> genIDExpr Nothing (v++(if h==0 then "" else "["++show h++"]"))
+                     Value v -> ConstExpr (case v of
+		                                       GTLIntVal x -> ConstInteger x
+		                                       GTLBoolVal x -> ConstBool x
+		                                       GTLEnumVal x -> ConstId x)
+                     BinIntExpr rel lhs rhs -> BinExpr ( (case rel of
+								                                    E.OpPlus -> S.OpPlus
+								                                    E.OpMinus -> S.OpMinus
+								                                    _ -> error "not supported"))
+							                                  (transExpr lhs)
+							                                  (transExpr rhs)
+                     UnBoolExpr op p -> UnExpr (case op of
+                                                  E.Not -> S.OpNot
+                                                  E.Always -> S.LTLO
+                                                  E.Next ts -> S.LTLX
+                                                  E.Finally ts -> S.LTLF)
+                                               (transExpr p)
+                     _ -> error "not supported"
+--                     IndexExpr expr idx -> (transExpr expr)++ ("_{"++show idx++"}")
+--                     Automaton buchi -> "autom"
+--                     ClockReset x y -> "clock reset"
+--                     ClockRef x -> "clockref"
+--                     BuiltIn _ args -> "builtin"
+                  )
 
 {-where 
     stClause st trans = BinExpr OpImpl (genIDExpr Nothing st) (genTransProp trans)
@@ -183,19 +218,23 @@ buildMainModule spec = S.Module {
        conn = gtlSpecConnections spec
        parm = buildProcessParam name m conn
  ]]
- ++[LTLSpec $ buildLTLSpec $ gtlToLTL Nothing (gtlSpecVerify spec)]
+ ++[LTLSpec $ buildLTLSpec (gtlToLTL Nothing (gtlSpecVerify spec)) 
+ (\ (i, j) -> IdExpr ComplexId {idBase=Just i,idNavigation=[Left j]})]
 }
 
-buildLTLSpec :: (Show a) => LTL.LTL (TypedExpr a) -> BasicExpr
-buildLTLSpec (Atom e) = ConstExpr $ ConstId $ show e
-buildLTLSpec (Bin op (e1) (e2)) = case op of
-  LTL.And -> BinExpr OpAnd (buildLTLSpec e1) (buildLTLSpec e2)
-  LTL.Or -> BinExpr OpOr (buildLTLSpec e1) (buildLTLSpec e2)
-  LTL.Until -> BinExpr LTLU (buildLTLSpec e1) (buildLTLSpec e2)
-  LTL.UntilOp -> BinExpr LTLV (buildLTLSpec e1) (buildLTLSpec e2)
-buildLTLSpec (Un op (e)) = case op of
-  LTL.Not -> UnExpr OpNot (buildLTLSpec e)
-buildLTLSpec (Ground b) = ConstExpr $ ConstBool b
+buildLTLSpec :: (Show a) => LTL.LTL (TypedExpr a) -> (a -> BasicExpr) -> BasicExpr
+buildLTLSpec (Atom e) f = case getValue $ unfix e of 
+                           Var n _ _ -> f n
+buildLTLSpec (Bin op (e1) (e2)) f = 
+  BinExpr (case op of
+             LTL.And -> S.OpAnd 
+             LTL.Or -> S.OpOr 
+             LTL.Until -> S.LTLU 
+             LTL.UntilOp -> S.LTLV)
+          (buildLTLSpec e1 f) (buildLTLSpec e2 f)
+buildLTLSpec (Un op (e)) f = case op of
+  LTL.Not -> UnExpr S.OpNot (buildLTLSpec e f)
+buildLTLSpec (Ground b) f = ConstExpr $ ConstBool b
 
 buildProcessParam :: String 
                      -> GTLModel String
@@ -230,8 +269,10 @@ getConnectedProcess instName var conns = [
   ]
 
 genIDExpr :: Maybe String -> String -> BasicExpr
-genIDExpr b v = IdExpr ComplexId {
-    idBase = b
-    , idNavigation = [Left v] 
-  }
+genIDExpr b v = case b of 
+                  (Just e) -> IdExpr ComplexId {
+                                 idBase = b
+                                 , idNavigation = [Left v] 
+                              }
+                  Nothing -> ConstExpr $ ConstId v
 
