@@ -1098,6 +1098,7 @@ unpackExpr f i (Fix e) = case getValue e of
     Right tp -> case unfix tp of
       GTLArray sz tp' -> concat [ unpackExpr f [j] (Fix $ Typed tp' (Var v lvl u)) | j <- [0..(sz-1)] ]
       GTLTuple tps -> concat [ unpackExpr f [j] (Fix $ Typed tp' (Var v lvl u)) | (tp',j) <- zip tps [0..] ]
+      GTLNamed _ tp' -> unpackExpr f i (Fix (e { getType = tp' }))
       _ -> [Fix $ Typed tp (Var (f v i) lvl u)]
   Value (GTLArrayVal vs) -> concat $ fmap (unpackExpr f i) vs
   Value (GTLTupleVal vs) -> concat $ fmap (unpackExpr f i) vs

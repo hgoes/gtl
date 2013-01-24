@@ -78,7 +78,11 @@ data GTLInstance a = GTLInstance
                      }
 
 -- | Get the type of a variable which resides in an instance.
-getInstanceVariableType :: (Ord a,Show a) => GTLSpec a -> Bool -> String -> a -> GTLType
+getInstanceVariableType :: (Ord a,Show a) => GTLSpec a -- ^ The GTL specification
+                           -> Bool -- ^ Whether the variable is an input variable ('True') or an output variable ('False')
+                           -> String -- ^ The name of the instance
+                           -> a -- ^ The name of the variable
+                           -> GTLType
 getInstanceVariableType spec inp inst var = case Map.lookup inst (gtlSpecInstances spec) of
   Nothing -> error $ "Internal error: Instance "++show inst++" not found."
   Just rinst -> case Map.lookup (gtlInstanceModel rinst) (gtlSpecModels spec) of

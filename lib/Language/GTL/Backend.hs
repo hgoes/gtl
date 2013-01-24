@@ -53,7 +53,7 @@ data CInterface = CInterface
                     -- | A list of C-types that together form the signature of the state of the state machine
                     cIFaceStateType :: [(String,String,Bool)],
                     -- | The type signature of the input variables. Input variables aren't considered state.
-                    cIFaceInputType :: [(String,String,Bool)],
+                    cIFaceInputType :: [(String,(String,String,Bool))],
                     -- | Generate a call to initialize the state machine
                     cIFaceStateInit :: [String] -> String,
                     -- | Perform one iteration of the state machine

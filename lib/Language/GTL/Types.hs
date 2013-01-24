@@ -187,7 +187,10 @@ allPossibleIdx (Fix (GTLArray sz tp)) = concat [ [(t,i:idx) | i <- [0..(sz-1)] ]
                                                | (t,idx) <- allPossibleIdx tp ]
 allPossibleIdx (Fix (GTLTuple tps)) = concat [ [ (t,i:idx) | (t,idx) <- allPossibleIdx tp ] 
                                              | (i,tp) <- zip [0..] tps ]
-allPossibleIdx (Fix (GTLNamed _ tp)) = allPossibleIdx tp
+allPossibleIdx (Fix (GTLNamed name tp))
+  = case allPossibleIdx tp of
+  [(tp',[])] -> [(Fix (GTLNamed name tp'),[])]
+  xs -> xs
 allPossibleIdx tp = [(tp,[])]
 
 -- | Given a type, a function to extract type information from sub-values and a

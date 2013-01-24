@@ -80,7 +80,7 @@ instance GTLBackend Scade where
                          Function -> [ scadeTranslateTypeC gtp
                                      | (vname,tp) <- outp,
                                        let Just gtp = scadeTypeToGTL types Map.empty tp ]
-                    , cIFaceInputType = [ scadeTranslateTypeC gtp
+                    , cIFaceInputType = [ (vname,scadeTranslateTypeC gtp)
                                         | (vname,tp) <- inp,
                                           let Just gtp = scadeTypeToGTL types Map.empty tp ]
                     , cIFaceStateInit = \st -> case kind of
@@ -380,6 +380,7 @@ scadeTranslateTypeC (Fix (GTLNamed n tp)) = let (_,_,ref) = scadeTranslateTypeC 
                                             in (n,"",ref)
 scadeTranslateTypeC (Fix (GTLArray i tp)) = let (p,q,ref) = scadeTranslateTypeC tp
                                             in (p,q++"["++show i++"]",True)
+scadeTranslateTypeC (Fix (GTLEnum vals)) = ("enum { "++intercalate ", " vals++" }","",False)
 scadeTranslateTypeC rep = error $ "Couldn't translate "++show rep++" to C-type"
 
 scadeTranslateValueC :: GTLConstant -> CExpr
@@ -549,7 +550,7 @@ dfasToScade types name ins outs locals defs dfas
                                              declarationsToScade types (Map.toList locals) defs
                               , dataEquations = SimpleEquation [Named "test_result"] (foldl1 (BinaryExpr BinAnd) [ IdExpr (Path ["test_result"++show n]) | (_,n) <- zip dfas [0..] ]) :
                                                 [StateEquation
-                                                 (StateMachine Nothing (dfaToStates locals ("test_result"++show n) dfa))
+                                                 (StateMachine (Just $ "Contract"++show n) (dfaToStates locals ("test_result"++show n) dfa))
                                                  [] True
                                                 | (dfa,n) <- zip dfas [0..]
                                                 ]

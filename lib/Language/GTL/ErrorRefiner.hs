@@ -61,24 +61,27 @@ readBDDTraces fp = do
 -- | Given a function to generate names, this function converts a GTL atom into a C-expression.
 atomToC :: CNameGen -- ^ Function to generate C-names
            -> [Integer]                 -- ^ Index
-           -> TypedExpr (String,String) -- ^ GTL atom to convert
+           -> TypedExpr (String,String,[Integer]) -- ^ GTL atom to convert
            -> String
 atomToC f idx (Fix expr) = case getValue expr of
-  Var (q,n) l _ -> f q n idx l
+  Var (q,n,idx') l _ -> f q n (idx++idx') l
   Value val -> valueToC (getType expr) val
   BinRelExpr rel l r -> "("++atomToC f idx l++relToC rel++atomToC f idx r++")"
   BinIntExpr op l r -> "("++atomToC f idx l++intOpToC op++atomToC f idx r++")"
+  BinBoolExpr op l r -> "("++atomToC f idx l++boolOpToC op++atomToC f idx r++")"
   UnBoolExpr GTL.Not p -> "!"++atomToC f idx p
   IndexExpr e i -> atomToC f (i:idx) e
+  _ -> error $ "Language.GTL.ErrorRefiner.atomToC: Can't translate "++show (Fix expr)++" to C"
 
 -- | Convert a GTL value to a C value
-valueToC :: GTLType -> GTLValue a -> String      
+valueToC :: Show a => GTLType -> GTLValue a -> String      
 valueToC _ (GTLBoolVal x) = if x then "1" else "0"
 valueToC _ (GTLIntVal x) = show x
 valueToC _ (GTLByteVal x) = show x
 valueToC _ (GTLFloatVal x) = show x
 valueToC (Fix (GTLEnum vals)) (GTLEnumVal x) = x {-let Just i = elemIndex x vals
                                                in show i-}
+valueToC tp v = error $ "Language.GTL.ErrorRefiner.valueToC: Can't translate value "++show v++" of type "++show tp
 
 -- | Convert a GTL relation to a C operator
 relToC :: GTL.Relation -> String
@@ -88,6 +91,10 @@ relToC GTL.BinGT = ">"
 relToC GTL.BinGTEq = ">="
 relToC GTL.BinEq = "=="
 relToC GTL.BinNEq = "!="
+
+boolOpToC :: GTL.BoolOp -> String
+boolOpToC GTL.And = "&&"
+boolOpToC GTL.Or = "||"
 
 {-
 -- | Convert a GTL expression to a C-expression
@@ -104,6 +111,7 @@ intOpToC GTL.OpMinus = "-"
 intOpToC GTL.OpMult = "*"
 intOpToC GTL.OpDiv = "/"
 
+{-
 -- | Convert a trace into a promela module that checks if everything conforms to the trace.
 traceToPromela :: CNameGen -> Trace -> [Pr.Step]
 traceToPromela f trace
@@ -114,10 +122,10 @@ traceToPromela f trace
     ++ [Pr.StepStmt (Pr.StmtDo [[Pr.StepStmt (Pr.StmtExpr $ Pr.ExprAny $ Pr.ConstExpr $ Pr.ConstBool True) Nothing]]) Nothing]
 
 -- | Convert a element from a trace into a C-expression.
-traceElemToC :: CNameGen -> [TypedExpr (String,String)] -> String
+traceElemToC :: CNameGen -> [TypedExpr (String,String,[Integer])] -> String
 traceElemToC f [] = "1"
 traceElemToC f ats = foldl1 (\x y -> x++"&&"++y) (fmap (atomToC f []) ats)
-
+-}
 -- | Convert a trace into a buchi automaton that checks for conformance to that trace.
 traceToBuchi :: Trace -> BA [TypedExpr (String,String)] Integer
 traceToBuchi trace = BA { baTransitions = Map.fromList $ end:trans
