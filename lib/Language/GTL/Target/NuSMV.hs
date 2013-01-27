@@ -40,13 +40,11 @@ verifyModel spec = do
 transSpec :: GTLSpec String -> [S.Module]
 transSpec spec = [
   S.Module {
-     moduleName = mname
+     moduleName = name
    , moduleParameter = []
    , moduleBody = transModel m
   }
- | (name, inst) <- Map.toList $ gtlSpecInstances spec
- , let mname = gtlInstanceModel inst 
-       m = (gtlSpecModels spec)!mname
+ | (name, m) <- Map.toList $ gtlSpecModels spec
  ]++
  [buildMainModule spec]
 
@@ -69,20 +67,20 @@ transModel m = [VarDeclaration $
        idBase=Nothing
        ,idNavigation=[Left name]
       }
-      ,ConstExpr $ (case val of
-                     Just (Fix v) -> transValue v (Just vartp)
-                     _ -> error "should not happen")
+      ,(case val of
+          Just exp -> transConst vartp exp (\i -> ConstExpr $ ConstId i)
+          _ -> error "should not happen")
      )
      | (name,val) <- Map.toList $ gtlModelDefaults m
      , isJust val
-     , let vartp = (gtlModelInput m)!name
+     , let vartp = (Map.union (gtlModelInput m) (gtlModelOutput m))!name
     ]
     )
  ]
  ++[TransConstraint $ transContract $ gtlModelContract m]--[TransConstraint]
 
 genBAEnum :: [GTLContract String] -> (String, TypeSpecifier)
-genBAEnum contr = ("st", S.SimpleType $ S.TypeEnum [
+genBAEnum contr = ("smv_st", S.SimpleType $ S.TypeEnum [
                                            Right st
                                           | (st,_) <- Map.toList $ baTransitions buchi
                                           ]
@@ -95,7 +93,7 @@ transContract :: [GTLContract String] -> BasicExpr
 transContract contr = head [
     BinExpr OpImpl 
       (BinExpr OpEq 
-         (ConstExpr $ ConstId "st")
+         (ConstExpr $ ConstId "smv_st")
          (ConstExpr $ ConstInteger st))
       (transT trans)
   | (st, trans) <- Map.toList $ baTransitions buchi
@@ -107,44 +105,65 @@ transContract contr = head [
     transT ((cond,trg):trans) = BinExpr S.OpOr (createTrans trg cond) (transT trans)
 
 createTrans:: Integer -> [TypedExpr String] -> BasicExpr
-createTrans trg cond = (cT cond (BinExpr S.OpEq (UnExpr S.OpNext (ConstExpr $ ConstId "st")) (ConstExpr $ ConstInteger trg) ))
+createTrans trg cond = (cT (cTT cond) (BinExpr S.OpEq (UnExpr S.OpNext (ConstExpr $ ConstId "smv_st")) (ConstExpr $ ConstInteger trg) ))
  where
-    cT (x:expr) nex = BinExpr S.OpAnd (transExpr x (\i -> ConstExpr $ ConstId i)) (cT expr nex)
+    cTT ([]) = []
+    cTT (x:[]) = case getValue $ unfix x of
+                   ClockReset _ _ -> []
+                   ClockRef _ -> []
+                   _ -> (transExpr x (\i -> ConstExpr $ ConstId i)):[]
+                 
+    cTT (x:y:expr) = (genBinExpr S.OpAnd x y (\i -> ConstExpr $ ConstId i)):(cTT expr)
+    cT (x:expr) nex = BinExpr S.OpAnd x (cT expr nex)
     cT ([]) nex = nex
 
 transExpr :: TypedExpr a -> (a -> BasicExpr) -> BasicExpr
 transExpr ex f = (case getValue $ unfix ex of 
-                   BinRelExpr rel l r -> BinExpr (transRel rel)
-                                                 (transExpr l f) 
-                                                 (transExpr r f)
-                   BinBoolExpr rel l r -> BinExpr (transBoolOp rel)
-                                                  (transExpr l f) 
-                                                  (transExpr r f)
+                   BinRelExpr rel l r -> 
+                     genBinExpr (transRel rel) l r f
+                   BinBoolExpr op l r -> 
+                     genBinExpr (transBoolOp op) l r f
                    Var v h _ -> f v
-                   Value v -> ConstExpr (case v of
-		                                     GTLIntVal x -> transIntValue x ex
-		                                     GTLBoolVal x -> ConstBool x
-		                                     GTLEnumVal x -> ConstId x)
-                   BinIntExpr rel lhs rhs -> BinExpr (transIntOp rel)
-					                                      (transExpr lhs f)
-					                                      (transExpr rhs f)
+                   Value v -> case getConstant ex of
+                     Just c -> transConst (getType $ unfix ex) c f
+                     Nothing -> error "must be a constant"
+                   BinIntExpr op l r -> 
+                     genBinExpr (transIntOp op) l r f
                    UnBoolExpr op p -> UnExpr (transUnOp op)
                                              (transExpr p f)
-                   IndexExpr r i -> error "IndexExpr"
+                   --FIXME index access???
+                   IndexExpr v i -> 
+                     transExpr v (\j -> case f j of
+                                          ConstExpr (ConstId x) -> ConstExpr $ ConstId (x++("[" ++ (show i) ++ "]")))
                    Automaton ba -> error "ba"
-                   ClockReset ci cj -> error "ClockReset"
-                   ClockRef i -> error "ClockRef"
+                   ClockReset ci cj -> ConstExpr $ ConstId "ClockReset"
+                   ClockRef i -> ConstExpr $ ConstId "ClockRef"
                    _ -> error "not supported (transExpr)"
               )
 
-transIntValue :: Integer -> TypedExpr a -> Constant
-transIntValue v ex = ConstWord $ WordConstant {
+genBinExpr :: S.BinOp ->
+              TypedExpr a -> 
+              TypedExpr a -> 
+              (a -> BasicExpr) ->
+              BasicExpr
+genBinExpr op l r f = case getValue $ unfix r of
+                       ClockReset _ _ -> transExpr l f
+                       ClockRef _ -> transExpr l f
+                       _ -> case getValue $ unfix l of
+                         ClockReset _ _ -> transExpr r f
+                         ClockRef _ -> transExpr r f 
+                         _ -> BinExpr op
+                                    (transExpr l f) 
+                                    (transExpr r f)
+
+transIntValue :: Integer -> GTLType -> Constant
+transIntValue v tp = ConstWord $ WordConstant {
                                    wcSigned=Just False
-                                   ,wcBits=Just bits
+                                   ,wcBits=Just $ gtlTypeBits tp
                                    ,wcValue=fromIntegral v
                                  }
  where 
-   bits = gtlTypeBits (getType $ unfix ex)
+   bits = gtlTypeBits tp
 
 transIntOp :: E.IntOp -> S.BinOp
 transIntOp op = case op of
@@ -176,28 +195,67 @@ transRel rel = case rel of
                  BinEq -> S.OpEq
                  BinNEq -> S.OpNeq
 
-transValue :: GTLValue a -> Maybe GTLType -> Constant
-transValue (GTLIntVal x) (Just t) = ConstWord $ S.WordConstant {
-   wcSigned=Just False
-   ,wcBits=Just $ gtlTypeBits t
-   ,wcValue=fromIntegral x
-}
-transValue (GTLByteVal x) _ = ConstWord $ S.WordConstant {
-   wcSigned=Just False
-   ,wcBits=Just 8
-   ,wcValue=fromIntegral x
- }
-transValue (GTLBoolVal x) _ = ConstBool x
-transValue (GTLEnumVal x) _ = ConstId x
+transConst:: GTLType -> GTLConstant -> 
+             (a -> BasicExpr) -> BasicExpr
+transConst tp c f = case unfix c of
+    GTLIntVal x -> ConstExpr $ transIntValue x tp
+    GTLByteVal x -> word 8 (fromIntegral x)
+    GTLBoolVal x -> ConstExpr $ ConstBool x
+    GTLFloatVal x -> error "no float type in smv"
+    GTLEnumVal x ->  ConstExpr $ ConstId x
+    GTLArrayVal x -> SetExpr $ handle x f
+    GTLTupleVal x -> SetExpr $ handle x f
+ where
+    handle :: [GTLConstant] -> (a -> BasicExpr) -> [BasicExpr]
+    handle ([]) f = []
+    handle (x:xs) f = (transConst tp x f):(handle xs f)
+    word b x = ConstExpr $ ConstWord $ WordConstant {
+      wcSigned=Nothing
+      ,wcBits=Just b
+      ,wcValue=x
+     }
+
+--transValue :: a -> Maybe GTLType -> Constant
+--transValue (GTLIntVal x) (Just t) = ConstWord $ S.WordConstant {
+--   wcSigned=Just False
+--   ,wcBits=Just $ gtlTypeBits t
+--   ,wcValue=fromIntegral x
+--}
+--transValue (GTLByteVal x) _ = ConstWord $ S.WordConstant {
+--   wcSigned=Just False
+--   ,wcBits=Just 8
+--   ,wcValue=fromIntegral x
+-- }
+--transValue (GTLBoolVal x) _ = ConstBool x
+--transValue (GTLEnumVal x) _ = ConstId x
+--FIXME: missing ConstArray
+--transValue (GTLArrayVal vals) (Just t) = head $ handle vals t
+-- where 
+--   handle :: [a] -> GTLType -> [Constant]
+--   handle ((GTLIntVal x):xs) tp = []
+--   ext (x:[]) = ""
+--   ext (x:xs) = "" --(show x)++","++(ext xs)
 
 
 transVarType :: GTLType -> TypeSpecifier
-transVarType (Fix (GTLInt bits)) = SimpleType $
-  TypeWord {
+transVarType tp = SimpleType $ transSimpleType tp
+ where
+  transSimpleType (Fix (GTLInt bits)) = TypeWord {
     typeWordSigned=Nothing
     ,typeWordBits=ConstExpr $ ConstInteger $ gtlTypeBits (Fix (GTLInt bits))
   }
-transVarType (Fix GTLBool) = SimpleType $ TypeBool
+  transSimpleType (Fix GTLBool) = TypeBool
+  transSimpleType (Fix GTLByte) = TypeWord {
+   typeWordSigned=Nothing
+   ,typeWordBits=ConstExpr $ ConstInteger $ gtlTypeBits (Fix GTLByte)
+  }
+  transSimpleType (Fix (GTLEnum enums)) = TypeEnum (enumList enums)
+  transSimpleType (Fix (GTLArray i tp)) = TypeArray 
+   (ConstExpr $ ConstInteger 0) (ConstExpr $ ConstInteger i)
+   (transSimpleType tp)
+  enumList (x:xs) = (Left x):(enumList xs)
+  enumList [] = []
+
 
 buildMainModule :: GTLSpec String -> S.Module
 buildMainModule spec = S.Module {
