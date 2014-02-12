@@ -30,6 +30,9 @@ instance Show AllBackend where
 instance Eq AllBackend where
   (==) _ _ = False
 
+instance Ord AllBackend where
+  compare _ _ = LT
+
 -- | Try to initialize a given backend with a name and arguments.
 --   If it works, it'll return Just with the 'AllBackend' representation.
 tryInit :: GTLBackend b => b -> String -> Opts.Options -> [String] -> IO (Maybe AllBackend)

@@ -119,7 +119,7 @@ data GTLSMTExpr = GSMTInt { asSMTInt :: SMTExpr GTLSMTInt }
                            , enumValues :: [String] }
                 | GSMTArray { asSMTArray :: [GTLSMTExpr] }
                 | GSMTTuple { asSMTTuple :: [GTLSMTExpr] }
-                deriving (Eq,Typeable,Show)
+                deriving (Eq,Ord,Typeable,Show)
 
 instance Args GTLSMTExpr where
   type ArgAnnotation GTLSMTExpr = GTLType
@@ -192,12 +192,12 @@ data InstanceState = InstanceState
                      , instanceOutputVars :: Map String GTLSMTExpr
                      , instanceLocalVars :: Map String GTLSMTExpr
                      , instanceAutomata :: [SMTExpr GTLSMTPc]
-                     } deriving (Eq,Typeable,Show)
+                     } deriving (Eq,Ord,Typeable,Show)
 
 data InstanceInfo = InstanceInfo
                     { iiModel :: GTLModel String
                     , iiAutomataMapping :: [(GTLContract String,Maybe (String,Map GTLSMTPc String,Map String GTLSMTPc))]
-                    } deriving (Eq,Typeable,Show)
+                    } deriving (Eq,Ord,Typeable,Show)
 
 getInstanceInfo :: GTLModel String -> [GTLContract String] -> InstanceInfo
 getInstanceInfo mdl extra = InstanceInfo { iiModel = mdl
@@ -262,12 +262,12 @@ instance Args InstanceState where
 -- | Saves the variables of all components in the GALS system
 data GlobalState = GlobalState
                    { instanceStates :: Map String InstanceState
-                   } deriving (Eq,Typeable,Show)
+                   } deriving (Eq,Ord,Typeable,Show)
 
 data GlobalInfo = GlobalInfo
                   { instanceInfos :: Map String InstanceInfo
                   , globalSpec :: GTLSpec String
-                  } deriving (Eq,Typeable,Show)
+                  } deriving (Eq,Ord,Typeable,Show)
 
 getGlobalInfo :: GTLSpec String -> GlobalInfo
 getGlobalInfo spec = GlobalInfo 
@@ -471,7 +471,7 @@ class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Int
 
 data SimpleScheduling = SimpleScheduling
 
-data SimpleSchedulingData = SimpleSchedulingData deriving (Typeable,Eq,Show)
+data SimpleSchedulingData = SimpleSchedulingData deriving (Typeable,Eq,Ord,Show)
 
 instance Args SimpleSchedulingData where
   type ArgAnnotation SimpleSchedulingData = Map String Integer
@@ -489,7 +489,7 @@ instance Scheduling SimpleScheduling where
 
 data SyncScheduling = SyncScheduling
 
-newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq,Show)
+newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq,Ord,Show)
 
 instance Args SyncSchedulingData where
   type ArgAnnotation SyncSchedulingData = Map String Integer
@@ -524,7 +524,7 @@ instance Scheduling SyncScheduling where
 data FairScheduling = FairScheduling
 
 data FairSchedulingData = FairSchedulingData (SMTExpr (BitVector BVUntyped)) Integer
-                          (Map String (BitVector BVUntyped)) deriving (Typeable,Eq,Show)
+                          (Map String (BitVector BVUntyped)) deriving (Typeable,Eq,Ord,Show)
 
 instance Args FairSchedulingData where
   type ArgAnnotation FairSchedulingData = Map String Integer
@@ -549,7 +549,7 @@ instance Scheduling FairScheduling where
 
 data TimedScheduling = TimedScheduling
 
-data TimedSchedulingData = TimedSchedulingData (Map String (SMTExpr GTLSMTInt)) (SMTExpr GTLSMTInt) (Map String Integer) deriving (Typeable,Eq,Show)
+data TimedSchedulingData = TimedSchedulingData (Map String (SMTExpr GTLSMTInt)) (SMTExpr GTLSMTInt) (Map String Integer) deriving (Typeable,Eq,Ord,Show)
 
 instance Args TimedSchedulingData where
   type ArgAnnotation TimedSchedulingData = Map String Integer
@@ -595,7 +595,7 @@ data TimedSchedulingData2 = TimedSchedulingData2
                             (Map String (SMTExpr (BitVector BVUntyped)))
                             (Map String Integer)
                             (Map String Integer)
-                          deriving (Eq,Typeable,Show)
+                          deriving (Eq,Ord,Typeable,Show)
 
 {-
 countScheduleStates :: Integral a => [a] -> a
@@ -668,7 +668,7 @@ instance Scheduling TimedScheduling2 where
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxGEnc :: Map (TypedExpr v) (SMTExpr Bool)
-                                   } deriving (Typeable,Eq,Show)
+                                   } deriving (Typeable,Eq,Ord,Show)
 
 getTemporalVars :: Ord v => TypedExpr v -> (Map (TypedExpr v) (),
                                             Map (TypedExpr v) (),
