@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies,RankNTypes,ImpredicativeTypes,FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies,RankNTypes,ImpredicativeTypes,FlexibleContexts,DeriveDataTypeable #-}
 {-| Provides a common interface for all backend types.
  -}
 module Language.GTL.Backend.All where
@@ -9,6 +9,7 @@ import Language.GTL.Backend.Scade
 import Language.GTL.Backend.None
 import Language.GTL.Types
 import Data.Map
+import Data.Typeable
 
 import Control.Monad.Error (MonadError(..))
 
@@ -21,7 +22,13 @@ data AllBackend = AllBackend
                   , allAliases :: Map String GTLType
                   , allCInterface :: CInterface
                   , allVerifyLocal :: Integer -> [TypedExpr String] -> Map String GTLType -> Map String (Maybe GTLConstant) -> Map String (GTLType, GTLConstant) -> Opts.Options -> String -> IO (Maybe Bool)
-                  }
+                  } deriving Typeable
+
+instance Show AllBackend where
+  show _ = "AllBackend"
+
+instance Eq AllBackend where
+  (==) _ _ = False
 
 -- | Try to initialize a given backend with a name and arguments.
 --   If it works, it'll return Just with the 'AllBackend' representation.

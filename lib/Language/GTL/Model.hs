@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, TupleSections #-}
+{-# LANGUAGE FlexibleContexts, TupleSections, DeriveDataTypeable #-}
 
 {-| This module provides a data structure for type-checked GTL specifications.
  -}
@@ -27,6 +27,7 @@ import Data.Traversable (mapM)
 import Misc.ProgramOptions
 import Control.Monad.Error hiding (mapM)
 import Data.Maybe (mapMaybe)
+import Data.Typeable
 
 type ErrorIO = ErrorT String IO
 
@@ -40,14 +41,14 @@ data GTLModel a = GTLModel
                   , gtlModelDefaults :: Map a (Maybe GTLConstant) -- ^ Default values for inputs. `Nothing' means any value.
                   , gtlModelCycleTime :: Integer -- ^ Cycle time in us
                   , gtlModelConstantInputs :: Map a (GTLType, GTLConstant)
-                  }
+                  } deriving (Eq,Typeable,Show)
 
 -- | A contract is a formula together with the information whether or not the contract is guaranteed to be true.
 --   If the contract is guaranteed to be true, it is not checked during local verification.
 data GTLContract a = GTLContract
                      { gtlContractIsGuaranteed :: Bool
                      , gtlContractFormula :: TypedExpr a
-                     }
+                     } deriving (Eq,Typeable,Show)
 
 -- | Generate a single expression from all non-guaranteed contracts in a list of contracts by conjunction.
 gtlContractExpression :: [GTLContract a] -> TypedExpr a
@@ -60,7 +61,7 @@ gtlContractExpression cons = case mapMaybe (\con -> if gtlContractIsGuaranteed c
 -- | Represents the start or end of a connection, by specifying the instance
 --   name, the variable name and a list of indices that refer to the right
 --   component of the variable.
-data GTLConnectionPoint a = GTLConnPt String a [Integer]
+data GTLConnectionPoint a = GTLConnPt String a [Integer] deriving (Eq,Show)
 
 -- | A GTL specification represents a type checked GTL file.
 data GTLSpec a = GTLSpec
@@ -68,14 +69,14 @@ data GTLSpec a = GTLSpec
                , gtlSpecInstances :: Map String (GTLInstance a)
                , gtlSpecVerify :: TypedExpr (String,a) -- ^ A formula to verify.
                , gtlSpecConnections :: [(GTLConnectionPoint a,GTLConnectionPoint a)] -- ^ Connections between models.
-               }
+               } deriving (Eq,Show)
 
 -- | A GTL instance is a concrete manifestation of a model.
 data GTLInstance a = GTLInstance
                      { gtlInstanceModel :: String -- ^ The model of which this is an instance
                      , gtlInstanceContract :: [GTLContract a] -- ^ Additional contract
                      , gtlInstanceDefaults :: Map a (Maybe GTLConstant) -- ^ Additional default values
-                     }
+                     } deriving (Eq,Show)
 
 -- | Get the type of a variable which resides in an instance.
 getInstanceVariableType :: (Ord a,Show a) => GTLSpec a -- ^ The GTL specification

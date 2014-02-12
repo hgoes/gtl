@@ -10,6 +10,8 @@ import Language.GTL.Translation
 import Language.GTL.ErrorRefiner
 import Language.SMTLib2 as SMT
 import Language.SMTLib2.Solver
+import Language.SMTLib2.Pipe
+import Language.SMTLib2.Internals.Operators
 import Language.SMTLib2.Internals as SMT
 import Data.Map as Map hiding ((!))
 import Data.Set as Set
@@ -34,8 +36,8 @@ import System.FilePath
 type GTLSMTPc = Integer
 type GTLSMTInt = Integer
 #else
-type GTLSMTPc = Word64
-type GTLSMTInt = Word64
+type GTLSMTPc = BV64
+type GTLSMTInt = BV64
 #endif
 
 (!) :: (Ord k,Show k) => Map k v -> k -> v
@@ -43,6 +45,7 @@ type GTLSMTInt = Word64
              Nothing -> error $ "Can't find key "++show k++" in "++show (Map.keys mp)
              Just v -> v
 
+#ifdef SMT_EXTS
 -- | Used to represent Enum values.
 data EnumVal = EnumVal String deriving (Typeable,Eq)
 
@@ -50,66 +53,134 @@ instance ToGTL EnumVal where
   toGTL (EnumVal name) = GTLEnumVal name
   --gtlTypeOf (EnumVal enums _ _) = Fix $ GTLEnum enums
 
+varEnum :: [String] -> SMT (SMTExpr EnumVal)
+varEnum = varAnn
+
+constantEnum :: String -> [String] -> SMTExpr EnumVal
+constantEnum = constantAnn
+
+annEnum :: [String] -> SMTAnnotation EnumVal
+annEnum = id
+
+enumGet :: [String] -> EnumVal -> String
+enumGet _ (EnumVal v) = v
+
 instance SMTType EnumVal where
   type SMTAnnotation EnumVal = [String]
-#ifdef SMTExts
-  getSort _ vals = L.Symbol (T.pack $ "Enum"++concat [ "_"++val | val <- vals ])
-  declareType u vals = let name = "Enum"++concat [ "_"++val | val <- vals ] 
-                       in declareType' (typeOf u) (declareDatatypes [] [(T.pack $ name,[(T.pack val,[]) | val <- vals])]) (return ())
-  additionalConstraints _ _ _ = []
-#else
-  getSort _ vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
-                   in getSort (undefined::BitVector) (fromIntegral bits) --L.List [L.Symbol "_",L.Symbol "BitVec",show bits]
-  declareType _ vals = return ()
-  additionalConstraints _ enums var = [BVULE var (SMT.constantAnn (EnumVal $ List.last enums) enums)]
-#endif
-
+  getSort _ vals = Fix $ NamedSort ("Enum"++concat [ "_"++val | val <- vals ]) []
+  asDataType _ vals = Just ("Enum"++concat [ "_"++val | val <- vals ],
+                            TypeCollection { argCount = 0
+                                           , dataTypes = [enumDt] })
+    where
+      enumDt = DataType { dataTypeName = "Enum"++concat [ "_"++val | val <- vals ]
+                        , dataTypeConstructors = [ Constr { conName = val
+                                                          , conFields = []
+                                                          , construct = \[] [] f -> f [] (EnumVal val) vals
+                                                          , conTest = \[] val -> case cast val of
+                                                            Just (EnumVal val') -> val==val'
+                                                          }
+                                                 | val <- vals ]
+                        , dataTypeGetUndefined = \[] f -> f (undefined::EnumVal) vals }
+  asValueType x ann f = Just $ f x ann
+  annotationFromSort _ (Fix (NamedSort enumName []))
+    = case splitEnumName enumName of
+      "Enum":vals -> vals
+    where
+      splitEnumName name = let (l,s') = break (=='_') name
+                           in l:case s' of
+                                  [] -> []
+                                  _:s'' -> splitEnumName s''
 instance SMTValue EnumVal where
-#ifdef SMTExts
   mangle (EnumVal v) _ = L.Symbol $ T.pack v
   unmangle (L.Symbol v) vals = return $ Just $ EnumVal (T.unpack v)
   unmangle _ _ = return Nothing
 #else
-  mangle (EnumVal v) vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
-                                Just idx = List.elemIndex v vals
-                            in mangle (BitVector $ fromIntegral idx) (fromIntegral bits)
-  unmangle v vs = do
-    let bits = ceiling $ logBase 2 $ fromIntegral (List.length vs)
-    v' <- unmangle v (fromIntegral bits)
-    case v' of
-      Nothing -> return Nothing
-      Just (BitVector v'') -> return $ Just $ EnumVal $ vs!!(fromIntegral v'')
+type EnumVal = BitVector BVUntyped
+
+varEnum :: [String] -> SMT (SMTExpr EnumVal)
+varEnum vals = varAnn (annEnum vals)
+
+constantEnum :: String -> [String] -> SMTExpr EnumVal
+constantEnum val vals = let Just idx = List.elemIndex val vals
+                        in constantAnn (BitVector (fromIntegral idx)) (annEnum vals)
+
+annEnum :: [String] -> SMTAnnotation EnumVal
+annEnum vals = let bits = ceiling $ logBase 2 $ fromIntegral (List.length vals)
+               in bits
+
+enumGet :: [String] -> EnumVal -> String
+enumGet vs (BitVector v) = List.genericIndex vs v
 #endif
 
 data GTLSMTExpr = GSMTInt { asSMTInt :: SMTExpr GTLSMTInt }
-                | GSMTByte { asSMTByte :: SMTExpr Word8 }
+                | GSMTByte { asSMTByte :: SMTExpr BV8 }
                 | GSMTBool { asSMTBool :: SMTExpr Bool }
-                | GSMTEnum { asSMTEnum :: SMTExpr EnumVal }
+                | GSMTEnum { asSMTEnum :: SMTExpr EnumVal
+                           , enumValues :: [String] }
                 | GSMTArray { asSMTArray :: [GTLSMTExpr] }
                 | GSMTTuple { asSMTTuple :: [GTLSMTExpr] }
-                deriving (Eq,Typeable)
+                deriving (Eq,Typeable,Show)
 
 instance Args GTLSMTExpr where
   type ArgAnnotation GTLSMTExpr = GTLType
-  foldExprs f s e (Fix GTLInt) = let (s',e') = f s (asSMTInt e) ()
-                                 in (s',GSMTInt e')
-  foldExprs f s e (Fix GTLByte) = let (s',e') = f s (asSMTByte e) ()
-                                 in (s',GSMTByte e')
-  foldExprs f s e (Fix GTLBool) = let (s',e') = f s (asSMTBool e) ()
-                                  in (s',GSMTBool e')
-  foldExprs f s e (Fix (GTLEnum vs)) = let (s',e') = f s (asSMTEnum e) vs
-                                       in (s',GSMTEnum e')
-  foldExprs f s e (Fix (GTLArray len tp)) = let (s',arr) = lenMapAccumL len (\cs el -> foldExprs f cs el tp) s (asSMTArray e)
-                                            in (s',GSMTArray arr)
-  foldExprs f s e (Fix (GTLTuple tps)) = let (s',els) = List.mapAccumL (\cs (tp,el) -> foldExprs f cs el tp) s (unsafeZip tps (asSMTTuple e))
-                                         in (s',GSMTTuple els)
+  foldExprs f s e (Fix GTLInt) = do
+    (s',e') <- f s (asSMTInt e) ()
+    return (s',GSMTInt e')
+  foldExprs f s e (Fix GTLByte) = do
+    (s',e') <- f s (asSMTByte e) ()
+    return (s',GSMTByte e')
+  foldExprs f s e (Fix GTLBool) = do
+    (s',e') <- f s (asSMTBool e) ()
+    return (s',GSMTBool e')
+  foldExprs f s e (Fix (GTLEnum vs)) = do
+    (s',e') <- f s (asSMTEnum e) (annEnum vs)
+    return (s',GSMTEnum e' vs)
+  foldExprs f s e (Fix (GTLArray len tp)) = do
+    (s',arr) <- lenMapAccumL len (\cs el -> foldExprs f cs el tp) s (asSMTArray e)
+    return (s',GSMTArray arr)
+  foldExprs f s e (Fix (GTLTuple tps)) = do
+    (s',els) <- mapAccumLM (\st (tp,el) -> foldExprs f st el tp) s (unsafeZip tps (asSMTTuple e))
+    return (s',GSMTTuple els)
   foldExprs f s e (Fix (GTLNamed name tp)) = foldExprs f s e tp
+  foldsExprs f s args (Fix GTLInt) = do
+    (ns,nargs,zarg) <- f s (fmap (\(x,b) -> (asSMTInt x,b)) args) ()
+    return (ns,fmap GSMTInt nargs,GSMTInt zarg)
+  foldsExprs f s args (Fix GTLByte) = do
+    (ns,nargs,zarg) <- f s (fmap (\(x,b) -> (asSMTByte x,b)) args) ()
+    return (ns,fmap GSMTByte nargs,GSMTByte zarg)
+  foldsExprs f s args (Fix GTLBool) = do
+    (ns,nargs,zarg) <- f s (fmap (\(x,b) -> (asSMTBool x,b)) args) ()
+    return (ns,fmap GSMTBool nargs,GSMTBool zarg)
+  foldsExprs f s args (Fix (GTLEnum vals)) = do
+    (ns,nargs,zarg) <- f s (fmap (\(x,b) -> (asSMTEnum x,b)) args) (annEnum vals)
+    return (ns,fmap (\x -> GSMTEnum x vals) nargs,GSMTEnum zarg vals)
+  foldsExprs f s args (Fix (GTLArray len tp)) = do
+    (ns,nargs,zarg) <- foldsExprs f s (fmap (\(x,b) -> (asSMTArray x,b)) args)
+                       (List.genericReplicate len tp)
+    return (ns,fmap GSMTArray nargs,GSMTArray zarg)
+  foldsExprs f s args (Fix (GTLTuple tps)) = do
+    (ns,nargs,zarg) <- foldsExprs f s (fmap (\(x,b) -> (asSMTTuple x,b)) args) tps
+    return (ns,fmap GSMTTuple nargs,GSMTTuple zarg)
+  extractArgAnnotation (GSMTInt _) = Fix GTLInt
+  extractArgAnnotation (GSMTByte _) = Fix GTLByte
+  extractArgAnnotation (GSMTBool _) = Fix GTLBool
+  extractArgAnnotation (GSMTEnum _ vs) = Fix (GTLEnum vs)
+  extractArgAnnotation (GSMTArray arr) = Fix (GTLArray (List.genericLength arr) (extractArgAnnotation $ head arr))
+  extractArgAnnotation (GSMTTuple els) = Fix (GTLTuple (fmap extractArgAnnotation els))
 
-lenMapAccumL :: Integer -> (a -> b -> (a,c)) -> a -> [b] -> (a,[c])
-lenMapAccumL 0 f s _ = (s,[])
-lenMapAccumL n f s ~(x:xs) = let (s',y) = f s x
-                                 (s'',ys) = lenMapAccumL (n-1) f s' xs
-                             in (s'',y:ys)
+mapAccumLM :: Monad m => (a -> b -> m (a,c)) -> a -> [b] -> m (a,[c])
+mapAccumLM _ st [] = return (st,[])
+mapAccumLM f st (x:xs) = do
+  (st1,y) <- f st x
+  (st2,ys) <- mapAccumLM f st1 xs
+  return (st2,y:ys)
+
+lenMapAccumL :: Monad m => Integer -> (a -> b -> m (a,c)) -> a -> [b] -> m (a,[c])
+lenMapAccumL 0 f s _ = return (s,[])
+lenMapAccumL n f s ~(x:xs) = do
+  (s',y) <- f s x
+  (s'',ys) <- lenMapAccumL (n-1) f s' xs
+  return (s'',y:ys)
 
 unsafeZip :: [a] -> [b] -> [(a,b)]
 unsafeZip [] _ = []
@@ -121,12 +192,12 @@ data InstanceState = InstanceState
                      , instanceOutputVars :: Map String GTLSMTExpr
                      , instanceLocalVars :: Map String GTLSMTExpr
                      , instanceAutomata :: [SMTExpr GTLSMTPc]
-                     } deriving (Eq,Typeable)
+                     } deriving (Eq,Typeable,Show)
 
 data InstanceInfo = InstanceInfo
                     { iiModel :: GTLModel String
                     , iiAutomataMapping :: [(GTLContract String,Maybe (String,Map GTLSMTPc String,Map String GTLSMTPc))]
-                    }
+                    } deriving (Eq,Typeable,Show)
 
 getInstanceInfo :: GTLModel String -> [GTLContract String] -> InstanceInfo
 getInstanceInfo mdl extra = InstanceInfo { iiModel = mdl
@@ -143,6 +214,12 @@ getInstanceInfo mdl extra = InstanceInfo { iiModel = mdl
                                                                | (f,n) <- zip (gtlModelContract mdl ++ extra) [0..] ]
                                          }
 
+annInstanceInfo :: InstanceInfo -> ArgAnnotation InstanceState
+annInstanceInfo is = (gtlModelInput $ iiModel is,
+                      gtlModelOutput $ iiModel is,
+                      gtlModelLocals $ iiModel is,
+                      List.genericLength (iiAutomataMapping is))
+
 getVar :: String -> VarUsage -> InstanceState -> GTLSMTExpr
 getVar name u is = let mp = case u of
                               Input -> instanceInputVars is
@@ -153,33 +230,44 @@ getVar name u is = let mp = case u of
                         Just v -> v
 
 instance Args InstanceState where
-  type ArgAnnotation InstanceState = InstanceInfo
-  foldExprs f s is (InstanceInfo mdl auts)
-    = let (s1,inp) = List.mapAccumL (\cs (name,tp) -> let (cs',val') = foldExprs f cs ((instanceInputVars is)!name) tp
-                                                      in (cs',(name,val'))
-                                    ) s (Map.toAscList $ gtlModelInput mdl)
-          (s2,outp) = List.mapAccumL (\cs (name,tp) -> let (cs',val') = foldExprs f cs ((instanceOutputVars is)!name) tp
-                                                       in (cs',(name,val'))
-                                     ) s1 (Map.toAscList $ gtlModelOutput mdl)
-          (s3,loc) = List.mapAccumL (\cs (name,tp) -> let (cs',val') = foldExprs f cs ((instanceLocalVars is)!name) tp
-                                                      in (cs',(name,val'))
-                                    ) s2 (Map.toAscList $ gtlModelLocals mdl)
-          ((s4,_),pc') = List.mapAccumL (\(cs,i) _ -> let (cs',val') = foldExprs f cs ((instanceAutomata is)!!i) ()
-                                                      in ((cs',i+1),val')) (s3,0) (gtlModelContract mdl)
-      in (s4,InstanceState { instanceInputVars = Map.fromAscList inp
-                           , instanceOutputVars = Map.fromAscList outp
-                           , instanceLocalVars = Map.fromAscList loc 
-                           , instanceAutomata = pc' })
+  type ArgAnnotation InstanceState = (Map String GTLType,Map String GTLType,Map String GTLType,Integer)
+  {-foldExprs f s is (inp_tps,outp_tps,loc_tps,ncontr) = do
+    (s1,inp) <- foldExprs f s (instanceInputVars is) inp_tps
+    (s2,outp) <- foldExprs f s1 (instanceOutputVars is) outp_tps
+    (s3,loc) <- foldExprs f s2 (instanceLocalVars is) loc_tps
+    (s4,pc') <- mapAccumLM (\cs i -> foldExprs f cs (List.genericIndex (instanceAutomata is) i) ()
+                           ) s3 [0..(ncontr-1)]
+    return (s4,InstanceState { instanceInputVars = inp
+                             , instanceOutputVars = outp
+                             , instanceLocalVars = loc 
+                             , instanceAutomata = pc' })-}
+  foldsExprs f s is (inp_tps,outp_tps,loc_tps,ncontr) = do
+    (s1,inp,zinp) <- foldsExprs f s
+                     (fmap (\(x,b) -> (instanceInputVars x,b)) is) inp_tps
+    (s2,outp,zoutp) <- foldsExprs f s1
+                       (fmap (\(x,b) -> (instanceOutputVars x,b)) is) outp_tps
+    (s3,loc,zloc) <- foldsExprs f s2
+                     (fmap (\(x,b) -> (instanceLocalVars x,b)) is) loc_tps
+    (s4,pc,zpc) <- foldsExprs f s3
+                   (fmap (\(x,b) -> (instanceAutomata x,b)) is)
+                   (List.genericReplicate ncontr ())
+    return (s4,[ InstanceState inp' outp' loc' pc'
+               | (inp',outp',loc',pc') <- List.zip4 inp outp loc pc ],
+            InstanceState zinp zoutp zloc zpc)
+  extractArgAnnotation is = (fmap extractArgAnnotation (instanceInputVars is),
+                             fmap extractArgAnnotation (instanceOutputVars is),
+                             fmap extractArgAnnotation (instanceLocalVars is),
+                             List.genericLength (instanceAutomata is))
 
 -- | Saves the variables of all components in the GALS system
 data GlobalState = GlobalState
                    { instanceStates :: Map String InstanceState
-                   } deriving (Eq,Typeable)
+                   } deriving (Eq,Typeable,Show)
 
 data GlobalInfo = GlobalInfo
                   { instanceInfos :: Map String InstanceInfo
                   , globalSpec :: GTLSpec String
-                  }
+                  } deriving (Eq,Typeable,Show)
 
 getGlobalInfo :: GTLSpec String -> GlobalInfo
 getGlobalInfo spec = GlobalInfo 
@@ -188,12 +276,15 @@ getGlobalInfo spec = GlobalInfo
                            ) (gtlSpecInstances spec))
                      spec
 
+annGlobalInfo :: GlobalInfo -> ArgAnnotation GlobalState
+annGlobalInfo gi = fmap annInstanceInfo (instanceInfos gi)
+
 instance Args GlobalState where
-  type ArgAnnotation GlobalState = GlobalInfo
-  foldExprs f s gs info = let (s',gs') = List.mapAccumL (\cs (name,inst) -> let (cs',is) = foldExprs f cs ((instanceStates gs)!name) inst
-                                                                            in (cs',(name,is))
-                                                        ) s (Map.toAscList (instanceInfos info))
-                          in (s',GlobalState { instanceStates = Map.fromAscList gs' })
+  type ArgAnnotation GlobalState = Map String (Map String GTLType,Map String GTLType,Map String GTLType,Integer)
+  foldExprs f s gs info = do
+    (s',gs') <- foldExprs f s (instanceStates gs) info
+    return (s',GlobalState { instanceStates = gs' })
+  extractArgAnnotation gs = fmap extractArgAnnotation (instanceStates gs)
 
 indexGTLSMT :: GTLSMTExpr -> [Integer] -> GTLSMTExpr
 indexGTLSMT x [] = x
@@ -204,42 +295,55 @@ eqGTLSMT :: GTLSMTExpr -> GTLSMTExpr -> SMTExpr Bool
 eqGTLSMT (GSMTInt l) (GSMTInt r) = l .==. r
 eqGTLSMT (GSMTByte l) (GSMTByte r) = l .==. r
 eqGTLSMT (GSMTBool l) (GSMTBool r) = l .==. r
-eqGTLSMT (GSMTEnum l) (GSMTEnum r) = l .==. r
-eqGTLSMT (GSMTArray l) (GSMTArray r) = and' $ List.zipWith eqGTLSMT l r
-eqGTLSMT (GSMTTuple l) (GSMTTuple r) = and' $ List.zipWith eqGTLSMT l r
+eqGTLSMT (GSMTEnum l _) (GSMTEnum r _) = l .==. r
+eqGTLSMT (GSMTArray l) (GSMTArray r) = app and' $ List.zipWith eqGTLSMT l r
+eqGTLSMT (GSMTTuple l) (GSMTTuple r) = app and' $ List.zipWith eqGTLSMT l r
 
 eqInst :: InstanceState -> InstanceState -> SMTExpr Bool
-eqInst l r = and' $ (Map.elems $ Map.intersectionWith eqGTLSMT (instanceInputVars l) (instanceInputVars r)) ++
+eqInst l r = app and' $
+             (Map.elems $ Map.intersectionWith eqGTLSMT (instanceInputVars l) (instanceInputVars r)) ++
              (Map.elems $ Map.intersectionWith eqGTLSMT (instanceOutputVars l) (instanceOutputVars r)) ++
              (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars l) (instanceLocalVars r)) ++
              (zipWith (.==.) (instanceAutomata l) (instanceAutomata r))
 
 eqSt :: GlobalState -> GlobalState -> SMTExpr Bool
-eqSt l r = and' $ Map.elems $ Map.intersectionWith eqInst (instanceStates l) (instanceStates r)
+eqSt l r = app and' $
+           Map.elems $
+           Map.intersectionWith eqInst (instanceStates l) (instanceStates r)
 
 connectionFun :: GTLSpec String -> (GlobalState,GlobalState) -> SMTExpr Bool
-connectionFun spec = \(stf,stt) -> and' [ eqGTLSMT (indexGTLSMT ((instanceOutputVars $ (instanceStates stf)!f)!fv) fi)
-                                                   (indexGTLSMT ((instanceInputVars $ (instanceStates stt)!t)!tv) ti)
-                                        | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
-                                        ]
+connectionFun spec (stf,stt)
+  = app and' [ eqGTLSMT (indexGTLSMT ((instanceOutputVars $ (instanceStates stf)!f)!fv) fi)
+               (indexGTLSMT ((instanceInputVars $ (instanceStates stt)!t)!tv) ti)
+             | (GTLConnPt f fv fi,GTLConnPt t tv ti) <- gtlSpecConnections spec
+             ]
 
 defaultsFun :: GTLSpec String -> GlobalState -> SMTExpr Bool
-defaultsFun spec st = and' [ eqGTLSMT ((instanceInputVars $ (instanceStates st)!iname)!vname) (translateConstant tp c)
-                           | (iname,inst) <- Map.toList (gtlSpecInstances spec)
-                           , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
-                           , (vname,(tp,c)) <- Map.toList $ gtlModelConstantInputs mdl
-                           ]
+defaultsFun spec st
+  = app and' [ eqGTLSMT ((instanceInputVars $ (instanceStates st)!iname)!vname) (translateConstant tp c)
+             | (iname,inst) <- Map.toList (gtlSpecInstances spec)
+             , let mdl = (gtlSpecModels spec)!(gtlInstanceModel inst)
+             , (vname,(tp,c)) <- Map.toList $ gtlModelConstantInputs mdl
+             ]
   where
     translateConstant tp c = translateExpr (\_ _ _ -> error "Language.GTL.Target.SMT.defaultsFun: This should not happen.")
                              (typedConstantToExpr tp c)
 
-translateRel :: SMTOrd a => Relation -> SMTExpr a -> SMTExpr a -> SMTExpr Bool
-translateRel BinLT = (.<.)
-translateRel BinLTEq = (.<=.)
-translateRel BinGT = (.>.)
-translateRel BinGTEq = (.>=.)
-translateRel BinEq = (.==.)
-translateRel BinNEq = \l r -> not' (l .==. r)
+translateBVRel :: IsBitVector a => Relation -> SMTExpr (BitVector a) -> SMTExpr (BitVector a) -> SMTExpr Bool
+translateBVRel BinLT = bvslt
+translateBVRel BinLTEq = bvsle
+translateBVRel BinGT = bvsgt
+translateBVRel BinGTEq = bvsge
+translateBVRel BinEq = (.==.)
+translateBVRel BinNEq = \l r -> not' (l .==. r)
+
+translateIntRel :: Relation -> SMTExpr Integer -> SMTExpr Integer -> SMTExpr Bool
+translateIntRel BinLT = (.<.)
+translateIntRel BinLTEq = (.<=.)
+translateIntRel BinGT = (.>.)
+translateIntRel BinGTEq = (.>=.)
+translateIntRel BinEq = (.==.)
+translateIntRel BinNEq = \l r -> not' (l .==. r)
 
 -- | Translate a GTL expression into a SMT expression
 translateExpr :: (v -> VarUsage -> Integer -> GTLSMTExpr) -> TypedExpr v -> GTLSMTExpr
@@ -248,18 +352,22 @@ translateExpr f (Fix expr)
     GTL.Var n i u -> f n u i
     GTL.Value val -> case val of
       GTLIntVal i ->  GSMTInt $ SMT.constant (fromIntegral i)
-      GTLByteVal w -> GSMTByte $ SMT.constant w
+      GTLByteVal w -> GSMTByte $ SMT.constant (fromIntegral w)
       GTLBoolVal b -> GSMTBool $ SMT.constant b
       GTLEnumVal v -> let Fix (GTLEnum vals) = GTL.getType expr
-                      in GSMTEnum $ SMT.constantAnn (EnumVal v) vals
+                      in GSMTEnum (constantEnum v vals) vals
       GTLArrayVal vs -> GSMTArray $ fmap (translateExpr f) vs
       GTLTupleVal vs -> GSMTTuple $ fmap (translateExpr f) vs
     GTL.BinRelExpr BinEq l r -> GSMTBool $ eqGTLSMT (translateExpr f l) (translateExpr f r)
     GTL.BinRelExpr BinNEq l r -> GSMTBool $ not' $ eqGTLSMT (translateExpr f l) (translateExpr f r)
     GTL.BinRelExpr rel l r -> let ll = translateExpr f l
                                   rr = translateExpr f r
-                                  mkRel rel (GSMTInt l) (GSMTInt r) = translateRel rel l r
-                                  mkRel rel (GSMTByte l) (GSMTByte r) = translateRel rel l r
+#ifdef SMTExts
+                                  mkRel rel (GSMTInt l) (GSMTInt r) = translateIntRel rel l r
+#else
+                                  mkRel rel (GSMTInt l) (GSMTInt r) = translateBVRel rel l r
+#endif
+                                  mkRel rel (GSMTByte l) (GSMTByte r) = translateBVRel rel l r
                                   mkRel BinEq l r = eqGTLSMT l r
                                   mkRel BinNEq l r = not' $ eqGTLSMT l r
                               in GSMTBool $ mkRel rel ll rr
@@ -276,8 +384,8 @@ translateExpr f (Fix expr)
     GTL.BinBoolExpr op l r -> let GSMTBool ll = translateExpr f l
                                   GSMTBool rr = translateExpr f r
                               in GSMTBool $ case op of
-                                              GTL.And -> and' [ll,rr]
-                                              GTL.Or -> or' [ll,rr]
+                                              GTL.And -> ll .&&. rr
+                                              GTL.Or -> ll .&&. rr
                                               GTL.Implies -> ll .=>. rr
     GTL.UnBoolExpr GTL.Not arg -> let GSMTBool arg' = translateExpr f arg
                                   in GSMTBool $ not' arg'
@@ -294,15 +402,16 @@ instanceFuns enums info
                        Just (_,_,rmp) -> Left (ba,rmp)
                      _ -> Right $ gtl2ba (Just (gtlModelCycleTime $ iiModel info)) (gtlContractFormula f)
                  ) (iiAutomataMapping info)
-      init inst = and' $ [ either (\(aut,st_mp) -> let inits' = fmap (st_mp!) (Set.toList $ baInits aut)
-                                                   in or' [ c .==. SMT.constant (fromIntegral p)
-                                                          | p <- inits' ]
-                                  )
-                           (\rba -> or' [ c .==. SMT.constant (fromIntegral p)
-                                        | p <- Set.toList $ baInits rba
-                                        ]
-                           ) ba
-                         | (ba,c) <- zip bas (instanceAutomata inst) ] ++
+      init inst = app and' $
+                  [ either (\(aut,st_mp) -> let inits' = fmap (st_mp!) (Set.toList $ baInits aut)
+                                            in app or' [ c .==. SMT.constant p
+                                                       | p <- inits' ]
+                           )
+                    (\rba -> app or' [ c .==. SMT.constant (fromIntegral p)
+                                     | p <- Set.toList $ baInits rba
+                                     ]
+                    ) ba
+                  | (ba,c) <- zip bas (instanceAutomata inst) ] ++
                   [ eqGTLSMT
                     (case Map.lookup var (instanceInputVars inst) of
                         Just var' -> var'
@@ -311,41 +420,43 @@ instanceFuns enums info
                           Nothing -> (instanceLocalVars inst)!var)
                     (translateExpr (\v u _ -> getVar v u inst) (constantToExpr enums def))
                   | (var,Just def) <- Map.toList $ gtlModelDefaults $ iiModel info ]
-      step stf stt = and' [ either (\(aut,st_mp) -> and' [ (c1 .==. SMT.constant (fromIntegral $ st_mp!st)) .=>.
-                                                           or' [ and' ((c2 .==. SMT.constant (fromIntegral $ st_mp!trg)):
-                                                                       [let GSMTBool v = translateExpr (\v u i -> case u of
-                                                                                                           Input -> (instanceInputVars stf)!v
-                                                                                                           StateIn -> (instanceLocalVars stf)!v
-                                                                                                           Output -> (instanceOutputVars stt)!v
-                                                                                                           StateOut -> (instanceLocalVars stt)!v) c
-                                                                        in v
-                                                                       | c <- cond ])
-                                                               | (cond,trg) <- trans
-                                                               ]
-                                                         | (st,trans) <- Map.toList (baTransitions aut)
-                                                         ])
-                            (\rba -> and' [ (c1 .==. SMT.constant (fromIntegral st)) .=>. 
-                                            or' [ and' ((c2 .==. SMT.constant (fromIntegral trg)):
-                                                        [let GSMTBool v = translateExpr (\v u i -> case u of
-                                                                                            Input -> (instanceInputVars stf)!v
-                                                                                            StateIn -> (instanceLocalVars stf)!v
-                                                                                            Output -> (instanceOutputVars stt)!v
-                                                                                            StateOut -> (instanceLocalVars stt)!v) c
-                                                         in v
-                                                        | c <- cond ])
-                                                | (cond,trg) <- trans ]
-                                          | (st,trans) <- Map.toList (baTransitions rba)
-                                          ]
-                            ) ba
-                          | (ba,c1,c2) <- zip3 bas (instanceAutomata stf) (instanceAutomata stt)
-                          ]
+      step stf stt = app and'
+                     [ either (\(aut,st_mp)
+                               -> app and' [ (c1 .==. SMT.constant (st_mp!st)) .=>.
+                                             app or' [ app and' ((c2 .==. SMT.constant (st_mp!trg)):
+                                                                 [let GSMTBool v = translateExpr (\v u i -> case u of
+                                                                                                     Input -> (instanceInputVars stf)!v
+                                                                                                     StateIn -> (instanceLocalVars stf)!v
+                                                                                                     Output -> (instanceOutputVars stt)!v
+                                                                                                     StateOut -> (instanceLocalVars stt)!v) c
+                                                                  in v
+                                                                 | c <- cond ])
+                                                     | (cond,trg) <- trans
+                                                     ]
+                                           | (st,trans) <- Map.toList (baTransitions aut)
+                                           ])
+                       (\rba -> app and' [ (c1 .==. SMT.constant (fromIntegral st)) .=>. 
+                                           app or' [ app and' ((c2 .==. SMT.constant (fromIntegral trg)):
+                                                               [let GSMTBool v = translateExpr (\v u i -> case u of
+                                                                                                   Input -> (instanceInputVars stf)!v
+                                                                                                   StateIn -> (instanceLocalVars stf)!v
+                                                                                                   Output -> (instanceOutputVars stt)!v
+                                                                                                   StateOut -> (instanceLocalVars stt)!v) c
+                                                                in v
+                                                               | c <- cond ])
+                                                   | (cond,trg) <- trans ]
+                                         | (st,trans) <- Map.toList (baTransitions rba)
+                                         ]
+                       ) ba
+                     | (ba,c1,c2) <- zip3 bas (instanceAutomata stf) (instanceAutomata stt)
+                     ]
 
 -- | Asserts that two instance states are equal in their output and state variables.
 eqInstOutp :: InstanceState -> InstanceState -> SMTExpr Bool
 eqInstOutp st1 st2 
-  = and' ((and' $ zipWith (.==.) (instanceAutomata st1) (instanceAutomata st2)):
-          ((Map.elems $ Map.intersectionWith eqGTLSMT (instanceOutputVars st1) (instanceOutputVars st2))++
-           (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars st1) (instanceLocalVars st2))))
+  = app and' ((app and' $ zipWith (.==.) (instanceAutomata st1) (instanceAutomata st2)):
+              ((Map.elems $ Map.intersectionWith eqGTLSMT (instanceOutputVars st1) (instanceOutputVars st2))++
+               (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars st1) (instanceLocalVars st2))))
 
 -- | A scheduling dictates which instance may perform a calculation step at which point in time.
 class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Integer) => Scheduling s where
@@ -360,11 +471,11 @@ class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Int
 
 data SimpleScheduling = SimpleScheduling
 
-data SimpleSchedulingData = SimpleSchedulingData deriving (Typeable,Eq)
+data SimpleSchedulingData = SimpleSchedulingData deriving (Typeable,Eq,Show)
 
 instance Args SimpleSchedulingData where
   type ArgAnnotation SimpleSchedulingData = Map String Integer
-  foldExprs _ s _ _ = (s,SimpleSchedulingData)
+  foldExprs _ s _ _ = return (s,SimpleSchedulingData)
 
 instance Scheduling SimpleScheduling where
   type SchedulingData SimpleScheduling = SimpleSchedulingData
@@ -378,28 +489,29 @@ instance Scheduling SimpleScheduling where
 
 data SyncScheduling = SyncScheduling
 
-newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq)
+newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq,Show)
 
 instance Args SyncSchedulingData where
   type ArgAnnotation SyncSchedulingData = Map String Integer
-  foldExprs f s ~(SyncSchedulingData mp) procs
-    = let (s',mp') = mapAccumL (\cs (name,_) -> let (cs',nv) = f cs (mp!name) ()
-                                                in (cs',(name,nv))) s (Map.toAscList procs)
-      in (s',SyncSchedulingData (Map.fromAscList mp'))
+  foldExprs f s ~(SyncSchedulingData mp) procs = do
+    (s',mp') <- mapAccumLM (\cs (name,_) -> do
+                               (cs',nv) <- f cs (mp!name) ()
+                               return (cs',(name,nv))) s (Map.toAscList procs)
+    return (s',SyncSchedulingData (Map.fromAscList mp'))
 
 instance Scheduling SyncScheduling where
   type SchedulingData SyncScheduling = SyncSchedulingData
-  firstSchedule _ (SyncSchedulingData mp) = and' [ not' x | x <- Map.elems mp ]
-  canSchedule _ name (SyncSchedulingData mp) = or' [ not' (mp!name)
-                                                   , and' $ Map.elems mp ]
+  firstSchedule _ (SyncSchedulingData mp) = app and' [ not' x | x <- Map.elems mp ]
+  canSchedule _ name (SyncSchedulingData mp) = app or' [ not' (mp!name)
+                                                       , app and' $ Map.elems mp ]
   schedule _ name (SyncSchedulingData m1) (SyncSchedulingData m2) 
-    = and' [m2!name
-           ,ite (m1!name) 
-            (and' [ not' x | (name',x) <- Map.toList m2, name/=name' ])
-            (and' [ x .==. (m1!name') | (name',x) <- Map.toList m2, name/=name' ])
-           ]
+    = app and' [m2!name
+               ,ite (m1!name) 
+                (app and' [ not' x | (name',x) <- Map.toList m2, name/=name' ])
+                (app and' [ x .==. (m1!name') | (name',x) <- Map.toList m2, name/=name' ])
+               ]
   eqScheduling _ (SyncSchedulingData p1) (SyncSchedulingData p2)
-    = and' $ Map.elems $ Map.intersectionWith (.==.) p1 p2
+    = app and' $ Map.elems $ Map.intersectionWith (.==.) p1 p2
   schedulingFairnessCount _ _ = 0
   schedulingFairness _ _ = []
   showSchedulingInformation _ (SyncSchedulingData mp) = do
@@ -411,15 +523,16 @@ instance Scheduling SyncScheduling where
 
 data FairScheduling = FairScheduling
 
-data FairSchedulingData = FairSchedulingData (SMTExpr BitVector) Integer (Map String BitVector) deriving (Typeable,Eq)
+data FairSchedulingData = FairSchedulingData (SMTExpr (BitVector BVUntyped)) Integer
+                          (Map String (BitVector BVUntyped)) deriving (Typeable,Eq,Show)
 
 instance Args FairSchedulingData where
   type ArgAnnotation FairSchedulingData = Map String Integer
-  foldExprs f s ~(FairSchedulingData bv w v) procs 
-    = let w' = ceiling $ logBase 2 $ fromIntegral $ Map.size procs
-          (_,v') = mapAccumL (\n _ -> (n+1,BitVector n)) 0 procs
-          (s',bv') = f s bv w'
-      in (s',FairSchedulingData bv' w' v')
+  foldExprs f s ~(FairSchedulingData bv w v) procs = do
+    let w' = ceiling $ logBase 2 $ fromIntegral $ Map.size procs
+        (_,v') = mapAccumL (\n _ -> (n+1,BitVector n)) 0 procs
+    (s',bv') <- f s bv w'
+    return (s',FairSchedulingData bv' w' v')
 
 instance Scheduling FairScheduling where
   type SchedulingData FairScheduling = FairSchedulingData
@@ -430,49 +543,59 @@ instance Scheduling FairScheduling where
   schedulingFairnessCount _ procs = fromIntegral (Map.size procs)
   schedulingFairness _ (FairSchedulingData i w mp) = [ i .==. SMT.constantAnn v w | (name,v) <- Map.toList mp ]
   showSchedulingInformation _ (FairSchedulingData i w mp) = do
-    v <- SMT.getValue' w i
+    v <- SMT.getValue i
     case [ name | (name,j) <- Map.toList mp, j==v ] of
       [n] -> return n
 
 data TimedScheduling = TimedScheduling
 
-data TimedSchedulingData = TimedSchedulingData (Map String (SMTExpr GTLSMTInt)) (SMTExpr GTLSMTInt) (Map String Integer) deriving (Typeable,Eq)
+data TimedSchedulingData = TimedSchedulingData (Map String (SMTExpr GTLSMTInt)) (SMTExpr GTLSMTInt) (Map String Integer) deriving (Typeable,Eq,Show)
 
 instance Args TimedSchedulingData where
   type ArgAnnotation TimedSchedulingData = Map String Integer
-  foldExprs f s ~(TimedSchedulingData mp v _) procs = let (s1,mp') = List.mapAccumL (\s (name,_) -> let (s',x) = f s (mp!name) ()
-                                                                                                    in (s',(name,x))
-                                                                                    ) s (Map.toAscList procs)
-                                                          (s2,v') = f s1 v ()
-                                                    in (s2,TimedSchedulingData (Map.fromAscList mp') v' procs)
+  foldExprs f s ~(TimedSchedulingData mp v _) procs = do
+    (s1,mp') <- mapAccumLM (\s (name,_) -> do
+                               (s',x) <- f s (mp!name) ()
+                               return (s',(name,x))
+                           ) s (Map.toAscList procs)
+    (s2,v') <- f s1 v ()
+    return (s2,TimedSchedulingData (Map.fromAscList mp') v' procs)
 
+minimumSMTBy :: SMTType t => (SMTExpr t -> SMTExpr t -> SMTExpr Bool) -> [SMTExpr t] -> SMTExpr t -> SMTExpr Bool
+minimumSMTBy _ [x] r = r .==. x
+minimumSMTBy f xs r = app and' $ (app or' [ r .==. x | x <- xs ]):
+                      [ f r x | x <- xs ]
+
+#ifdef SMTExts
 minimumSMT :: SMTOrd t => [SMTExpr t] -> SMTExpr t -> SMTExpr Bool
-minimumSMT [x] r = r .==. x
-minimumSMT xs r = and' $ (or' [ r .==. x | x <- xs ]):
-                  [ r .<=. x | x <- xs ]
+minimumSMT = minimumSMTBy (.<=.)
+#else
+minimumSMT :: IsBitVector t => [SMTExpr (BitVector t)] -> SMTExpr (BitVector t) -> SMTExpr Bool
+minimumSMT = minimumSMTBy bvsle
+#endif
 
 instance Scheduling TimedScheduling where
   type SchedulingData TimedScheduling = TimedSchedulingData
-  firstSchedule _ (TimedSchedulingData mp _ _) = and' [ v .==. SMT.constant 0 | v <- Map.elems mp ]
+  firstSchedule _ (TimedSchedulingData mp _ _) = app and' [ v .==. SMT.constant 0 | v <- Map.elems mp ]
   canSchedule _ name (TimedSchedulingData mp _ _) = (mp!name) .==. SMT.constant 0
   schedule _ name (TimedSchedulingData mp1 min p) (TimedSchedulingData mp2 _ _)
     = let mp1' = Map.adjust (+ (SMT.constant $ fromIntegral (p!name))) name mp1
-      in and' $ (minimumSMT (Map.elems mp1') min):
+      in app and' $ (minimumSMT (Map.elems mp1') min):
          (Map.elems $ Map.intersectionWith (\o n -> n .==. o - min) mp1' mp2)
   showSchedulingInformation _ (TimedSchedulingData mp min procs) = do
     mp' <- mapM SMT.getValue mp
     return $ show $ Map.toList mp'
-  eqScheduling _ (TimedSchedulingData mp1 _ _) (TimedSchedulingData mp2 _ _) = and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
+  eqScheduling _ (TimedSchedulingData mp1 _ _) (TimedSchedulingData mp2 _ _) = app and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
   schedulingFairnessCount _ _ = 0
   schedulingFairness _ _ = []
   
 data TimedScheduling2 = TimedScheduling2
 
 data TimedSchedulingData2 = TimedSchedulingData2 
-                            (Map String (SMTExpr BitVector))
+                            (Map String (SMTExpr (BitVector BVUntyped)))
                             (Map String Integer)
                             (Map String Integer)
-                          deriving (Eq,Typeable)
+                          deriving (Eq,Typeable,Show)
 
 {-
 countScheduleStates :: Integral a => [a] -> a
@@ -511,24 +634,24 @@ normate xs = fmap (\(n,x) -> (n,x-m)) xs
 
 instance Args TimedSchedulingData2 where
   type ArgAnnotation TimedSchedulingData2 = Map String Integer
-  foldExprs f s ~(TimedSchedulingData2 cs _ _) procs
-    = let md = foldl1 gcd procs
-          cys = fmap (`div` md) procs
-          ann = fmap (ceiling . logBase 2 . fromIntegral . (+1)) cys
-          (s',cs') = foldExprs f s cs ann
-      in (s',TimedSchedulingData2 cs' cys ann)
+  foldExprs f s ~(TimedSchedulingData2 cs _ _) procs = do
+    let md = foldl1 gcd procs
+        cys = fmap (`div` md) procs
+        ann = fmap (ceiling . logBase 2 . fromIntegral . (+1)) cys
+    (s',cs') <- foldExprs f s cs ann
+    return (s',TimedSchedulingData2 cs' cys ann)
   
 instance Scheduling TimedScheduling2 where
   type SchedulingData TimedScheduling2 = TimedSchedulingData2
-  firstSchedule _ (TimedSchedulingData2 bvs _ w) = and' [ bv .==. (SMT.constantAnn (BitVector 0) (w!name)) | (name,bv) <- Map.toList bvs ]
+  firstSchedule _ (TimedSchedulingData2 bvs _ w) = app and' [ bv .==. (SMT.constantAnn (BitVector 0) (w!name)) | (name,bv) <- Map.toList bvs ]
   canSchedule _ name (TimedSchedulingData2 bvs _ w) = bvs!name .==. (SMT.constantAnn (BitVector 0) (w!name))
   schedule _ name (TimedSchedulingData2 bvs1 cys w) (TimedSchedulingData2 bvs2 _ _)
-    = or' [ and' $ 
-            [ bvs1!name .==. SMT.constantAnn (BitVector v) (w!name) | (name,v) <- cur ] ++
-            [ bvs2!name' .==. SMT.constantAnn (BitVector v) (w!name') | (name',v) <- normate $ (name,cys!name):(zip onames x) ]
-          | x <- combinations ranges
-          , let cur = zip onames x
-          ]
+    = app or' [ app and' $ 
+                [ bvs1!name .==. SMT.constantAnn (BitVector v) (w!name) | (name,v) <- cur ] ++
+                [ bvs2!name' .==. SMT.constantAnn (BitVector v) (w!name') | (name',v) <- normate $ (name,cys!name):(zip onames x) ]
+              | x <- combinations ranges
+              , let cur = zip onames x
+              ]
     where
       ranges = fmap (\l -> [0..l]) limits
       (onames,limits) = unzip cys'
@@ -537,7 +660,7 @@ instance Scheduling TimedScheduling2 where
     mp' <- mapM SMT.getValue mp
     return $ show $ Map.toList mp'
   eqScheduling _ (TimedSchedulingData2 mp1 _ _) (TimedSchedulingData2 mp2 _ _)
-    = and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
+    = app and' $ Map.elems $ Map.intersectionWith (.==.) mp1 mp2
   schedulingFairnessCount _ _ = 0
   schedulingFairness _ _ = []
 
@@ -545,55 +668,70 @@ instance Scheduling TimedScheduling2 where
 data TemporalVars v = TemporalVars { formulaEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxFEnc :: Map (TypedExpr v) (SMTExpr Bool)
                                    , auxGEnc :: Map (TypedExpr v) (SMTExpr Bool)
-                                   } deriving (Typeable,Eq)
+                                   } deriving (Typeable,Eq,Show)
 
-instance Args (TemporalVars (String,String)) where
-  type ArgAnnotation (TemporalVars (String,String)) = TypedExpr (String,String)
-  foldExprs f s tv expr = foldTV s tv (TemporalVars Map.empty Map.empty Map.empty) expr
-      where
-        foldTV s tv ntv expr
-            | Map.member expr (formulaEnc ntv) = (s,ntv)
-            | otherwise = case GTL.getValue (unfix expr) of
-                            GTL.Var name h u -> let (s',nvar) = f s ((formulaEnc tv)!expr) ()
-                                                in (s',ntv { formulaEnc = Map.insert expr nvar (formulaEnc ntv) })
-                            GTL.BinRelExpr _ _ _ -> let (s',nvar) = f s ((formulaEnc tv)!expr) ()
-                                                    in (s',ntv { formulaEnc = Map.insert expr nvar (formulaEnc ntv) })
-                            GTL.BinBoolExpr op lhs rhs -> let (s1,ntv1) = foldTV s tv ntv lhs
-                                                              (s2,ntv2) = foldTV s1 tv ntv1 rhs
-                                                              (s3,v) = f s2 ((formulaEnc tv)!expr) ()
-                                                              ntv3 = ntv2 { formulaEnc = Map.insert expr v (formulaEnc ntv2) }
-                                                          in case op of
-                                                               GTL.Until NoTime
-                                                                   | Map.member rhs (auxFEnc ntv3) -> (s3,ntv3)
-                                                                   | otherwise -> let (s4,v2) = f s3 ((auxFEnc tv)!rhs) ()
-                                                                                  in (s4,ntv3 { auxFEnc = Map.insert rhs v2 (auxFEnc ntv3) })
-                                                               GTL.UntilOp NoTime
-                                                                   | Map.member rhs (auxGEnc ntv3) -> (s3,ntv3)
-                                                                   | otherwise -> let (s4,v2) = f s3 ((auxGEnc tv)!rhs) ()
-                                                                                  in (s4,ntv3 { auxGEnc = Map.insert rhs v2 (auxGEnc ntv3) })
-                                                               _ -> (s3,ntv3)
-                            GTL.UnBoolExpr op arg -> let (s1,ntv1) = foldTV s tv ntv arg
-                                                     in case op of
-                                                          GTL.Not -> (s1,ntv1 { formulaEnc = Map.insert expr (not' ((formulaEnc ntv1)!arg)) (formulaEnc ntv1) })
-                                                          GTL.Always -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
-                                                                            (s3,aux') = if Map.member arg (auxGEnc ntv1)
-                                                                                        then (s2,auxGEnc ntv1)
-                                                                                        else (let (s',v2) = f s2 ((auxGEnc tv)!arg) ()
-                                                                                              in (s',Map.insert arg v2 (auxGEnc ntv1)))
-                                                                        in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1)
-                                                                                    , auxGEnc = aux' })
-                                                          GTL.Finally NoTime -> let (s2,v1) = f s1 ((formulaEnc tv)!expr) ()
-                                                                                    (s3,aux') = if Map.member arg (auxFEnc ntv1)
-                                                                                                then (s2,auxFEnc ntv1)
-                                                                                                else (let (s',v2) = f s2 ((auxFEnc tv)!arg) ()
-                                                                                                      in (s',Map.insert arg v2 (auxFEnc ntv1)))
-                                                                                in (s3,ntv1 { formulaEnc = Map.insert expr v1 (formulaEnc ntv1) 
-                                                                                            , auxFEnc = aux' })
-                                                          _ -> let (s2,v) = f s1 ((formulaEnc tv)!expr) ()
-                                                                   ntv2 = ntv1 { formulaEnc = Map.insert expr v (formulaEnc ntv1) }
-                                                               in (s2,ntv2)
-                                                          --GTL.Next NoTime -> let (s2,v1) = f (formulaEnc tv)!expr
-                            _ -> (s,ntv)
+getTemporalVars :: Ord v => TypedExpr v -> (Map (TypedExpr v) (),
+                                            Map (TypedExpr v) (),
+                                            Map (TypedExpr v) (),
+                                            Map (TypedExpr v) ())
+getTemporalVars = getTemp (Map.empty,Map.empty,Map.empty,Map.empty)
+  where
+    getTemp cur@(f,auxF,auxG,nots) expr
+      | Map.member expr f = cur
+      | otherwise = case GTL.getValue (unfix expr) of
+        GTL.Var name h u -> (Map.insert expr () f,auxF,auxG,nots)
+        GTL.BinRelExpr _ _ _ -> (Map.insert expr () f,auxF,auxG,nots)
+        GTL.BinBoolExpr op lhs rhs
+          -> let cur1 = getTemp cur lhs
+                 (f1,auxF1,auxG1,nots1) = getTemp cur1 rhs
+                 f2 = Map.insert expr () f1
+             in case op of
+               GTL.Until NoTime -> (f2,Map.insert rhs () auxF1,auxG1,nots1)
+               GTL.UntilOp NoTime -> (f2,auxF1,Map.insert rhs () auxG1,nots1)
+               _ -> (f2,auxF1,auxG1,nots1)
+        GTL.UnBoolExpr op arg
+          -> let (f1,auxF1,auxG1,nots1) = getTemp cur arg
+             in case op of
+               GTL.Not -> (f1,auxF1,auxF1,Map.insert expr () nots1)
+               GTL.Always -> let f2 = Map.insert expr () f1
+                                 auxG2 = Map.insert arg () auxG1
+                             in (f2,auxF1,auxG2,nots1)
+               GTL.Finally NoTime -> let f2 = Map.insert expr () f1
+                                         auxF2 = Map.insert arg () auxF1
+                                     in (f2,auxF2,auxG1,nots1)
+               _ -> let f2 = Map.insert expr () f1
+                    in (f2,auxF1,auxG1,nots1)
+        _ -> cur
+
+instance (Typeable v,Show v,Ord v) => Args (TemporalVars v) where
+  type ArgAnnotation (TemporalVars v) = (Map (TypedExpr v) (),
+                                         Map (TypedExpr v) (),
+                                         Map (TypedExpr v) (),
+                                         Map (TypedExpr v) ())
+  foldsExprs f s tvs (mp_f,mp_auxF,mp_auxG,mp_nots) = do
+    (s1,fs,zfs) <- foldsExprs f s (fmap (\(x,b) -> (formulaEnc x,b)) tvs) mp_f
+    (s2,auxFs,zauxFs) <- foldsExprs f s1 (fmap (\(x,b) -> (auxFEnc x,b)) tvs) mp_auxF
+    (s3,auxGs,zauxGs) <- foldsExprs f s2 (fmap (\(x,b) -> (auxGEnc x,b)) tvs) mp_auxG
+    let fs' = fmap (\cf -> Map.union
+                           cf
+                           (Map.mapWithKey (\key _ -> case GTL.getValue (unfix key) of
+                                               GTL.UnBoolExpr GTL.Not arg -> not' $ cf!arg
+                                           ) mp_nots)
+                   ) fs
+    return (s3,[ TemporalVars { formulaEnc = f'
+                              , auxFEnc = auxF
+                              , auxGEnc = auxG } | (f',auxF,auxG) <- zip3 fs auxFs auxGs ],
+            TemporalVars { formulaEnc = zfs
+                         , auxFEnc = zauxFs
+                         , auxGEnc = zauxGs })
+  extractArgAnnotation tv = let (not_f,f) = Map.partitionWithKey (\key _ -> case GTL.getValue (unfix key) of
+                                                                     GTL.UnBoolExpr GTL.Not _ -> True
+                                                                     _ -> False
+                                                                 ) (formulaEnc tv)
+                            in (fmap (const ()) f,
+                                fmap (const ()) (auxFEnc tv),
+                                fmap (const ()) (auxGEnc tv),
+                                fmap (const ()) not_f)
 
 data BMCConfig a = BMCConfig { bmcConfigCur :: a
                              , bmcConfigNext :: a -> a
@@ -629,16 +767,16 @@ dependencies f expr cur nxt = case GTL.getValue (unfix expr) of
                                     rs = dependencies f rhs cur nxt
                                     r = (formulaEnc cur)!rhs
                                 in case op of
-                                     GTL.And -> (self .==. and' [l,r]):ls++rs
-                                     GTL.Or -> (self .==. or' [l,r]):ls++rs
+                                     GTL.And -> (self .==. (l .&&. r)):ls++rs
+                                     GTL.Or -> (self .==. (l .||. r)):ls++rs
                                      GTL.Implies -> (self .==. (l .=>. r)):ls++rs
-                                     GTL.Until NoTime -> (self .==. or' [r,and' [l,nself]]):ls++rs
-                                     GTL.UntilOp NoTime -> (self .==. and' [r,or' [l,nself]]):ls++rs
+                                     GTL.Until NoTime -> (self .==. (r .||. (l .&&. nself))):ls++rs
+                                     GTL.UntilOp NoTime -> (self .==. (r .&&. (l .||. nself))):ls++rs
   GTL.UnBoolExpr op e -> let es = dependencies f e cur nxt
                              e' = (formulaEnc cur)!e
                          in case op of
-                              GTL.Always -> (self .==. and' [e',nself]):es
-                              GTL.Finally NoTime -> (self .==. or' [e',nself]):es
+                              GTL.Always -> (self .==. (e' .&&. nself)):es
+                              GTL.Finally NoTime -> (self .==. (e' .||. nself)):es
                               GTL.Next NoTime -> let ne = (formulaEnc nxt)!e
                                                  in (self .==. ne):es
                               _ -> es
@@ -665,32 +803,34 @@ createSMTFunctions cfg sched info = do
   funs <- fmap Map.fromAscList $
           mapM (\(name,inst) -> do
                    let (init,step) = instanceFuns kenums inst
-                   init_fun <- mkFun cfg ("init_"++name) ("init function of "++name) inst init
-                   step_fun <- mkFun cfg ("step_"++name) ("step function of "++name) (inst,inst) (uncurry step)
+                   init_fun <- mkFun cfg ("init_"++name) ("init function of "++name) (annInstanceInfo inst) init
+                   step_fun <- mkFun cfg ("step_"++name) ("step function of "++name) (annInstanceInfo inst,annInstanceInfo inst) (uncurry step)
                    return (name,(init_fun,step_fun))
                ) (Map.toAscList (instanceInfos info))
-  g_init_fun <- mkFun cfg "init" "global init function" (info,procs) 
-                (\(gst,sched_st) -> and' $ (firstSchedule sched sched_st):
+  g_init_fun <- mkFun cfg "init" "global init function" (annGlobalInfo info,procs)
+                (\(gst,sched_st) -> app and' $ (firstSchedule sched sched_st):
                                     [ fst (funs!name) lst 
                                     | (name,lst) <- Map.toList (instanceStates gst) ])
-  g_step_fun <- mkFun cfg "step" "global step function" (info,info,procs,procs)
+  g_step_fun <- mkFun cfg "step" "global step function" (annGlobalInfo info,annGlobalInfo info,procs,procs)
                 (\(g1,g2,s1,s2)
-                 -> or' [ and' $ [canSchedule sched name s1
-                                 ,schedule sched name s1 s2
-                                 ,snd (funs!name) (lst1,(instanceStates g2)!name)] ++
-                          [ eqInstOutp lst2 ((instanceStates g2)!name') 
-                          | (name',lst2) <- Map.toList (instanceStates g1), name/=name' ]
-                        | (name,lst1) <- Map.toList (instanceStates g1) ])
-  conn_fun <- mkFun cfg "conn" "connection function" (info,info) (connectionFun $ globalSpec info)
-  const_fun <- mkFun cfg "constInps" "constant input function" info (defaultsFun $ globalSpec info)
+                 -> app or' [ app and' $ [canSchedule sched name s1
+                                         ,schedule sched name s1 s2
+                                         ,snd (funs!name) (lst1,(instanceStates g2)!name)] ++
+                              [ eqInstOutp lst2 ((instanceStates g2)!name') 
+                              | (name',lst2) <- Map.toList (instanceStates g1), name/=name' ]
+                            | (name,lst1) <- Map.toList (instanceStates g1) ])
+  conn_fun <- mkFun cfg "conn" "connection function" (annGlobalInfo info,annGlobalInfo info)
+              (connectionFun $ globalSpec info)
+  const_fun <- mkFun cfg "constInps" "constant input function" (annGlobalInfo info)
+               (defaultsFun $ globalSpec info)
   return (g_init_fun,g_step_fun,conn_fun,const_fun)
 
-mkFun :: (Args a,ArgAnnotation a ~ b,SMTType c,Unit (SMTAnnotation c)) => BMCConfig d -> String -> String -> b -> (a -> SMTExpr c) -> SMT (a -> SMTExpr c)
+mkFun :: (Args a,ArgAnnotation a ~ b,SMTType c) => BMCConfig d -> String -> String -> b -> (a -> SMTExpr c) -> SMT (a -> SMTExpr c)
 mkFun cfg name descr ann f 
   = if bmcConfigInline cfg
     then (do
              comment $ descr
-             fun <- defFunAnnNamed name ann unit f
+             fun <- defFunAnnNamed name ann f
              return (app fun))
     else return f
 
@@ -700,26 +840,27 @@ bmc cfg sched spec = do
       enums = enumMap spec
       kenums = Map.keysSet enums
       procs = getProcs spec
+      annTV = getTemporalVars formula
 #ifndef SMTExts
-  setLogic $ T.pack "QF_BV"
+  setLogic "QF_BV"
 #endif
   --setOption $ PrintSuccess False
   setOption $ ProduceModels True
   (g_init_fun,g_step_fun,conn_fun,const_fun) <- createSMTFunctions cfg sched spec
-  dep_fun <- mkFun cfg "deps" "dependency function" (spec,formula,formula)
-             (\(st,cur,nxt) -> and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
-                                                                        in case Map.lookup var (instanceInputVars inst) of
-                                                                          Just v -> v
-                                                                          Nothing -> case Map.lookup var (instanceOutputVars inst) of
-                                                                            Just v -> v
-                                                                            Nothing -> (instanceLocalVars inst)!var
-                                                   ) formula cur nxt)
+  dep_fun <- mkFun cfg "deps" "dependency function" (annGlobalInfo spec,annTV,annTV)
+             (\(st,cur,nxt) -> app and' $ dependencies (\(iname,var) _ h -> let inst = (instanceStates st)!iname
+                                                                            in case Map.lookup var (instanceInputVars inst) of
+                                                                              Just v -> v
+                                                                              Nothing -> case Map.lookup var (instanceOutputVars inst) of
+                                                                                Just v -> v
+                                                                                Nothing -> (instanceLocalVars inst)!var
+                                                       ) formula cur nxt)
 
-  tmp_cur <- argVarsAnn formula
-  tmp_e <- argVarsAnn formula
-  tmp_l <- argVarsAnn formula
+  tmp_cur <- argVarsAnn annTV
+  tmp_e <- argVarsAnn annTV
+  tmp_l <- argVarsAnn annTV
   loop_exists <- SMT.varNamed "loopExists"
-  se <- argVarsAnn spec
+  se <- argVarsAnn (annGlobalInfo spec)
   te <- argVarsAnn procs
   fe <- mapM (\_ -> SMT.varNamed "fairnessE") [1..(schedulingFairnessCount sched procs)]
   start_time <- liftIO getCurrentTime
@@ -745,7 +886,8 @@ bmc' :: (Scheduling s) =>
      -> SMTExpr Bool -> GlobalState -> SchedulingData s -> [SMTExpr Bool] -> [BMCState s] -> UTCTime
      -> SMT (Maybe [(Map (String,String) GTLConstant,Map (String,String) String,Bool,String)])
 bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe [] start_time = do
-  init_st <- argVarsAnn spec
+  let annTV = getTemporalVars formula
+  init_st <- argVarsAnn (annGlobalInfo spec)
   assert $ const_fun init_st
   l <- SMT.varNamed "l"
   inloop <- SMT.varNamed "inloop"
@@ -755,13 +897,13 @@ bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l lo
   assert $ conn (init_st,init_st)
   assert $ not' l
   assert $ not' inloop
-  tmp_nxt <- argVarsAnn formula
+  tmp_nxt <- argVarsAnn annTV
   assert $ deps (init_st,tmp_cur,tmp_nxt)
   assert $ (formulaEnc tmp_cur)!formula
   incPLTLbase loop_exists tmp_cur tmp_e tmp_l
   case fe of
     [] -> return ()
-    _ -> assert $ loop_exists .=>. and' fe
+    _ -> assert $ loop_exists .=>. app and' fe
   let hist = [BMCState init_st tmp_cur l inloop sdata (fmap (const $ SMT.constant False) fe)]
   res <- if bmcConfigCheckSat cfg (bmcConfigCur cfg)
          then stack' cfg (do
@@ -789,15 +931,16 @@ bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l lo
 bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l loop_exists se te fe history@(last_state:_) start_time = do
   let sdata = bmcScheduling last_state
       i = length history
+      annTV = getTemporalVars formula
   ctime <- liftIO $ getCurrentTime
   if bmcConfigDebug cfg (bmcConfigCur cfg)
     then liftIO $ do
       putStrLn ("Depth: "++show i++" ("++show (ctime `diffUTCTime` start_time)++")")
       hFlush stdout
     else return ()
-  cur_state <- argVarsAnn spec
+  cur_state <- argVarsAnn (annGlobalInfo spec)
   assert $ const_fun cur_state
-  tmp_nxt <- argVarsAnn formula
+  tmp_nxt <- argVarsAnn annTV
   cur_fair <- mapM (\(i,_) -> SMT.varNamed ("fair"++show i)) (zip [0..] fe)
   l <- SMT.varNamed "l"
   inloop <- SMT.varNamed "inloop"
@@ -806,9 +949,9 @@ bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l lo
   assert $ conn (cur_state,cur_state)
 
   -- k-invariant case for LoopConstraints:
-  assert $ l .=>. (and' [eqSt (bmcVars last_state) se
-                        ,eqScheduling sched (bmcScheduling last_state) te])
-  assert $ inloop .==. (or' [bmcInLoop last_state,l])
+  assert $ l .=>. (app and' [eqSt (bmcVars last_state) se
+                            ,eqScheduling sched (bmcScheduling last_state) te])
+  assert $ inloop .==. (app or' [bmcInLoop last_state,l])
   assert $ (bmcInLoop last_state) .=>. (not' l)
   
   -- k-invariant case for LastStateFormula
@@ -818,29 +961,29 @@ bmc' cfg sched spec conn const_fun formula init step deps tmp_cur tmp_e tmp_l lo
   
   -- k-invariant case for IncPLTL
   mapM_ (\(expr,var) -> let Just fe = Map.lookup expr (formulaEnc tmp_cur)
-                        in assert $ var .==. or' [(auxFEnc $ bmcTemporals last_state)!expr
-                                                 ,and' [inloop,fe]]) (Map.toList $ auxFEnc tmp_cur)
+                        in assert $ var .==. app or' [(auxFEnc $ bmcTemporals last_state)!expr
+                                                     ,app and' [inloop,fe]]) (Map.toList $ auxFEnc tmp_cur)
   mapM_ (\(expr,var) -> let Just ge = Map.lookup expr (formulaEnc tmp_cur)
-                        in assert $ var .==. and' [(auxGEnc $ bmcTemporals last_state)!expr
-                                                  ,or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
+                        in assert $ var .==. app and' [(auxGEnc $ bmcTemporals last_state)!expr
+                                                      ,app or' [not' $ inloop,ge]]) (Map.toList $ auxGEnc tmp_cur)
   
   -- k-invariant case for fairness
-  mapM (\(cf,lf,cur) -> assert $ cf .==. or' [lf,and' [inloop,cur]]) (zip3 cur_fair (bmcFairness last_state) (schedulingFairness sched sdata))
+  mapM (\(cf,lf,cur) -> assert $ cf .==. app or' [lf,app and' [inloop,cur]]) (zip3 cur_fair (bmcFairness last_state) (schedulingFairness sched sdata))
   
   let history' = (BMCState cur_state tmp_cur l inloop nsdata cur_fair):history
   simple_path <- case bmcConfigCompleteness cfg (bmcConfigCur cfg) of
     False -> return True
     True -> do
-      mapM_ (\st -> assert $ or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
-                                 ,not' $ (bmcInLoop last_state) .==. (bmcInLoop st)
-                                 ,not' $ ((formulaEnc (bmcTemporals last_state))!formula)
-                                  .==. ((formulaEnc (bmcTemporals st))!formula)
-                                 ,and' [bmcInLoop last_state
-                                       ,bmcInLoop st
-                                       ,or' [not' $ ((formulaEnc (bmcTemporals last_state))!formula) 
-                                             .==. ((formulaEnc (bmcTemporals st))!formula)]
-                                       ]
-                                 ]
+      mapM_ (\st -> assert $ app or' [not' $ eqSt (bmcVars last_state) (bmcVars st)
+                                     ,not' $ (bmcInLoop last_state) .==. (bmcInLoop st)
+                                     ,not' $ ((formulaEnc (bmcTemporals last_state))!formula)
+                                      .==. ((formulaEnc (bmcTemporals st))!formula)
+                                     ,app and' [bmcInLoop last_state
+                                               ,bmcInLoop st
+                                               ,app or' [not' $ ((formulaEnc (bmcTemporals last_state))!formula) 
+                                                         .==. ((formulaEnc (bmcTemporals st))!formula)]
+                                               ]
+                                     ]
             ) (Prelude.drop 1 history)
       checkSat
   -- This does neither
@@ -940,17 +1083,22 @@ getAutomataStates st info = do
 -- | Once the SMT solver has produced a model, extract the value of a given GTL variable from it
 getGTLValue :: GTLSMTExpr -> SMT GTLConstant
 getGTLValue (GSMTInt v) = do
+#if SMTExts
   r <- SMT.getValue v
-  return $ Fix $ GTLIntVal (fromIntegral r)
+  return $ Fix $ GTLIntVal r
+#else
+  BitVector r <- SMT.getValue v
+  return $ Fix $ GTLIntVal r
+#endif
 getGTLValue (GSMTByte v) = do
-  r <- SMT.getValue v
+  BitVector r <- SMT.getValue v
   return $ Fix $ GTLByteVal (fromIntegral r)
 getGTLValue (GSMTBool v) = do
   r <- SMT.getValue v
   return $ Fix $ GTLBoolVal r
-getGTLValue (GSMTEnum v) = do
+getGTLValue (GSMTEnum v vs) = do
   r <- SMT.getValue v
-  return $ Fix $ toGTL (r::EnumVal)
+  return $ Fix $ GTLEnumVal $ enumGet vs r
 getGTLValue (GSMTArray vs) = do
   rv <- mapM getGTLValue vs
   return $ Fix $ GTLArrayVal rv
@@ -1011,7 +1159,8 @@ verifyModelBMC :: Options -> GTLSpec String -> IO ()
 verifyModelBMC opts spec = do
   let solve = case smtBinary opts of
         Nothing -> withZ3
-        Just x -> withSMTSolver x
+        Just x -> case words x of
+          solv:args -> withPipe solv args
       info = getGlobalInfo spec
       act :: Scheduling s => s -> SMT (Maybe [(Map (String,String) GTLConstant,Map (String,String) String,Bool,String)])
       act sched = bmc ((if useSonolar opts then noInlineConfig

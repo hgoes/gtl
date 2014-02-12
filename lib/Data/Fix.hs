@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts,FlexibleInstances,KindSignatures #-}
+{-# LANGUAGE FlexibleContexts,FlexibleInstances,KindSignatures,DeriveDataTypeable #-}
 {- | Implements the fixpoint construction for data types.
      Allows non-recursive data types to be made into recursive ones. -}
 module Data.Fix where

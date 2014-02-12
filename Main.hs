@@ -8,6 +8,7 @@ import System.Exit
 import System.Directory
 import System.IO.Error
 
+import Control.Exception (catch)
 import Control.Monad.Error (ErrorT(..))
 
 import Language.GTL.Parser.Monad as GTL

@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts,FlexibleInstances #-}
+{-# LANGUAGE DeriveTraversable,DeriveFoldable,DeriveFunctor,TypeSynonymInstances,FlexibleContexts,FlexibleInstances,DeriveDataTypeable #-}
 {-| Realizes the type-system of the GTL. Provides data structures for types
     and their values, as well as type-checking helper functions. -}
 module Language.GTL.Types
@@ -26,6 +26,7 @@ import Data.Fix
 import Data.Map as Map
 import Data.Set as Set
 import Prelude hiding (mapM)
+import Data.Typeable
 
 -- | All types that can occur in a GTL specification
 data GTLType' r = GTLInt -- ^ A 64bit unsigned integer
@@ -36,7 +37,7 @@ data GTLType' r = GTLInt -- ^ A 64bit unsigned integer
                 | GTLArray Integer r -- ^ A fixed-size array of a given type
                 | GTLTuple [r] -- ^ A tuple containing a number of types
                 | GTLNamed String r -- ^ A type alias
-                deriving (Eq,Ord,Show)
+                deriving (Eq,Ord,Show,Typeable)
 
 -- | Numeric types
 gtlInt,gtlByte,gtlBool,gtlFloat :: GTLType
@@ -374,3 +375,6 @@ instance Binary r => Binary (GTLValue r) where
       5 -> fmap GTLArrayVal get
       6 -> fmap GTLTupleVal get
 
+instance Typeable (Fix GTLType') where
+  typeOf _ = mkTyConApp (mkTyCon3 "gtl" "Data.Fix" "Fix")
+             [mkTyConApp (mkTyCon3 "gtl" "Language.GTL.Types" "GTLType'") []]

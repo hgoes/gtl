@@ -70,6 +70,7 @@ import Debug.Trace
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad (liftM)
 import Text.Show
+import Data.Typeable
 
 -- | States how a variable is being used in a formula
 data VarUsage = Input -- ^ The variable is an input variable in a contract
@@ -102,6 +103,13 @@ type Expr v = Fix (Term v)
 data Typed a r = Typed { getType :: GTLType
                        , getValue :: a r
                        } deriving (Eq,Ord)
+
+instance Typeable v => Typeable (Fix (Typed (Term v))) where
+  typeOf (_::Fix (Typed (Term v)))
+    = mkTyConApp (mkTyCon3 "gtl" "Data.Fix" "Fix")
+      [mkTyConApp (mkTyCon3 "gtl" "Language.GTL.Expression" "Typed")
+       [mkTyConApp (mkTyCon3 "gtl" "Language.GTL.Expression" "Term")
+        [typeOf (undefined::v)]]]
 
 -- | A typed expression is a recursive term with type informations
 type TypedExpr v = Fix (Typed (Term v))
