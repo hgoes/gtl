@@ -459,7 +459,9 @@ eqInstOutp st1 st2
                (Map.elems $ Map.intersectionWith eqGTLSMT (instanceLocalVars st1) (instanceLocalVars st2))))
 
 -- | A scheduling dictates which instance may perform a calculation step at which point in time.
-class (Args (SchedulingData s),ArgAnnotation (SchedulingData s) ~ Map String Integer) => Scheduling s where
+class (Args (SchedulingData s),
+       ArgAnnotation (SchedulingData s) ~ Map String Integer)
+      => Scheduling s where
   type SchedulingData s
   firstSchedule :: s -> SchedulingData s -> SMTExpr Bool
   canSchedule :: s -> String -> SchedulingData s -> SMTExpr Bool
@@ -489,33 +491,35 @@ instance Scheduling SimpleScheduling where
 
 data SyncScheduling = SyncScheduling
 
-newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool)) deriving (Typeable,Eq,Ord,Show)
+newtype SyncSchedulingData = SyncSchedulingData (Map String (SMTExpr Bool,Integer)) deriving (Typeable,Eq,Ord,Show)
 
 instance Args SyncSchedulingData where
   type ArgAnnotation SyncSchedulingData = Map String Integer
   foldExprs f s ~(SyncSchedulingData mp) procs = do
-    (s',mp') <- mapAccumLM (\cs (name,_) -> do
-                               (cs',nv) <- f cs (mp!name) ()
-                               return (cs',(name,nv))) s (Map.toAscList procs)
+    (s',mp') <- mapAccumLM (\cs (name,i) -> do
+                               (cs',nv) <- f cs (fst $ mp!name) ()
+                               return (cs',(name,(nv,i)))) s (Map.toAscList procs)
     return (s',SyncSchedulingData (Map.fromAscList mp'))
+  extractArgAnnotation (SyncSchedulingData mp)
+    = fmap snd mp
 
 instance Scheduling SyncScheduling where
   type SchedulingData SyncScheduling = SyncSchedulingData
-  firstSchedule _ (SyncSchedulingData mp) = app and' [ not' x | x <- Map.elems mp ]
-  canSchedule _ name (SyncSchedulingData mp) = app or' [ not' (mp!name)
-                                                       , app and' $ Map.elems mp ]
+  firstSchedule _ (SyncSchedulingData mp) = app and' [ not' x | (x,_) <- Map.elems mp ]
+  canSchedule _ name (SyncSchedulingData mp) = app or' [ not' (fst $ mp!name)
+                                                       , app and' $ fmap fst $ Map.elems mp ]
   schedule _ name (SyncSchedulingData m1) (SyncSchedulingData m2) 
-    = app and' [m2!name
-               ,ite (m1!name) 
-                (app and' [ not' x | (name',x) <- Map.toList m2, name/=name' ])
-                (app and' [ x .==. (m1!name') | (name',x) <- Map.toList m2, name/=name' ])
+    = app and' [fst $ m2!name
+               ,ite (fst $ m1!name) 
+                (app and' [ not' x | (name',(x,_)) <- Map.toList m2, name/=name' ])
+                (app and' [ x .==. (fst $ m1!name') | (name',(x,_)) <- Map.toList m2, name/=name' ])
                ]
   eqScheduling _ (SyncSchedulingData p1) (SyncSchedulingData p2)
-    = app and' $ Map.elems $ Map.intersectionWith (.==.) p1 p2
+    = app and' $ Map.elems $ Map.intersectionWith (\(x,_) (y,_) -> x .==. y) p1 p2
   schedulingFairnessCount _ _ = 0
   schedulingFairness _ _ = []
   showSchedulingInformation _ (SyncSchedulingData mp) = do
-    mp' <- mapM (\(name,x) -> do
+    mp' <- mapM (\(name,(x,_)) -> do
                     vx <- SMT.getValue x
                     return $ name ++ ":" ++ (if vx then "1" else "0")
                 ) (Map.toList mp)
