@@ -90,7 +90,7 @@ determinizeBA ba
           | otherwise = determinize' ba (Set.insert next visited) remaining' trans''
             where
               trans'' = trans' `seq` (Map.insert next trans' trans)
-              trans' = getTransitions (Set.toList base) [atomsTrue] Set.empty
+              trans' = Set.toList $ Set.fromList $ getTransitions (Set.toList base) [atomsTrue] Set.empty
               newStates = fmap snd trans'
               remaining' = newStates `seq` (newStates ++ remaining)
               base = Set.unions [ba Map.! k | k <- Set.toList next]
