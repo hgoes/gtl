@@ -1192,3 +1192,4 @@ instance (Ord v,Show v) => AtomContainer [TypedExpr v] (TypedExpr v) where
           Nothing -> Nothing
           Just ys' -> Just (y:ys')
         ENEQ -> Nothing
+  negateAtoms = fmap (return . distributeNot)

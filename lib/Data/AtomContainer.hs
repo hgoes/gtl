@@ -12,6 +12,7 @@ class Ord b => AtomContainer a b | a -> b where
   atomSingleton :: Bool -> b -> a -- ^ A container containing just a single restriction on the values.
   compareAtoms :: a -> a -> ExprOrdering -- ^ Compare the value spaces defined by the containers
   mergeAtoms :: a -> a -> Maybe a -- ^ Merge the containers together, resulting in a container which represents the intersection between the two.
+  negateAtoms :: a -> [a] -- ^ OR over the result is the negation of the input
 
 -- | Represents the relations in which two expressions can stand
 data ExprOrdering = EEQ -- ^ Both expressions define the same value space
@@ -30,6 +31,7 @@ instance Ord a => AtomContainer (Map a Bool) a where
     | Map.isSubmapOf y x = ELT
     | otherwise = ENEQ
   mergeAtoms = mergeAlphabet
+  negateAtoms a = [Map.singleton k (not (a Map.! k)) | k <- Map.keys a]
 
 mergeAlphabet :: Ord a => Map a Bool -> Map a Bool -> Maybe (Map a Bool)
 mergeAlphabet a1 a2

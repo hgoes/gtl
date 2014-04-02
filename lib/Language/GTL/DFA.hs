@@ -77,54 +77,31 @@ determinizeBA ba
   | (Set.size $ baFinals ba) /= (Map.size $ baTransitions ba) = Nothing
   | otherwise =
       let initS = baInits ba
-          trans = determinize' (MakeTotal $ fmap Set.fromList $ baTransitions ba) Set.empty [initS] Map.empty
+          trans = determinize' (fmap Set.fromList $ baTransitions ba) Set.empty [initS] Map.empty
       in Just $ DFA {
           dfaTransitions = MakeTotal trans,
           dfaInit = initS
         }
       where
-        determinize' :: MakeTotal (Map st (Set (a, st))) -> Set (PowSetSt st) -> [PowSetSt st] -> Map (PowSetSt st)	 [(a, PowSetSt st)] -> Map (PowSetSt st) [(a, PowSetSt st)]
+        determinize' :: (Map st (Set (a, st))) -> Set (PowSetSt st) -> [PowSetSt st] -> Map (PowSetSt st)	 [(a, PowSetSt st)] -> Map (PowSetSt st) [(a, PowSetSt st)]
         determinize' _ _ [] trans = trans
         determinize' ba visited (next:remaining) trans
           | Set.member next visited = determinize' ba visited remaining trans
-          | otherwise = let trans' = mergeTransitions (concat $ fmap Map.toList $ Set.toList $ getTransitions ba next) []
-                            trans'' = trans' `seq` (Map.insert next trans' trans)
-                            newStates = fmap snd trans'
-                            remaining' = newStates `seq` (newStates ++ remaining)
-                        in determinize' ba (Set.insert next visited) remaining' trans''
-
-        -- Get the transitions in the BA which origin at the given set of states.
-        getTransitions ba = foldl (\trans s -> Set.insert (transform $ (ba !$ s)) trans) Set.empty
-          where
-            transform :: (Eq a, Ord a, Eq st, Ord st) => Set (a, st) -> Map a (Set st)
-            transform = foldl putTransition Map.empty
-            putTransition trans' (g, ts) = Map.alter (maybe (Just $ Set.singleton ts) (\ts' -> Just $ Set.insert ts ts')) g trans'
-
-        -- Given a set of transitions merge these into transitions leading into the power set of states.
-        mergeTransitions trans = fmap (\(t,trg,n) -> (t,trg))
-                                    . sortBy (flip compare `on` \(_,_,x) -> x)
-                                    . mergeTransitions' atomsTrue Set.empty trans 0
-          where
-            mergeTransitions' t trg [] n mp = if n==0
-                                              then mp
-                                              else insertTransition t trg n mp
-
-            mergeTransitions' t trg ((t',trg'):trans) n mp = case mergeAtoms t t' of
-              Nothing -> mergeTransitions' t trg trans n mp
-              Just nt -> if nt==t
-                         then mergeTransitions' t (Set.union trg trg') trans (n+1) mp
-                         else (let nmp = mergeTransitions' nt (Set.union trg trg') trans (n+1) mp
-                               in mergeTransitions' t trg trans n nmp)
-
-        insertTransition t trg n [] = [(t,trg,n)]
-        insertTransition t trg n ((t',trg',n'):ts) = case compareAtoms t t' of
-          ELT -> (t',Set.union trg trg',max n n'):ts
-          EGT -> (t, Set.union trg trg',max n n'):ts
-          EEQ -> (t',Set.union trg trg',max n n'):ts
-          _ -> (t',trg',n'):insertTransition t trg n ts
-
-        targetStates :: (Eq st, Ord st) => Map a (PowSetSt st) -> Set (PowSetSt st)
-        targetStates = foldl (flip Set.insert) Set.empty
+          | otherwise = determinize' ba (Set.insert next visited) remaining' trans''
+            where
+              trans'' = trans' `seq` (Map.insert next trans' trans)
+              trans' = Set.toList $ Set.fromList $ getTransitions (Set.toList base) [atomsTrue] Set.empty
+              newStates = fmap snd trans'
+              remaining' = newStates `seq` (newStates ++ remaining)
+              base = Set.unions [ba Map.! k | k <- Set.toList next]
+              getTransitions :: (AtomContainer a el, Ord st) => [(a,st)] -> [a] -> Set st -> [(a,PowSetSt st)]
+              getTransitions [] cond reachable
+                | Set.null reachable = []
+                | otherwise = [(c,reachable) | c <- cond]
+              getTransitions ((c,s):xs) cond reachable
+                | otherwise = getTransitions xs (catMaybes $ fmap (mergeAtoms c) cond) (Set.insert s reachable)
+                  ++ concat [getTransitions xs (catMaybes $ fmap (mergeAtoms notC) cond) reachable |
+                    notC <- negateAtoms c]
 
 minimizeDFA :: (Eq a, Ord a, Eq st, Ord st, Show a, Show st) => DFA a st -> DFA a (PowSetSt st)
 minimizeDFA dfa =
